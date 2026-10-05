@@ -45,6 +45,23 @@ type Hooks interface {
 	PreCompact(ctx context.Context, auto bool) HookOutcome
 }
 
+// Extensions lets JavaScript extensions (package extensions) observe and
+// steer the loop, closest to the shell: PreToolUse hooks run before
+// ToolCall, and PostToolUse hooks see the output ToolResult returns.
+// UserPrompt runs after the UserPromptSubmit hooks. TurnStart and TurnEnd
+// only observe. Implemented by package extensions; nil means none.
+type Extensions interface {
+	UserPrompt(ctx context.Context, prompt string) HookOutcome
+	ToolCall(ctx context.Context, args BashArgs) (BashArgs, HookOutcome)
+	// ToolResult returns the output for the model, possibly rewritten.
+	ToolResult(ctx context.Context, args BashArgs, res BashResult, output string) (string, HookOutcome)
+	TurnStart(prompt string)
+	TurnEnd(err error)
+}
+
+// ExtensionEvent prefixes the event of the notices extensions cause.
+const ExtensionEvent = "extension "
+
 // HookNotice reports something a hook did, for display.
 type HookNotice struct {
 	Event   string
@@ -170,6 +187,9 @@ type Agent struct {
 	MaxSteps int
 	// Hooks, if set, run around prompts, tool calls, stops and compaction.
 	Hooks Hooks
+	// Extensions, if set, run around prompts, tool calls and turns, after
+	// the hooks (see Extensions).
+	Extensions Extensions
 
 	// LastUsage is the usage of the most recent model call.
 	LastUsage provider.Usage
@@ -655,13 +675,27 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(any)) error {
 // RunWithImages is Run with images attached to the user message. Their
 // bytes must be loaded, and saved with images.Save for the session to
 // resume with them.
-func (a *Agent) RunWithImages(ctx context.Context, input string, imgs []provider.Image, emit func(any)) error {
+func (a *Agent) RunWithImages(ctx context.Context, input string, imgs []provider.Image, emit func(any)) (err error) {
+	if a.Extensions != nil {
+		a.Extensions.TurnStart(input)
+		defer func() { a.Extensions.TurnEnd(err) }()
+	}
 	if a.Hooks != nil {
 		o := a.Hooks.UserPromptSubmit(ctx, input)
 		emitHook(emit, "UserPromptSubmit", o)
 		switch {
 		case o.Stop:
 			return ErrStoppedByHook
+		case o.Block:
+			return ErrPromptBlocked
+		case o.Context != "":
+			input += "\n\n" + o.Context
+		}
+	}
+	if a.Extensions != nil {
+		o := a.Extensions.UserPrompt(ctx, input)
+		emitHook(emit, ExtensionEvent+"user_prompt", o)
+		switch {
 		case o.Block:
 			return ErrPromptBlocked
 		case o.Context != "":
@@ -814,6 +848,15 @@ func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, index int, dr
 		}
 		args = updated
 	}
+	if a.Extensions != nil {
+		updated, o := a.Extensions.ToolCall(ctx, args)
+		emitHook(emit, ExtensionEvent+"tool_call", o)
+		if o.Block {
+			drafts.end(index, "blocked by extension")
+			return "Blocked by an extension: " + o.Reason, &session.ToolMeta{Description: args.Description, ExitCode: -1}, false
+		}
+		args = updated
+	}
 	emit(ToolStart{ID: tc.ID, Index: index, Args: args, Timeout: args.timeout()})
 	drafts.claim(index)
 	a.cfgMu.Lock()
@@ -833,6 +876,11 @@ func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, index int, dr
 		a.bgMu.Unlock()
 	}
 	out := res.ForModel(args)
+	if a.Extensions != nil {
+		var o HookOutcome
+		out, o = a.Extensions.ToolResult(ctx, args, res, out)
+		emitHook(emit, ExtensionEvent+"tool_result", o)
+	}
 	emit(ToolEnd{ID: tc.ID, Result: res, Text: out})
 	stop := false
 	if a.Hooks != nil {

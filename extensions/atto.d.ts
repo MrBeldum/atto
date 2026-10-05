@@ -1,0 +1,186 @@
+// Types of the atto extension API. atto writes this file next to your
+// extensions; reference it from an extension with
+//
+//   /// <reference path="./atto.d.ts" />      (or "../atto.d.ts" from a folder)
+//
+// and write `export default function (atto: Atto) { ... }`.
+// `atto extensions types` prints it. Docs: docs/extensions.md.
+
+/** What atto passes to handlers and commands as their second argument. */
+interface AttoContext {
+  ui: AttoUI;
+  /** True in the interactive TUI; false in atto -p and the server. */
+  hasUI: boolean;
+  /** The session's working directory. */
+  cwd: string;
+  session: AttoSession;
+}
+
+interface AttoSession {
+  /** The session ID (changes on /clear and /resume). */
+  readonly id: string;
+  /** provider/id of the model in use, "" without one. */
+  readonly model: string;
+  readonly cwd: string;
+}
+
+interface AttoUI {
+  /** Show a notice in the transcript (stderr in atto -p). */
+  notify(text: string, level?: "info" | "warning" | "error"): void;
+  /** Set (or with null, remove) an item of the status line. TUI only. */
+  setStatus(key: string, text: string | null): void;
+  /** Set (or with null, remove) a band of lines above the input. TUI only. */
+  setWidget(key: string, lines: string[] | null): void;
+  /** Let the user pick one option; undefined when canceled, and always without a UI. */
+  select(title: string, options: string[]): Promise<string | undefined>;
+  /** Ask yes or no; false when canceled, and always without a UI. */
+  confirm(text: string): Promise<boolean>;
+  /** Ask for a line of text; undefined when canceled, and always without a UI. */
+  input(prompt: string): Promise<string | undefined>;
+}
+
+interface AttoSessionEvent {
+  /** session_start: "startup" | "resume" | "clear"; session_end: "exit" | "clear" | "resume" | "other". */
+  reason: string;
+}
+
+interface AttoTurnStartEvent {
+  prompt: string;
+}
+
+interface AttoTurnEndEvent {
+  /** Why the turn failed, or null. */
+  error: string | null;
+  /** The user interrupted it. */
+  aborted: boolean;
+}
+
+interface AttoToolCallEvent {
+  /** "bash" or "powershell": atto's one tool. */
+  toolName: string;
+  command: string;
+  description: string;
+  /** Seconds the model asked for; 0 is the default. */
+  timeout: number;
+  background: boolean;
+}
+
+/** Block the call (the model is told reason), or replace its command. */
+type AttoToolCallResult = { block: true; reason?: string } | { command: string } | void;
+
+interface AttoToolResultEvent {
+  toolName: string;
+  command: string;
+  description: string;
+  /** The output as the model would receive it. */
+  output: string;
+  exitCode: number;
+  timedOut: boolean;
+  canceled: boolean;
+  durationMs: number;
+  /** The background job the command became, or 0. */
+  job: number;
+}
+
+/** A string (or {output}) replaces the output the model receives. */
+type AttoToolResultResult = string | { output: string } | void;
+
+interface AttoUserPromptEvent {
+  prompt: string;
+}
+
+/** A string (or {context}) is added to the prompt; {block: true} rejects it. */
+type AttoUserPromptResult = string | { context?: string; block?: boolean; reason?: string } | void;
+
+type Awaitable<T> = T | Promise<T>;
+
+interface AttoEvents {
+  session_start: [AttoSessionEvent, void];
+  session_end: [AttoSessionEvent, void];
+  turn_start: [AttoTurnStartEvent, void];
+  turn_end: [AttoTurnEndEvent, void];
+  tool_call: [AttoToolCallEvent, AttoToolCallResult];
+  tool_result: [AttoToolResultEvent, AttoToolResultResult];
+  user_prompt: [AttoUserPromptEvent, AttoUserPromptResult];
+}
+
+interface AttoExecResult {
+  stdout: string;
+  stderr: string;
+  /** Exit code; -1 when killed at the timeout. */
+  code: number;
+  killed: boolean;
+}
+
+interface AttoResponse {
+  status: number;
+  ok: boolean;
+  /** Lower-case header names. */
+  headers: Record<string, string>;
+  text(): Promise<string>;
+  json(): Promise<any>;
+}
+
+interface AttoFetchOptions {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  /** Milliseconds; default 30000. */
+  timeout?: number;
+}
+
+interface Atto {
+  /** The extension's name (its file or folder name). */
+  readonly name: string;
+  readonly cwd: string;
+  readonly session: AttoSession;
+  /** Same as ctx.ui, for use outside handlers (timers, onDispose). */
+  readonly ui: AttoUI;
+
+  /**
+   * Handle an event. tool_call, tool_result and user_prompt are waited for
+   * (5 s by default; settings.json "extensions": {"timeout": seconds}), the
+   * others are not.
+   */
+  on<K extends keyof AttoEvents>(
+    event: K,
+    handler: (event: AttoEvents[K][0], ctx: AttoContext) => Awaitable<AttoEvents[K][1]>,
+  ): void;
+
+  /** Add a slash command: /name args (TUI). */
+  registerCommand(
+    name: string,
+    command: { description?: string; handler: (args: string, ctx: AttoContext) => Awaitable<void> },
+  ): void;
+
+  /** Run before the extension is unloaded (/reload, exit). Up to 1 s. */
+  onDispose(fn: () => Awaitable<void>): void;
+
+  /** Run a command with the agent's shell. timeout in ms (default 60000). */
+  exec(command: string, options?: { cwd?: string; timeout?: number }): Promise<AttoExecResult>;
+
+  /** Synchronous UTF-8 text files; relative paths are against the session's directory. */
+  fs: {
+    readFile(path: string): string;
+    /** Creates missing parent directories. */
+    writeFile(path: string, text: string): void;
+    exists(path: string): boolean;
+    /** Names in a directory, sorted; directories end in "/". */
+    list(path: string): string[];
+  };
+
+  fetch(url: string, options?: AttoFetchOptions): Promise<AttoResponse>;
+
+  /** Send text to the model as a user message: steers a running turn, or starts one (TUI). */
+  sendMessage(text: string): void;
+
+  /** Append to ~/.atto/extensions.log (console.log does the same). */
+  log(...values: any[]): void;
+}
+
+declare function fetch(url: string, options?: AttoFetchOptions): Promise<AttoResponse>;
+declare function setTimeout(fn: (...args: any[]) => void, ms?: number, ...args: any[]): number;
+declare function clearTimeout(id: number | undefined): void;
+declare function setInterval(fn: (...args: any[]) => void, ms?: number, ...args: any[]): number;
+declare function clearInterval(id: number | undefined): void;
+declare const console: { log(...v: any[]): void; info(...v: any[]): void; warn(...v: any[]): void; error(...v: any[]): void; debug(...v: any[]): void };

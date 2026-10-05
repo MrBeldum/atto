@@ -3,8 +3,17 @@ module github.com/sebastianrcnt/atto
 go 1.27.1
 
 require (
+	github.com/dop251/goja v0.0.0-20261004200024-481fdb442bb4
+	github.com/evanw/esbuild v0.28.2
 	github.com/rivo/uniseg v0.4.7
 	golang.org/x/image v0.45.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
+)
+
+require (
+	github.com/dlclark/regexp2/v2 v2.8.1 // indirect
+	github.com/go-sourcemap/sourcemap v2.1.4+incompatible // indirect
+	github.com/google/pprof v0.0.0-20240727154555-813a5fbdbec8 // indirect
+	golang.org/x/text v0.41.0 // indirect
 )

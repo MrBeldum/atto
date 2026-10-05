@@ -98,7 +98,28 @@ type Settings struct {
 	// BranchSummary configures what going back in the session tree (/tree)
 	// does with the branch being left, as pi's setting of the same name.
 	BranchSummary *BranchSummary `json:"branchSummary,omitempty"`
+	// Extensions configures JavaScript extensions (package extensions).
+	Extensions *ExtensionSettings `json:"extensions,omitempty"`
 }
+
+// ExtensionSettings is settings.json's "extensions".
+type ExtensionSettings struct {
+	// Disabled names extensions not to load.
+	Disabled []string `json:"disabled,omitempty"`
+	// Timeout, in seconds, bounds a handler that atto waits for (tool_call,
+	// tool_result, user_prompt) and any stretch of script that runs
+	// without yielding. Default 5.
+	Timeout int `json:"timeout,omitempty"`
+}
+
+// ExtensionApprovalsPath records the project extensions the user approved.
+func ExtensionApprovalsPath() string { return filepath.Join(Dir(), "extension-approvals.json") }
+
+// ExtensionLogPath is where atto.log and extension errors are written.
+func ExtensionLogPath() string { return filepath.Join(Dir(), "extensions.log") }
+
+// ProjectExtensionsDir is a project's own extensions directory.
+func ProjectExtensionsDir(root string) string { return filepath.Join(root, ".atto", "extensions") }
 
 // BranchSummary is settings.json's "branchSummary".
 type BranchSummary struct {

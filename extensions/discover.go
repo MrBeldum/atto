@@ -1,0 +1,167 @@
+package extensions
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/sebastianrcnt/atto/agent"
+	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/fsutil"
+)
+
+// Where an extension was found.
+const (
+	User    = "user"    // ~/.atto/extensions
+	Project = "project" // <project root>/.atto/extensions; needs approval
+)
+
+// Spec is an extension found on disk.
+type Spec struct {
+	Name   string `json:"name"`
+	Path   string `json:"path"` // the entry file
+	Source string `json:"source"`
+}
+
+// Dirs are the extension directories for a session in cwd: the user's,
+// then the project's (at its root, see agent.ProjectRoot).
+func Dirs(cwd string) []Dir {
+	user := config.ExtensionsDir()
+	dirs := []Dir{{Path: user, Source: User}}
+	if p := config.ProjectExtensionsDir(agent.ProjectRoot(cwd)); !samePath(p, user) {
+		dirs = append(dirs, Dir{Path: p, Source: Project})
+	}
+	return dirs
+}
+
+// Dir is a directory extensions are loaded from.
+type Dir struct{ Path, Source string }
+
+// Discover lists the extensions for a session in cwd, user ones first,
+// each directory in name order: <dir>/<name>.ts or .js, and
+// <dir>/<name>/index.ts or index.js. Declaration files (.d.ts) and names
+// starting with "." are not extensions.
+func Discover(cwd string) []Spec {
+	var out []Spec
+	for _, d := range Dirs(cwd) {
+		out = append(out, scan(d)...)
+	}
+	return out
+}
+
+func scan(d Dir) []Spec {
+	entries, err := os.ReadDir(d.Path)
+	if err != nil {
+		return nil
+	}
+	var out []Spec
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".") || name == "node_modules" {
+			continue
+		}
+		path := filepath.Join(d.Path, name)
+		if e.IsDir() || isDirLink(path, e) {
+			for _, index := range []string{"index.ts", "index.js"} {
+				if st, err := os.Stat(filepath.Join(path, index)); err == nil && !st.IsDir() {
+					out = append(out, Spec{Name: name, Path: filepath.Join(path, index), Source: d.Source})
+					break
+				}
+			}
+			continue
+		}
+		if strings.HasSuffix(name, ".d.ts") {
+			continue
+		}
+		if ext := filepath.Ext(name); ext == ".ts" || ext == ".js" {
+			out = append(out, Spec{Name: strings.TrimSuffix(name, ext), Path: path, Source: d.Source})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func isDirLink(path string, e fs.DirEntry) bool {
+	if e.Type()&fs.ModeSymlink == 0 {
+		return false
+	}
+	st, err := os.Stat(path)
+	return err == nil && st.IsDir()
+}
+
+func samePath(a, b string) bool {
+	ca, err1 := filepath.EvalSymlinks(a)
+	cb, err2 := filepath.EvalSymlinks(b)
+	if err1 != nil || err2 != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return ca == cb
+}
+
+// approvals is extension-approvals.json: the hash of the code approved
+// for each project extension, by the entry file's absolute path.
+type approvals struct {
+	Approved map[string]string `json:"approved"`
+}
+
+func loadApprovals() approvals {
+	a := approvals{Approved: map[string]string{}}
+	data, err := os.ReadFile(config.ExtensionApprovalsPath())
+	if err == nil {
+		_ = json.Unmarshal(data, &a)
+	}
+	if a.Approved == nil {
+		a.Approved = map[string]string{}
+	}
+	return a
+}
+
+// approved reports whether the project extension at path was approved
+// with exactly this code.
+func approved(path, code string) bool {
+	return loadApprovals().Approved[absPath(path)] == hash(code)
+}
+
+func absPath(p string) string {
+	if a, err := filepath.Abs(p); err == nil {
+		return a
+	}
+	return p
+}
+
+// ErrNotFound is returned by Approve for a name no extension has.
+var ErrNotFound = errors.New("no such extension")
+
+// Approve records approval of the project extension called name, for a
+// session in cwd, as its code is now; a later change needs approval
+// again. It returns the extension approved. User extensions need none.
+func Approve(cwd, name string) (Spec, error) {
+	for _, s := range Discover(cwd) {
+		if s.Name != name {
+			continue
+		}
+		if s.Source != Project {
+			return s, fmt.Errorf("%s is a user extension (%s); those need no approval", name, s.Path)
+		}
+		code, err := Bundle(s.Path)
+		if err != nil {
+			return s, err
+		}
+		a := loadApprovals()
+		a.Approved[absPath(s.Path)] = hash(code)
+		data, err := json.MarshalIndent(a, "", "  ")
+		if err != nil {
+			return s, err
+		}
+		if err := os.MkdirAll(config.Dir(), 0o755); err != nil {
+			return s, err
+		}
+		return s, fsutil.WriteAtomic(config.ExtensionApprovalsPath(), append(data, '\n'), 0o600)
+	}
+	return Spec{}, fmt.Errorf("%w %q (see atto extensions)", ErrNotFound, name)
+}
