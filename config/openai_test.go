@@ -56,10 +56,10 @@ func TestOpenAIPreset(t *testing.T) {
 	if _, ok := m.Find("openai", "text-embedding-3-small"); ok {
 		t.Fatal("tool-less model listed")
 	}
-	if got := strings.Join(ref.Model.Levels(), ","); got != "off,low,medium,high,xhigh" || ref.Model.WireEfforts()["off"] != "none" {
-		t.Fatalf("gpt-5.2 efforts %s %v", got, ref.Model.WireEfforts())
+	if got := strings.Join(ref.Model.Levels(), ","); got != "off,low,medium,high,xhigh" || *ref.Model.EffortMap["off"] != "none" {
+		t.Fatalf("gpt-5.2 efforts %s %v", got, ref.Model.EffortMap)
 	}
-	if p := ref.Provider; p.BaseURL != "https://api.openai.com/v1" || p.Headers["session_id"] != "$session" {
+	if p := ref.Provider; p.BaseURL != "https://api.openai.com/v1" || len(p.Headers) != 0 {
 		t.Fatalf("provider %+v", p)
 	}
 	if g, _ := m.Find("openai", "gpt-4.1"); len(g.Model.Levels()) != 0 {
@@ -82,9 +82,15 @@ func TestOpenAIPresetWithOAuth(t *testing.T) {
 	if err != nil || tok != "acc" {
 		t.Fatalf("valid token not reused: %q %v", tok, err)
 	}
-	// An explicit API key outranks the stored login.
+	// As in pi, the stored login outranks a models.json apiKey, which in
+	// turn outranks the environment.
 	t.Setenv("OPENAI_KEY_X", "sk-explicit")
 	m.Providers["openai"] = func() Provider { p := m.Providers["openai"]; p.APIKey = "$OPENAI_KEY_X"; return p }()
+	if r, _ := m.Find("openai", "gpt-5.2"); r.KeyFunc == nil {
+		t.Fatalf("stored login lost to apiKey: %+v", r)
+	}
+	RemoveAuth("openai")
+	m.auth, _ = LoadAuth()
 	if r, _ := m.Find("openai", "gpt-5.2"); r.KeyFunc != nil || r.APIKey != "sk-explicit" {
 		t.Fatalf("explicit key: %+v", r)
 	}
@@ -98,7 +104,7 @@ func TestZenGPTUsesResponses(t *testing.T) {
 	if !ok || gpt.API() != "openai-responses" || gpt.Provider.API != "openai-completions" || gpt.Provider.BaseURL != "https://opencode.ai/zen/v1" {
 		t.Fatalf("zen gpt %+v", gpt)
 	}
-	if gpt.Provider.Headers["x-opencode-session"] != "$session" || strings.Join(gpt.Model.Levels(), ",") != "off,low,medium,high" {
+	if len(gpt.Provider.Headers) != 0 || gpt.Model.Compat == nil || gpt.Model.Compat.SessionAffinityFormat != "openai-nosession" || strings.Join(gpt.Model.Levels(), ",") != "off,low,medium,high" {
 		t.Fatalf("zen gpt headers/levels %v %v", gpt.Provider.Headers, gpt.Model.Levels())
 	}
 	if glm, ok := m.Find("opencode", "glm-5"); !ok || glm.API() != "openai-completions" {
@@ -171,7 +177,7 @@ func TestAuthFileMergeAndPermissions(t *testing.T) {
 	if found, _ = RemoveAuth("openai"); found {
 		t.Fatal("removed twice")
 	}
-	if got, _ := LoadAuth(); len(got) != 2 {
+	if got, _ := LoadAuth(); len(got) != 1 { // "future" is kept on disk but not loaded
 		t.Fatalf("after logout %v", got)
 	}
 	// No temp files left behind.
@@ -190,9 +196,9 @@ func TestOAuthTokenRefreshesAndPersists(t *testing.T) {
 			"scope": "openid chatgpt.tokens.use.direct"})
 	}))
 	defer srv.Close()
-	old := chatGPT
-	chatGPT = func() *auth.ChatGPT { return &auth.ChatGPT{TokenURL: srv.URL} }
-	defer func() { chatGPT = old }()
+	old := auth.NewChatGPTClient
+	auth.NewChatGPTClient = func(string) *auth.ChatGPT { return &auth.ChatGPT{TokenURL: srv.URL} }
+	defer func() { auth.NewChatGPTClient = old }()
 
 	SetOAuth("openai", auth.Credential{Access: "stale", Refresh: "ref1", Expires: time.Now().Add(-time.Minute).UnixMilli(), ClientID: "cid"})
 	tok, err := OAuthToken(context.Background(), "openai")

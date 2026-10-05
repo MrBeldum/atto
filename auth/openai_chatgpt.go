@@ -1,14 +1,16 @@
-// Package auth implements "Sign in with ChatGPT": an OAuth 2.0 public-client
-// flow (dynamic client registration, PKCE, loopback redirect) whose access
-// token is sent directly to the OpenAI API. It follows pi's
-// openai-chatgpt provider; it does not use the Codex CLI's client.
 package auth
+
+// Port of pi's src/auth/oauth/openai-chatgpt.ts: "Sign in with ChatGPT",
+// an OAuth 2.0 public-client flow (dynamic client registration, PKCE,
+// loopback redirect) whose access token is sent directly to the OpenAI
+// API. It does not use the Codex CLI's client (see openai_codex.go).
+//
+// atto differences: when port 1455 is taken, atto falls back to the
+// pasted redirect URL (pi fails), and the redirect URI follows the port
+// actually bound (tests bind port 0).
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,18 +39,6 @@ const (
 	// starts with a token about to expire.
 	ExpiryMargin = 3 * time.Minute
 )
-
-// Credential is the stored result of a login, in pi's auth.json shape.
-type Credential struct {
-	Access   string
-	Refresh  string
-	Expires  int64 // unix milliseconds, margin already subtracted
-	ClientID string
-	Scopes   []string
-}
-
-// Expired reports whether the access token should be refreshed.
-func (c Credential) Expired(now time.Time) bool { return now.UnixMilli() >= c.Expires }
 
 // ChatGPT holds the endpoints; tests point them at fake servers.
 type ChatGPT struct {
@@ -98,31 +88,6 @@ func (u UI) notice(format string, args ...any) {
 	if u.Notice != nil {
 		u.Notice(fmt.Sprintf(format, args...))
 	}
-}
-
-// PKCE returns a random code verifier and its S256 challenge.
-func PKCE() (verifier, challenge string) {
-	verifier = randomValue()
-	sum := sha256.Sum256([]byte(verifier))
-	return verifier, base64.RawURLEncoding.EncodeToString(sum[:])
-}
-
-func randomValue() string {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		panic(err) // the OS entropy source failing is unrecoverable
-	}
-	return base64.RawURLEncoding.EncodeToString(b)
-}
-
-// NewDeviceID returns a random UUID (v4) for ext_agent_host_id.
-func NewDeviceID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	b[6], b[8] = b[6]&0x0f|0x40, b[8]&0x3f|0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 // AuthURL builds the authorization URL.
@@ -319,7 +284,7 @@ func (c *ChatGPT) credential(tr tokenResponse, clientID string) (Credential, err
 		return Credential{}, fmt.Errorf("OpenAI OAuth grant did not include %s", directScope)
 	}
 	exp := c.now().Add(time.Duration(tr.ExpiresIn*float64(time.Second)) - ExpiryMargin)
-	return Credential{Access: tr.AccessToken, Refresh: tr.RefreshToken, Expires: exp.UnixMilli(), ClientID: clientID, Scopes: scopes}, nil
+	return Credential{Type: "oauth", Access: tr.AccessToken, Refresh: tr.RefreshToken, Expires: exp.UnixMilli(), ClientID: clientID, Scopes: scopes}, nil
 }
 
 func (c *ChatGPT) exchange(ctx context.Context, r authResult, verifier, redirectURI string) (Credential, error) {

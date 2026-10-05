@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sebastianrcnt/atto/ai"
 )
 
 // Built-in providers come from the models.dev catalog (as pi does). Only
@@ -34,25 +36,26 @@ type catalogProvider struct {
 	headers map[string]string
 }
 
-// OpenCode Zen and Go: OpenAI-compatible chat completions, API key auth,
-// and a per-conversation routing header (pi: opencode-headers.ts). Zen's GPT
-// models are served over the Responses API instead.
+// OpenCode Zen and Go: OpenAI-compatible chat completions with API key auth
+// (pi: providers/opencode.ts, opencode-go.ts); package ai adds their
+// per-conversation routing header. Zen's GPT models are served over the
+// Responses API instead.
 //
 // OpenAI itself uses the Responses API with an API key or Sign in with
-// ChatGPT (atto login openai); the session headers let it route turns of one
-// conversation to the same cache.
+// ChatGPT (/login); package ai sends the session_id routing headers that
+// keep turns of one conversation on the same cache.
 var catalogProviders = []catalogProvider{
 	{
 		name: "openai", display: "OpenAI", baseURL: "https://api.openai.com/v1", api: "openai-responses",
-		env: []string{"OPENAI_API_KEY"}, headers: map[string]string{"session_id": "$session", "x-client-request-id": "$session"},
+		env: []string{"OPENAI_API_KEY"},
 	},
 	{
 		name: "opencode", display: "OpenCode Zen", baseURL: "https://opencode.ai/zen/v1",
-		env: []string{"OPENCODE_API_KEY"}, headers: map[string]string{"x-opencode-session": "$session"},
+		env: []string{"OPENCODE_API_KEY"},
 	},
 	{
 		name: "opencode-go", display: "OpenCode Go", baseURL: "https://opencode.ai/zen/go/v1",
-		env: []string{"OPENCODE_API_KEY"}, headers: map[string]string{"x-opencode-session": "$session"},
+		env: []string{"OPENCODE_API_KEY"},
 	},
 }
 
@@ -209,6 +212,8 @@ func catalogModel(cp catalogProvider, id string, m modelsDevModel) (Model, bool)
 	}
 	if responses && cp.api != "openai-responses" {
 		mod.API = "openai-responses"
+		// pi: OpenCode's Responses proxy takes x-client-request-id only.
+		mod.Compat = &ai.Compat{SessionAffinityFormat: "openai-nosession"}
 	}
 	if !m.Reasoning {
 		return mod, true

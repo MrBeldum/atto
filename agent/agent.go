@@ -212,28 +212,12 @@ func (a *Agent) SetModel(m config.ModelRef) {
 		a.lastReq = b
 		a.cfgMu.Unlock()
 	}
-	if m.API() == provider.APIResponses {
-		a.client = &provider.ResponsesClient{
-			BaseURL:     m.Provider.BaseURL,
-			APIKey:      m.APIKey,
-			KeyFunc:     m.KeyFunc,
-			EffortMap:   m.Model.WireEfforts(),
-			NoReasoning: len(m.Model.Levels()) == 0,
-			ExtraBody:   m.RequestBody(),
-			Headers:     m.Provider.Headers,
-			OnRequest:   onRequest,
-		}
-	} else {
-		a.client = &provider.Client{
-			BaseURL:        m.Provider.BaseURL,
-			APIKey:         m.APIKey,
-			KeyFunc:        m.KeyFunc,
-			MaxTokensField: m.Provider.MaxTokensField,
-			ExtraBody:      m.RequestBody(),
-			EffortMap:      m.Model.WireEfforts(),
-			Headers:        m.Provider.Headers,
-			OnRequest:      onRequest,
-		}
+	a.client = &provider.Client{
+		Model:     m.AIModel(),
+		APIKey:    m.APIKey,
+		KeyFunc:   m.KeyFunc,
+		Headers:   m.RequestHeaders(),
+		OnRequest: onRequest,
 	}
 	if lv := m.Model.Levels(); len(lv) > 0 && !slices.Contains(lv, a.effort) {
 		a.effort = lv[len(lv)/2]

@@ -248,6 +248,20 @@ func TestGoldenRequestBodies(t *testing.T) {
 			if h := hdr.Get("Authorization"); h != "Bearer test-key" {
 				t.Errorf("Authorization = %q", h)
 			}
+			// Session routing headers keep turns on one server's cache.
+			wantHdr := map[string]string{}
+			switch ref.ProviderName {
+			case "opencode-go":
+				wantHdr["x-opencode-session"] = "sess-0123456789"
+			case "openai":
+				wantHdr["session_id"] = "sess-0123456789"
+				wantHdr["x-client-request-id"] = "sess-0123456789"
+			}
+			for k, v := range wantHdr {
+				if got := hdr.Get(k); got != v {
+					t.Errorf("header %s = %q, want %q", k, got, v)
+				}
+			}
 		})
 	}
 }
