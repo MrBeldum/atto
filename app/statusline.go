@@ -220,6 +220,12 @@ func (a *App) renderStatus(width int) []string {
 	if off := a.ui.ScrollOffset(); off > 0 {
 		flags = append(flags, tui.FG(3, fmt.Sprintf("↓ %d more lines (scroll or PgDn)", off)))
 	}
+	if a.jobCount > 0 {
+		flags = append(flags, tui.FG(2, fmt.Sprintf("● %d job%s running (/jobs)", a.jobCount, plural(a.jobCount))))
+	}
+	if a.timerCount > 0 {
+		flags = append(flags, tui.FG(4, fmt.Sprintf("⏱ %d timer%s (/timers)", a.timerCount, plural(a.timerCount))))
+	}
 	if a.details.on {
 		flags = append(flags, tui.FG(3, "details on (ctrl+t)"))
 	}
@@ -294,4 +300,11 @@ func compressPath(p string, w int) string {
 		}
 	}
 	return tui.Truncate(parts[len(parts)-1], max(1, w), "…")
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }

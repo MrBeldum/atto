@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -146,7 +147,7 @@ func TestAuthFileMergeAndPermissions(t *testing.T) {
 	if err := SetOAuth("openai", auth.Credential{Access: "a", Refresh: "r", Expires: 5, ClientID: "c", Scopes: []string{"s"}}); err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := os.Stat(AuthPath()); st.Mode().Perm() != 0o600 {
+	if st, _ := os.Stat(AuthPath()); runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
 		t.Fatalf("mode %v", st.Mode())
 	}
 	raw := map[string]json.RawMessage{}

@@ -59,6 +59,7 @@ func TestStdioTurn(t *testing.T) {
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	s := New("test", work)
+	t.Cleanup(s.Close)
 	go s.ServeStdio(context.Background(), inR, outW)
 	lines := make(chan msg, 100)
 	go func() {
@@ -124,6 +125,7 @@ func TestStdioTurn(t *testing.T) {
 
 	// A new server process resumes the thread from its session file.
 	s2 := New("test", work)
+	t.Cleanup(s2.Close)
 	resp := s2.Handle(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"thread/resume","params":{"threadId":"`+id+`"}}`))
 	info := resp.Result.(ThreadInfo)
 	var got []string
@@ -141,8 +143,10 @@ func TestStdioTurn(t *testing.T) {
 
 func TestHTTPAndSSE(t *testing.T) {
 	work := setup(t)
-	h := httptest.NewServer(New("test", work).HTTPHandler("secret-token-1234"))
+	srv := New("test", work)
+	h := httptest.NewServer(srv.HTTPHandler("secret-token-1234"))
 	defer h.Close()
+	defer srv.Close()
 	call := func(method string, params any) map[string]any {
 		t.Helper()
 		b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})

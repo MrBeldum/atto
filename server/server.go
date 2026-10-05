@@ -12,7 +12,9 @@ import (
 
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/events"
 	"github.com/sebastianrcnt/atto/hooks"
+	"github.com/sebastianrcnt/atto/jobs"
 	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/session"
 )
@@ -26,10 +28,55 @@ type Server struct {
 
 	mu      sync.Mutex
 	threads map[string]*thread
+	stop    chan struct{}
 }
 
 func New(version, cwd string) *Server {
-	return &Server{Version: version, Cwd: cwd, threads: map[string]*thread{}, Notify: func(string, map[string]any) {}}
+	s := &Server{Version: version, Cwd: cwd, threads: map[string]*thread{}, Notify: func(string, map[string]any) {}, stop: make(chan struct{})}
+	go s.watchInbox()
+	return s
+}
+
+// watchInbox delivers inbox events (job exits, timers, monitors) to loaded
+// threads: a new turn when idle, a steer while a turn runs.
+func (s *Server) watchInbox() {
+	tick := time.NewTicker(500 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-tick.C:
+		}
+		s.mu.Lock()
+		threads := make([]*thread, 0, len(s.threads))
+		for _, t := range s.threads {
+			threads = append(threads, t)
+		}
+		s.mu.Unlock()
+		for _, t := range threads {
+			events.FireDue(t.id, time.Now())
+			evs := events.Drain(t.id)
+			if len(evs) == 0 {
+				continue
+			}
+			for _, e := range evs {
+				s.notify(t, "event", map[string]any{"title": e.Title, "source": e.Source})
+			}
+			text := events.Format(evs)
+			t.mu.Lock()
+			busy := t.busy
+			t.mu.Unlock()
+			if busy {
+				t.agent.Steer(text)
+				continue
+			}
+			_, _ = s.begin(t, func(ctx context.Context, emit func(any)) error {
+				emit(eventInput{text})
+				return t.agent.Run(ctx, text, emit)
+			})
+		}
+	}
 }
 
 type thread struct {
@@ -48,6 +95,27 @@ type thread struct {
 	turnSeq   int
 	ctxTokens int
 	usage     provider.Usage // totals for the running turn
+}
+
+// Close interrupts running turns, stops background jobs and closes session
+// files (Windows cannot delete or move a file that is still open).
+func (s *Server) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-s.stop:
+	default:
+		close(s.stop)
+	}
+	for _, t := range s.threads {
+		jobs.KillAll(t.id)
+		t.mu.Lock()
+		if t.cancel != nil {
+			t.cancel()
+		}
+		t.mu.Unlock()
+		t.sess.Close()
+	}
 }
 
 func (t *thread) nextItemID() string {
@@ -514,3 +582,6 @@ func (s *Server) startCompact(id string) (any, error) {
 
 // userInput is a synthetic event so the turn's user message becomes an item.
 type userInput struct{ text string }
+
+// eventInput is the inbox counterpart of userInput.
+type eventInput struct{ text string }

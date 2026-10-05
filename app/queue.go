@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sebastianrcnt/atto/events"
+
 	"github.com/sebastianrcnt/atto/tui"
 )
 
@@ -22,6 +24,7 @@ const previewLineLimit = 3
 func (a *App) steer(text string) {
 	a.agent.Steer(text)
 	a.pendingSteers = append(a.pendingSteers, text)
+	events.Wake(a.sess.ID) // `atto sleep` / `atto job wait` return early
 }
 
 func (a *App) enqueue(text string) {
@@ -62,7 +65,11 @@ func (a *App) restoreToEditor(texts []string) {
 // afterRun settles pending input once a turn or compaction finishes.
 func (a *App) afterRun(err error) {
 	if a.runKind == "turn" && err == nil {
-		a.notice("Worked for %s • %s", fmtDur(time.Since(a.runStart).Truncate(time.Second)), time.Now().Format("3:04 PM"))
+		took := "<1s"
+		if d := time.Since(a.runStart); d >= time.Second {
+			took = fmtDur(d.Truncate(time.Second))
+		}
+		a.notice("Worked for %s • %s", took, time.Now().Format("3:04 PM"))
 	}
 	a.runKind = ""
 	if p := a.pendingResume; p != "" {
@@ -89,6 +96,12 @@ func (a *App) afterRun(err error) {
 		a.restoreToEditor(leftover)
 	}
 
+	if len(a.pendingEvents) > 0 && err == nil {
+		a.deliverEvents()
+		if a.busy {
+			return
+		}
+	}
 	if err != nil && len(a.queued) > 0 {
 		a.queuePaused = true
 		a.notice("Queued messages paused. Press enter on an empty prompt to resume, or shift+← to edit.")

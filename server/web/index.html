@@ -122,6 +122,7 @@ function render(it) {
 function update(el, it) {
   switch (it.type) {
     case "userMessage": el.className = "user"; el.textContent = it.text; break;
+    case "event": el.className = "note"; el.textContent = "◆ " + (it.text || "").replace(/^\[atto event\] /, ""); break;
     case "agentMessage": el.className = "agent"; el.innerHTML = md(it.text || ""); break;
     case "reasoning":
       el.innerHTML = `<details><summary>∴ Thinking</summary><pre></pre></details>`;

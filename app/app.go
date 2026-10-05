@@ -15,7 +15,9 @@ import (
 
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/events"
 	"github.com/sebastianrcnt/atto/hooks"
+	"github.com/sebastianrcnt/atto/jobs"
 	"github.com/sebastianrcnt/atto/session"
 	"github.com/sebastianrcnt/atto/tui"
 )
@@ -77,6 +79,10 @@ type App struct {
 	sessName            string
 	// pendingResume is a session to switch to once the running turn stops.
 	pendingResume string
+
+	// Inbox: events waiting for delivery, and counts for the status line.
+	pendingEvents        []events.Event
+	jobCount, timerCount int
 
 	// Status line state.
 	gitBranch   string
@@ -171,6 +177,7 @@ func Run(opts Options) error {
 	if err := a.ui.Start(); err != nil {
 		return err
 	}
+	go a.watchInbox()
 	<-a.quit
 	a.ui.Do(func() {
 		if a.cancel != nil {
@@ -179,6 +186,10 @@ func Run(opts Options) error {
 	})
 	a.ui.Stop()
 	a.sess.Close()
+	// Like codex, background jobs end with the session that started them.
+	if n := jobs.KillAll(a.sess.ID); n > 0 {
+		fmt.Printf("atto: stopped %d background job(s)\n", n)
+	}
 	return nil
 }
 
@@ -196,14 +207,28 @@ func (a *App) build() {
 	a.addHeader()
 }
 
+// leaveSession stops the jobs of the session being left (/clear,
+// /resume): like codex, background processes belong to their session.
+func (a *App) leaveSession() {
+	if a.sess == nil {
+		return
+	}
+	if n := jobs.KillAll(a.sess.ID); n > 0 {
+		a.notice("Stopped %d background job(s) of the previous conversation.", n)
+	}
+	a.jobCount, a.timerCount, a.pendingEvents = 0, 0, nil
+}
+
 // newSession starts recording into a fresh session file.
 func (a *App) newSession() {
+	a.leaveSession()
 	a.sess.Close()
 	a.sess = session.New(a.cwd)
 	a.agent.Record = a.sess.Append
 	a.agent.SetStart(time.Now())
 	a.agent.SetSession(a.sess.ID, sessionEnv(a.sess.ID))
 	a.hooks.SetSession(a.sess.ID, a.sess.Path)
+	a.setLiveSession(a.sess.ID)
 	a.recModel, a.recEffort, a.sessName = "", "", ""
 	a.statusTrigger()
 }
@@ -462,9 +487,17 @@ func (a *App) onEvent(ev any) {
 		a.usage.add(e.Usage)
 		a.statusTrigger()
 	case agent.SteerCommitted:
-		a.pendingSteers = a.pendingSteers[min(len(e.Texts), len(a.pendingSteers)):]
+		var user []string // events were already shown when they arrived
+		for _, t := range e.Texts {
+			if !isEvent(t) {
+				user = append(user, t)
+			}
+		}
+		a.pendingSteers = a.pendingSteers[min(len(user), len(a.pendingSteers)):]
 		a.endStream()
-		a.add(&userBlock{text: strings.Join(e.Texts, "\n\n")})
+		if len(user) > 0 {
+			a.add(&userBlock{text: strings.Join(user, "\n\n")})
+		}
 	case agent.HookNotice:
 		style := tui.Dim
 		if e.Blocked {

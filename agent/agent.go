@@ -540,7 +540,9 @@ func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, emit func(any
 	fail := func(msg string) (string, *session.ToolMeta, bool) {
 		return "error: " + msg, &session.ToolMeta{ExitCode: -1}, false
 	}
-	if name := a.Shell.ToolName(); tc.Function.Name != name {
+	// Accept any shell tool name: a session started on another OS, or a
+	// model calling "bash" out of habit, still runs in this machine's shell.
+	if name := a.Shell.ToolName(); tc.Function.Name != name && !shellToolNames[tc.Function.Name] {
 		return fail(fmt.Sprintf("unknown tool %q; the only tool is %s", tc.Function.Name, name))
 	}
 	var args BashArgs
@@ -687,6 +689,8 @@ func (a *Agent) compact(ctx context.Context, emit func(any), auto bool) error {
 	return nil
 }
 
+var shellToolNames = map[string]bool{"bash": true, "powershell": true, "shell": true, "cmd": true}
+
 // shellGuide tells the model how to use its one tool on this shell.
 func shellGuide(sh shell.Shell) string {
 	switch sh.Kind {
@@ -712,6 +716,8 @@ Every %s call needs a short description of what it does, shown to the user, e.g.
 Commands time out after 60 seconds by default; set timeout for longer builds or tests.`, shellGuide(sh), name)
 	fmt.Fprintf(&b, `
 The full transcript of this session, including anything removed by compaction, can be searched with "atto history grep <regexp>" and read with "atto history show <n>".
+
+Background work: start long-running commands (dev servers, watchers, long builds) with "atto job start -- '<command>'" instead of blocking; quote the command so your shell passes it whole (e.g. atto job start -- 'npm run build && npm test'). When a job exits you receive an "[atto event]" message; check on it with "atto job output <id>", "atto job wait <id> -timeout 10m", or stop it with "atto job kill <id>". To wait for a condition, use "atto monitor -every 30s -until <regexp> -- '<check command>'"; to come back later, use "atto timer in 10m <note>". Then end your turn: you are woken with an [atto event]. "atto sleep <duration>" waits but returns early on events or user input. Run "atto job" for details. Jobs stop when the session ends.
 
 Work autonomously: investigate, make the change, verify it. Keep replies concise and plain; the user sees your tool calls.
 

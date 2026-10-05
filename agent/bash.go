@@ -125,15 +125,15 @@ func RunShell(ctx context.Context, sh shell.Shell, cwd string, env []string, arg
 	cmd := sh.Command(tctx, args.Command)
 	cmd.Dir = cwd
 	cmd.Env = append(append(os.Environ(), "TERM=dumb", "PAGER=cat", "GIT_PAGER=cat", "NO_COLOR=1"), env...)
-	tree := newProcTree(cmd)
-	defer tree.close()
+	tree := shell.NewTree(cmd)
+	defer tree.Close()
 	cmd.WaitDelay = 2 * time.Second // don't hang on pipes held by orphaned children
 	w := &streamWriter{onOutput: onOutput}
 	cmd.Stdout, cmd.Stderr = w, w
 
 	err := cmd.Start()
 	if err == nil {
-		tree.started()
+		tree.Started()
 		err = cmd.Wait()
 	}
 	res := BashResult{Duration: time.Since(start)}

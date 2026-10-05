@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -31,7 +32,7 @@ func TestCatalogAndMerge(t *testing.T) {
 	if err := SetAPIKey("opencode-go", "k-123"); err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := os.Stat(AuthPath()); st.Mode().Perm() != 0o600 {
+	if st, _ := os.Stat(AuthPath()); runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
 		t.Fatalf("auth.json mode %v", st.Mode())
 	}
 	os.WriteFile(ModelsPath(), []byte(`{"providers":{"opencode-go":{"models":[{"id":"glm-5.3","name":"My GLM","efforts":["high"]}]}}}`), 0o644)

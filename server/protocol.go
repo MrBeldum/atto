@@ -28,6 +28,7 @@
 //	item/delta     {turnId, itemId, delta}
 //	item/completed {turnId, item}
 //	hook           {event, message, blocked}
+//	event          {title}  (inbox event delivered to the thread)
 //	turn/completed {turnId, status, error?, usage, contextTokens}
 package server
 
@@ -75,6 +76,7 @@ const (
 	ItemAgent      = "agentMessage"
 	ItemCommand    = "commandExecution"
 	ItemCompaction = "compaction"
+	ItemEvent      = "event" // [atto event]: a job exited, a timer fired, a monitor matched
 )
 
 // Item is one unit of a turn's output.

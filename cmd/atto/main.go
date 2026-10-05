@@ -24,6 +24,7 @@ usage:
   atto login openai                 sign in with ChatGPT (subscription)
   atto logout <provider>            remove stored credentials
   atto history grep|show ...        search a session transcript
+  atto job|monitor|timer|sleep ...  background jobs and wake-ups (atto job for details)
   atto serve [-listen addr]         JSON-RPC over HTTP + SSE, with a web client
   atto app-server                   JSON-RPC over stdio (JSON lines)
 
@@ -33,11 +34,16 @@ flags:
 func main() {
 	if len(os.Args) > 1 {
 		sub := map[string]func([]string, io.Writer) error{
-			"history": app.RunHistory,
-			"auth":    app.RunAuth,
-			"models":  app.RunModels,
-			"login":   app.RunLogin,
-			"logout":  app.RunLogout,
+			"history":    app.RunHistory,
+			"auth":       app.RunAuth,
+			"models":     app.RunModels,
+			"job":        app.RunJob,
+			"monitor":    app.RunMonitor,
+			"timer":      app.RunTimer,
+			"sleep":      app.RunSleep,
+			"_supervise": app.RunSupervise,
+			"login":      app.RunLogin,
+			"logout":     app.RunLogout,
 			"serve": func(args []string, out io.Writer) error {
 				provider.UserAgent = "github.com/sebastianrcnt/atto/" + app.Version
 				return server.RunHTTP(app.Version, args, out)

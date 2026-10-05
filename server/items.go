@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/sebastianrcnt/atto/agent"
+	"github.com/sebastianrcnt/atto/events"
 	"github.com/sebastianrcnt/atto/session"
 )
 
@@ -84,6 +85,11 @@ func (m *itemMapper) event(ev any) {
 	switch e := ev.(type) {
 	case userInput:
 		m.user(e.text)
+	case eventInput:
+		it := m.newItem(ItemEvent)
+		it.Text = e.text
+		m.started(it)
+		m.completed(it)
 	case agent.ReasoningDelta:
 		if m.reasoning == nil {
 			m.reasoning = m.newItem(ItemReasoning)
@@ -137,7 +143,16 @@ func (m *itemMapper) event(ev any) {
 		m.t.mu.Unlock()
 	case agent.SteerCommitted:
 		m.closeText()
-		m.user(strings.Join(e.Texts, "\n\n"))
+		for _, txt := range e.Texts {
+			if strings.HasPrefix(txt, events.Prefix) {
+				it := m.newItem(ItemEvent)
+				it.Text = txt
+				m.started(it)
+				m.completed(it)
+			} else {
+				m.user(txt)
+			}
+		}
 	case agent.CompactStart:
 		m.closeText()
 		m.compact = m.newItem(ItemCompaction)
@@ -182,6 +197,9 @@ func ItemsFromEntries(threadID string, entries []session.Entry) []Item {
 			switch msg.Role {
 			case "user":
 				it := next(ItemUser)
+				if strings.HasPrefix(msg.Content, events.Prefix) {
+					it.Type = ItemEvent
+				}
 				it.Text = msg.Content
 				out = append(out, it)
 			case "assistant":

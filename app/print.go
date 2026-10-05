@@ -16,6 +16,7 @@ import (
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/hooks"
+	"github.com/sebastianrcnt/atto/jobs"
 	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/session"
 )
@@ -227,6 +228,9 @@ func RunPrint(o PrintOptions) error {
 
 	began := time.Now()
 	runErr := ag.Run(ctx, o.Prompt, func(ev any) { p.event(ev, &res) })
+	if n := jobs.KillAll(sess.ID); n > 0 { // jobs end with the run
+		fmt.Fprintf(os.Stderr, "atto: stopped %d background job(s)\n", n)
+	}
 	p.flushStep()
 	res.DurationMs = time.Since(began).Milliseconds()
 	res.Result = strings.TrimSpace(p.lastText)
