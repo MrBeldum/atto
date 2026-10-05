@@ -169,7 +169,11 @@ type (
 	// CompactStart, CompactDelta and CompactEnd bracket a compaction.
 	CompactStart struct{ Auto bool }
 	CompactDelta struct{ Text string }
-	CompactEnd   struct {
+	// CompactTrimmed: the compaction request left out the oldest Messages
+	// to fit the context window (the conversation keeps them until the
+	// compaction replaces it).
+	CompactTrimmed struct{ Messages int }
+	CompactEnd     struct {
 		Notes         string
 		Before, After int // estimated context tokens
 		Elapsed       time.Duration
@@ -1079,11 +1083,30 @@ func (a *Agent) compact(ctx context.Context, emit func(any), auto bool) error {
 	before := a.ContextTokens()
 	emit(CompactStart{Auto: auto})
 
-	client, req := a.request(provider.Message{Role: "user", Content: fmt.Sprintf(compactPrompt, CompactNoteWords)})
+	prompt := provider.Message{Role: "user", Content: fmt.Sprintf(compactPrompt, CompactNoteWords)}
+	client, req := a.request(prompt)
 	req.ToolChoice = "none"
-	res, err := client.Stream(ctx, req, provider.Handler{
-		OnText: func(s string) { emit(CompactDelta{s}) },
-	})
+	model, _ := a.Current()
+	est := before + messageChars(prompt)/4
+	var res provider.Result
+	var err error
+	for try := 0; ; try++ {
+		// The conversation is at its limit by now, and one large tool result
+		// can take it past the point where the request plus a full-size
+		// answer fits: give the notes the room that is left, and when that
+		// is too little drop the oldest turns from the request (codex trims
+		// history the same way). The conversation itself is untouched.
+		need := compactRoom << try
+		if dropped := fitCompaction(&req, model.Model, est, need); dropped > 0 {
+			emit(CompactTrimmed{Messages: dropped})
+		}
+		res, err = client.Stream(ctx, req, provider.Handler{
+			OnText: func(s string) { emit(CompactDelta{s}) },
+		})
+		if err == nil || try >= 2 || !contextExceeded(err) || ctx.Err() != nil {
+			break
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("compaction failed: %w", err)
 	}
@@ -1128,6 +1151,54 @@ func (a *Agent) compact(ctx context.Context, emit func(any), auto bool) error {
 	}
 	emit(CompactEnd{Notes: notes, Before: before, After: after, Elapsed: elapsed})
 	return nil
+}
+
+// compactRoom is the least room a compaction request keeps for its answer:
+// the notes (CompactNoteWords) and the thinking before them.
+const compactRoom = 8192
+
+// fitCompaction makes req, whose prompt is about est tokens, fit model's
+// context window with need tokens left to answer: it lowers MaxTokens to
+// the room left, and drops the oldest turns of the conversation (never
+// the system prompt or the compaction prompt, and whole turns, so a tool
+// call keeps its result) until need fits. It returns how many messages it
+// dropped.
+func fitCompaction(req *provider.Request, m config.Model, est, need int) int {
+	window := m.ContextWindow
+	if window <= 0 {
+		return 0
+	}
+	const margin = 256 // token estimates are rough; servers add a few of their own
+	dropped := 0
+	msgs := req.Messages // [system, conversation..., compaction prompt]
+	for window-est-margin < need && len(msgs) > 3 {
+		// Drop up to (not including) the next user message after the first.
+		end := 2
+		for end < len(msgs)-1 && msgs[end].Role != "user" {
+			end++
+		}
+		if end >= len(msgs)-1 { // one turn left: keep it
+			break
+		}
+		for _, d := range msgs[1:end] {
+			est -= messageChars(d) / 4
+		}
+		dropped += end - 1
+		msgs = append(msgs[:1:1], msgs[end:]...)
+	}
+	req.Messages = msgs
+	if room := window - est - margin; req.MaxTokens <= 0 || req.MaxTokens > room {
+		req.MaxTokens = max(room, 1024)
+	}
+	return dropped
+}
+
+// contextExceeded reports whether err says the request didn't fit the
+// model's context window.
+func contextExceeded(err error) bool {
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "context") && (strings.Contains(s, "exceed") || strings.Contains(s, "too long") ||
+		strings.Contains(s, "maximum") || strings.Contains(s, "no room"))
 }
 
 var shellToolNames = map[string]bool{"bash": true, "powershell": true, "shell": true, "cmd": true}
