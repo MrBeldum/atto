@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestUnknownCommand(t *testing.T) {
 	known := subcommandNames()
@@ -44,5 +47,23 @@ func TestEditDistance(t *testing.T) {
 		if got := editDistance(c.a, c.b); got != c.d {
 			t.Errorf("%s/%s = %d", c.a, c.b, got)
 		}
+	}
+}
+
+func TestResumeArgs(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"atto resume", "atto -resume"},
+		{"atto resume ab12", "atto -session ab12"},
+		{"atto resume -m x ab12", "atto -m x -session ab12"},
+		{"atto resume -m x", "atto -m x -resume"},
+	}
+	for _, c := range cases {
+		got := strings.Join(resumeArgs(strings.Fields(c.in)), " ")
+		if got != c.want {
+			t.Errorf("%q: got %q, want %q", c.in, got, c.want)
+		}
+	}
+	if !nestedRefused["resume"] {
+		t.Error("resume starts an agent and must be refused inside one")
 	}
 }
