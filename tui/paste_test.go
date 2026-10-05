@@ -38,7 +38,7 @@ func TestBracketedPasteParsing(t *testing.T) {
 
 func TestUnbracketedPasteBurst(t *testing.T) {
 	now := time.Unix(0, 0)
-	p := inputParser{now: func() time.Time { return now }}
+	p := inputParser{bursts: true, now: func() time.Time { return now }}
 	// Typed keys, and a line typed then submitted, are not pastes.
 	for _, in := range []string{"a", "\r", "hi\r", "\x1b[A", "x\x7f"} {
 		if got := p.feed(in); strings.HasPrefix(got[0], PastePrefix) {
@@ -193,5 +193,12 @@ func TestEditorRendersPlaceholderInColor(t *testing.T) {
 		if strings.Count(l, placeholderOn) != strings.Count(l, placeholderOff) {
 			t.Fatalf("unbalanced row %q", l)
 		}
+	}
+}
+
+func TestNoBurstHeuristicByDefault(t *testing.T) {
+	var p inputParser // Unix: terminals bracket pastes
+	if got := p.feed("a\rb"); slices.Contains(got, PastePrefix+"a\rb") {
+		t.Fatalf("unbracketed input must stay keys: %q", got)
 	}
 }

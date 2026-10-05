@@ -25,6 +25,10 @@ type inputParser struct {
 	// time.Now unless a test sets it.
 	lastBurst time.Time
 	now       func() time.Time
+	// bursts turns on the unbracketed-paste heuristic. Only Windows needs
+	// it (conhost sends no paste markers); Unix terminals bracket pastes,
+	// and there the heuristic could only turn a fast Enter into a newline.
+	bursts bool
 }
 
 // burstGap is how soon after an unbracketed paste a read still belongs
@@ -32,7 +36,7 @@ type inputParser struct {
 const burstGap = 30 * time.Millisecond
 
 func (p *inputParser) feed(data string) []string {
-	if p.pending == "" && p.paste == nil {
+	if p.bursts && p.pending == "" && p.paste == nil {
 		now := time.Now
 		if p.now != nil {
 			now = p.now
