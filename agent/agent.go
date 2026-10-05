@@ -275,6 +275,20 @@ func (a *Agent) Steer(text string) {
 	a.steerMu.Unlock()
 }
 
+// Unsteer takes back the last steer equal to text if it has not been
+// committed yet, and reports whether it did.
+func (a *Agent) Unsteer(text string) bool {
+	a.steerMu.Lock()
+	defer a.steerMu.Unlock()
+	for i := len(a.steers) - 1; i >= 0; i-- {
+		if a.steers[i] == text {
+			a.steers = append(a.steers[:i:i], a.steers[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
 // DrainSteers removes and returns steering messages not yet committed.
 func (a *Agent) DrainSteers() []string {
 	a.steerMu.Lock()

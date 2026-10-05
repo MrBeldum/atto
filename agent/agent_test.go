@@ -216,3 +216,16 @@ var sleepCmd = func() string {
 	}
 	return "sleep 0.3"
 }()
+
+func TestUnsteer(t *testing.T) {
+	a := New(config.ModelRef{}, "", t.TempDir())
+	a.Steer("a")
+	a.Steer("b")
+	a.Steer("a")
+	if !a.Unsteer("a") || a.Unsteer("c") {
+		t.Fatal("unsteer")
+	}
+	if s := a.DrainSteers(); len(s) != 2 || s[0] != "a" || s[1] != "b" {
+		t.Fatalf("left %q", s)
+	}
+}

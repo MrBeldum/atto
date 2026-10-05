@@ -525,6 +525,9 @@ func (a *App) onInput(data string) bool {
 			return true
 		}
 	case "shift+left":
+		if a.editLastSteer() {
+			return true
+		}
 		if len(a.queued) > 0 {
 			a.editLastQueued()
 			return true

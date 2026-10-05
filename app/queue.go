@@ -17,7 +17,8 @@ import (
 //     turn after the next tool call (or when the model stops, which continues
 //     the turn). Esc interrupts and sends pending steers immediately.
 //   - Tab queues a follow-up that starts as a new turn when the current one
-//     ends. Shift+Left pulls the last queued message back into the editor.
+//     ends. Shift+Left pulls the last steer not yet delivered, else the last
+//     queued message, back into the editor.
 
 const previewLineLimit = 3
 
@@ -50,6 +51,22 @@ func (a *App) queueFromEditor() {
 		return
 	}
 	a.enqueue(text, att)
+}
+
+// editLastSteer pulls the last steer back into the editor if the turn has
+// not taken it yet.
+func (a *App) editLastSteer() bool {
+	n := len(a.pendingSteers)
+	if n == 0 || !a.agent.Unsteer(a.pendingSteers[n-1]) {
+		return false
+	}
+	last := a.pendingSteers[n-1]
+	a.pendingSteers = a.pendingSteers[:n-1]
+	if cur := a.editor.Text(); strings.TrimSpace(cur) != "" {
+		last += "\n" + cur
+	}
+	a.editor.SetText(last)
+	return true
 }
 
 func (a *App) editLastQueued() {
@@ -204,6 +221,7 @@ func (a *App) renderPending(width int) []string {
 		for _, s := range a.pendingSteers {
 			out = append(out, previewLines(s, width, plain)...)
 		}
+		out = append(out, "    "+tui.FG(6, "shift+←")+tui.Dim(" edit last message"))
 	}
 	if len(a.queued) > 0 {
 		if len(a.pendingSteers) > 0 {
