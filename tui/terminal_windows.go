@@ -13,6 +13,7 @@ import (
 type consoleState struct {
 	in, out         windows.Handle
 	inMode, outMode uint32
+	inCP, outCP     uint32
 	ok              bool
 }
 
@@ -25,6 +26,13 @@ func enableVT(in, out *os.File) consoleState {
 		return s
 	}
 	s.ok = true
+	// Use UTF-8 code pages while atto runs. Under a legacy code page (437 on
+	// English Windows) conhost measures CJK text differently from the
+	// terminal drawing it, and wide characters can come out doubled.
+	s.inCP, _ = windows.GetConsoleCP()
+	s.outCP, _ = windows.GetConsoleOutputCP()
+	_ = windows.SetConsoleCP(cpUTF8)
+	_ = windows.SetConsoleOutputCP(cpUTF8)
 	_ = windows.SetConsoleMode(s.out, s.outMode|windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING|windows.DISABLE_NEWLINE_AUTO_RETURN|windows.ENABLE_PROCESSED_OUTPUT)
 	// term.MakeRaw already ran; add VT input on top of the raw mode.
 	var raw uint32
@@ -39,6 +47,12 @@ func restoreVT(s consoleState) {
 		return
 	}
 	_ = windows.SetConsoleMode(s.out, s.outMode)
+	if s.outCP != 0 {
+		_ = windows.SetConsoleOutputCP(s.outCP)
+	}
+	if s.inCP != 0 {
+		_ = windows.SetConsoleCP(s.inCP)
+	}
 }
 
 // watchResize polls the console size: Windows has no SIGWINCH.
@@ -58,3 +72,6 @@ func watchResize(t *ProcessTerminal, done <-chan struct{}, onResize func()) {
 		}
 	}
 }
+
+// cpUTF8 is the UTF-8 code page.
+const cpUTF8 = 65001
