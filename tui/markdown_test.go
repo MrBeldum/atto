@@ -83,6 +83,7 @@ func TestTableWithEmptyHeader(t *testing.T) {
 	want := []string{
 		"┌─────┬─────────┐",
 		"│ OS  │ Windows │",
+		"├─────┼─────────┤",
 		"│ CPU │ 19%     │",
 		"└─────┴─────────┘",
 	}

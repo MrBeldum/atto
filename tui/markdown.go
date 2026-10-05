@@ -383,7 +383,9 @@ func (r *mdRenderer) table(rows [][]string, aligns []byte, width int) {
 			}
 			r.emit(b.String())
 		}
-		if i == 0 && header && len(cells) > 1 {
+		// A rule between every row (as Claude Code draws them): cells that
+		// wrap onto several lines would otherwise run into the next row.
+		if i < len(cells)-1 {
 			r.emit(border("├", "┼", "┤"))
 		}
 	}
