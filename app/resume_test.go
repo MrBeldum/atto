@@ -261,7 +261,13 @@ func TestResumePickerPreview(t *testing.T) {
 	p.HandleInput("\x7f")
 	p.HandleInput("\x7f")
 
-	p.list.Selected = 1 // newest first: the two-message session is older
+	// Pick the two-message session by content: both are saved within the
+	// same clock tick on some systems, so their order is not fixed.
+	for i, it := range p.list.Items {
+		if it.Data.(session.Summary).Messages == 2 {
+			p.list.Selected = i
+		}
+	}
 	p.HandleInput(" ")
 	if p.mode != modePreview {
 		t.Fatal("space on an empty search previews")
