@@ -234,6 +234,11 @@ type threadParams struct {
 	NumTurns int    `json:"numTurns"`
 	// Images go with turn/start's input (see images.go).
 	Images []ImageInput `json:"images"`
+	// prompt/answer (live sessions)
+	ID     string  `json:"id"`
+	Index  *int    `json:"index"`
+	Text   *string `json:"text"`
+	Cancel bool    `json:"cancel"`
 }
 
 func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (any, error) {

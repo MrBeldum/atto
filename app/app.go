@@ -168,6 +168,13 @@ type App struct {
 	remotePort   *int
 	fromRemote   bool
 	remoteSteers map[string]int
+	// prompt is the open modal as /remote's clients see it
+	// (remoteprompt.go), whether or not /remote is on; promptHow and
+	// promptByRemote say how it is being closed.
+	prompt         *openPrompt
+	promptSeq      int
+	promptHow      string
+	promptByRemote bool
 
 	cwd      string
 	quit     chan struct{}
@@ -663,6 +670,7 @@ func (a *App) start(activity string, fn func(context.Context, func(any)) error) 
 			a.statusTrigger()
 			a.remoteTurnCompleted(err)
 			a.afterRun(err)
+			a.remoteGoal()
 		})
 	}()
 }

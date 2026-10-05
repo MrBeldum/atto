@@ -128,6 +128,7 @@ func (a *App) exitMenu() {
 
 // dismissModal closes the menu without starting whatever waited for it.
 func (a *App) dismissModal() {
+	a.promptGone()
 	a.modal = nil
 	a.ui.SetFocus(a.editor)
 }

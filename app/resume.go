@@ -417,6 +417,12 @@ func (p *resumePicker) row(it tui.SelectItem, selected bool, mark string, width 
 	case mark != "":
 		marker = tui.Dim(mark + " ")
 	}
+	meta := "  " + p.rowMeta(s)
+	return []string{tui.Truncate(marker+title, width, "…"), tui.Truncate(tui.Dim(meta), width, "…")}
+}
+
+// rowMeta is a session's second line: when, branch and size.
+func (p *resumePicker) rowMeta(s session.Summary) string {
 	parts := []string{session.RelTime(s.Updated)}
 	if s.Running > 0 {
 		parts = append(parts, "running")
@@ -431,8 +437,7 @@ func (p *resumePicker) row(it tui.SelectItem, selected bool, mark string, width 
 	if p.all {
 		parts = append(parts, "⌁ "+shortPath(s.Cwd))
 	}
-	meta := "  " + strings.Join(parts, " · ")
-	return []string{tui.Truncate(marker+title, width, "…"), tui.Truncate(tui.Dim(meta), width, "…")}
+	return strings.Join(parts, " · ")
 }
 
 // formatSize writes a byte count like "792.7KB".

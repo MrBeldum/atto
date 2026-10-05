@@ -51,6 +51,38 @@ export type ThreadInfo = {
   items?: Item[];
   eventId?: number;
   live?: boolean;
+  prompt?: Prompt;
+  goal?: GoalInfo;
+};
+
+// A picker or input open in the live session's terminal.
+export type Prompt = {
+  id: string;
+  kind: "select" | "input";
+  title: string;
+  subtitle?: string;
+  options?: { label: string; description?: string }[];
+  selected: number;
+  filterable?: boolean;
+  total?: number;
+  note?: string;
+  text?: string;
+  placeholder?: string;
+};
+
+// The live session's goal, worded as the terminal's status line.
+export type GoalInfo = {
+  objective: string;
+  status: string;
+  statusLabel: string;
+  indicator: string;
+  summary: string;
+  note?: string;
+  tokens: string;
+  tokensUsed: number;
+  budget?: number;
+  elapsed: string;
+  seconds: number;
 };
 
 export type ThreadSummary = {

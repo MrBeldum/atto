@@ -37,6 +37,9 @@ type Live interface {
 	Background() bool
 	SetModel(id string) (ThreadInfo, error)
 	SetEffort(level string) (ThreadInfo, error)
+	// Answer answers the open prompt id (see Prompt) as if in the front
+	// end; an error when it is no longer open or the answer does not fit.
+	Answer(id string, ans PromptAnswer) error
 }
 
 // NewLive makes a server for one live conversation. Its notifications
@@ -144,6 +147,20 @@ func (s *Server) liveCall(method string, p threadParams) (any, error) {
 		return nil, nil
 	case "thread/rollback":
 		return nil, &rpcError{codeServer, "not available for the live session: use /tree in the terminal"}
+	case "prompt/answer":
+		if _, err := cur(); err != nil {
+			return nil, err
+		}
+		if p.ID == "" {
+			return nil, invalid("id is required")
+		}
+		if !p.Cancel && p.Index == nil && p.Text == nil {
+			return nil, invalid("index, text or cancel is required")
+		}
+		if err := l.Answer(p.ID, PromptAnswer{Index: p.Index, Text: p.Text, Cancel: p.Cancel}); err != nil {
+			return nil, invalid("%v", err)
+		}
+		return nil, nil
 	}
 	return nil, &rpcError{codeMethodNotFound, "unknown method " + method}
 }

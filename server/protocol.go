@@ -51,6 +51,19 @@
 //
 //	thread/switched {threadId, previousThreadId}  (/clear, /resume or /tree in the terminal: thread/read again)
 //	thread/updated  {thread}  (model, effort, name or busy changed)
+//	goal/updated    {goal}  (the goal changed; null when cleared; see GoalInfo)
+//	prompt/open     {prompt}  (the terminal opened a picker or an input; see Prompt)
+//	prompt/closed   {id, how, by}  (how: answered, cancelled or closed; by: terminal or remote)
+//
+// and one more request:
+//
+//	prompt/answer  {threadId, id, index? | text? | cancel?}  → {}
+//	               answers the open prompt as if in the terminal: index
+//	               picks an option of a select, text submits an input,
+//	               cancel is Esc. The first answer wins, from either side;
+//	               a prompt that is no longer open is refused.
+//
+// thread/read's result carries the open prompt and the goal as well.
 package server
 
 import (
@@ -169,4 +182,69 @@ type ThreadInfo struct {
 	EventID int64 `json:"eventId,omitempty"`
 	// Live marks the TUI's own session served by /remote.
 	Live bool `json:"live,omitempty"`
+	// Prompt is the live session's open picker or input, and Goal its
+	// goal (live sessions only).
+	Prompt *Prompt   `json:"prompt,omitempty"`
+	Goal   *GoalInfo `json:"goal,omitempty"`
+}
+
+// Prompt kinds.
+const (
+	PromptSelect = "select"
+	PromptInput  = "input"
+)
+
+// Prompt is a choice or a line of input the live session's terminal asks
+// for (a picker, a confirmation, an extension's dialog), mirrored to the
+// clients so they can answer it.
+type Prompt struct {
+	ID       string `json:"id"`
+	Kind     string `json:"kind"` // select or input
+	Title    string `json:"title"`
+	Subtitle string `json:"subtitle,omitempty"`
+
+	// select: the options, and the one selected at first. Filterable
+	// pickers (/model, /resume) can be searched; the client filters.
+	// Total is the number of options before they were capped, when it was.
+	Options    []PromptOption `json:"options,omitempty"`
+	Selected   int            `json:"selected"`
+	Filterable bool           `json:"filterable,omitempty"`
+	Total      int            `json:"total,omitempty"`
+	Note       string         `json:"note,omitempty"`
+
+	// input: the text so far and a placeholder.
+	Text        string `json:"text,omitempty"`
+	Placeholder string `json:"placeholder,omitempty"`
+}
+
+type PromptOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+
+// PromptAnswer is a client's answer to a prompt: Index for a select,
+// Text for an input, or Cancel.
+type PromptAnswer struct {
+	Index  *int
+	Text   *string
+	Cancel bool
+}
+
+// GoalInfo is the live session's goal as the terminal shows it.
+type GoalInfo struct {
+	Objective string `json:"objective"`
+	Status    string `json:"status"`      // active, paused, blocked, usage_limited, budget_limited, complete
+	Label     string `json:"statusLabel"` // the status as atto words it: "stalled", "limited by budget"
+	// Indicator is the status line's text ("Pursuing goal (12.5K / 50K)"),
+	// Summary the goal's usage summary.
+	Indicator string `json:"indicator"`
+	Summary   string `json:"summary"`
+	Note      string `json:"note,omitempty"`
+	// Tokens is "12.5K" or "12.5K / 50K"; Elapsed the time spent, with
+	// the running turn ("14m").
+	Tokens     string `json:"tokens"`
+	TokensUsed int    `json:"tokensUsed"`
+	Budget     int    `json:"budget,omitempty"`
+	Elapsed    string `json:"elapsed"`
+	Seconds    int64  `json:"seconds"`
 }

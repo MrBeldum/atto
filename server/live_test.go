@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,6 +28,18 @@ type fakeLive struct {
 	images int
 	stops  int
 	items  []Item
+	// answers to the open prompt "p1"
+	answers []PromptAnswer
+}
+
+func (f *fakeLive) Answer(id string, ans PromptAnswer) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id != "p1" {
+		return errors.New("prompt " + id + " is not open")
+	}
+	f.answers = append(f.answers, ans)
+	return nil
 }
 
 func (f *fakeLive) Thread(items bool, at func()) (ThreadInfo, error) {
@@ -238,6 +251,21 @@ func TestLiveSessionProtocol(t *testing.T) {
 	if _, err := c.call("thread/rollback", map[string]any{}); err == nil {
 		t.Fatal("thread/rollback should be refused")
 	}
+
+	// Prompt answers go to the front end; malformed ones do not.
+	c.must("prompt/answer", map[string]any{"id": "p1", "index": 2})
+	c.must("prompt/answer", map[string]any{"id": "p1", "text": "hi"})
+	c.must("prompt/answer", map[string]any{"id": "p1", "cancel": true})
+	for _, bad := range []map[string]any{{"index": 0}, {"id": "p1"}, {"id": "p9", "cancel": true}} {
+		if _, err := c.call("prompt/answer", bad); err == nil || err.Code != codeInvalidParams {
+			t.Fatalf("prompt/answer %v: %v", bad, err)
+		}
+	}
+	f.mu.Lock()
+	if a := f.answers; len(a) != 3 || *a[0].Index != 2 || *a[1].Text != "hi" || !a[2].Cancel {
+		t.Fatalf("answers %+v", a)
+	}
+	f.mu.Unlock()
 
 	// The front end switched sessions: clients hear it, and the old ID is
 	// refused.

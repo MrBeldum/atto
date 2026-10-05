@@ -12,6 +12,7 @@ import (
 
 	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/core/transcript"
+	"github.com/sebastianrcnt/atto/goal"
 	"github.com/sebastianrcnt/atto/images"
 	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/server"
@@ -53,6 +54,8 @@ type remote struct {
 	// thread/read puts them back in place.
 	notices int
 	notes   []remoteNote
+	// goal is the goal last published (goal/updated).
+	goal *server.GoalInfo
 }
 
 type remoteNote struct {
@@ -148,6 +151,7 @@ func (a *App) startRemote(port int) {
 		r.links = []string{"http://" + r.addr + "/#token=" + token}
 	}
 	r.last = a.remoteInfo(r)
+	r.goal = a.remoteGoalInfo()
 	a.remote = r
 	go func() { _ = r.srv.Serve(ln) }()
 	a.showRemote(r)
@@ -286,6 +290,7 @@ func (a *App) remoteSwitched() {
 	prev := r.thread
 	r.thread = a.sess.ID
 	r.last = a.remoteInfo(r)
+	r.goal = a.remoteGoalInfo()
 	r.notes = nil
 	r.api.Publish("thread/switched", map[string]any{"threadId": a.sess.ID, "previousThreadId": prev})
 }
@@ -313,6 +318,42 @@ func (a *App) remoteTurnStarted() {
 	r.turnSeq++
 	r.turnID = fmt.Sprintf("%s-t%d", a.sess.ID, r.turnSeq)
 	a.remotePublish("turn/started", map[string]any{"turnId": r.turnID})
+	a.remoteGoal()
+}
+
+// remoteGoalInfo is the goal as the status line shows it; nil without one.
+func (a *App) remoteGoalInfo() *server.GoalInfo {
+	g := a.goal.Goal
+	if g == nil {
+		return nil
+	}
+	secs := a.goal.Elapsed()
+	tokens := goal.Tokens(g.TokensUsed)
+	if g.Budget > 0 {
+		tokens += " / " + goal.Tokens(g.Budget)
+	}
+	return &server.GoalInfo{
+		Objective: g.Objective, Status: string(g.Status), Label: g.Status.Label(),
+		Indicator: g.Indicator(secs), Summary: g.Summary(), Note: g.Note,
+		Tokens: tokens, TokensUsed: g.TokensUsed, Budget: g.Budget,
+		Elapsed: goal.FormatElapsed(secs), Seconds: secs,
+	}
+}
+
+// remoteGoal publishes the goal when it changed (goal/updated; null when
+// cleared). It is called where the goal changes, and by the inbox's tick
+// for the time of a running turn.
+func (a *App) remoteGoal() {
+	r := a.remote
+	if r == nil {
+		return
+	}
+	g := a.remoteGoalInfo()
+	if (g == nil) == (r.goal == nil) && (g == nil || *g == *r.goal) {
+		return
+	}
+	r.goal = g
+	a.remotePublish("goal/updated", map[string]any{"goal": g})
 }
 
 func (a *App) remoteTurnCompleted(err error) {
@@ -359,6 +400,11 @@ func (l remoteSession) Thread(items bool, at func()) (server.ThreadInfo, error) 
 	var info server.ThreadInfo
 	err := l.do(func() error {
 		info = l.a.remoteInfo(l.r)
+		info.Goal = l.a.remoteGoalInfo()
+		if p := l.a.prompt; p != nil {
+			w := p.wire
+			info.Prompt = &w
+		}
 		if items {
 			notes := l.r.notes
 			for i, it := range l.a.tr().Items() {

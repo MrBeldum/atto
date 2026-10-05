@@ -198,12 +198,17 @@ func (a *App) runCommand(text string) {
 	}
 }
 
+// openModal shows m in place of the editor; a prompt (see remoteprompt.go)
+// shows on /remote's clients too.
 func (a *App) openModal(m modal) {
+	a.promptGone() // one open modal replaced by another
 	a.modal = m
 	a.ui.SetFocus(m)
+	a.promptOpened(m)
 }
 
 func (a *App) closeModal() {
+	a.promptGone()
 	a.modal = nil
 	a.ui.SetFocus(a.editor)
 	a.maybeSendNextQueued()

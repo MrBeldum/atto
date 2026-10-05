@@ -30,6 +30,8 @@
   --color-orange-tint: var(--orange-tint);
   --color-red: var(--red);
   --color-red-tint: var(--red-tint);
+  --color-magenta: var(--magenta);
+  --color-magenta-tint: var(--magenta-tint);
 
   --shadow-hairline: var(--sh-hairline);
   --shadow-btn: var(--sh-btn);
@@ -67,6 +69,9 @@
   --orange-tint: oklch(96.4% 0.021 67.581);
   --red: oklch(62.1% 0.192 23.042);
   --red-tint: oklch(95.6% 0.017 17.462);
+  /* the goal's color, as the terminal's magenta indicator */
+  --magenta: oklch(55.8% 0.215 322.15);
+  --magenta-tint: oklch(96.2% 0.022 318.85);
   --sh-hairline: 0 0 0 1px var(--line);
   --sh-btn: 0 0 0 1px var(--line-strong), 0 0 4px 0 #0000000a;
   --sh-card: 0 0 0 1px var(--line), 0 18px 47px 0 #00000008, 0 4px 10.5px 0 #00000005, 0 1.2px 3.1px 0 #00000003;
@@ -98,6 +103,8 @@
     --orange-tint: oklch(74.6% 0.156 55.642 / 0.14);
     --red: oklch(66.6% 0.18 21.433);
     --red-tint: oklch(66.6% 0.18 21.433 / 0.14);
+    --magenta: oklch(74% 0.17 322.15);
+    --magenta-tint: oklch(74% 0.17 322.15 / 0.14);
     --sh-btn: 0 0 0 1px oklch(100% 0 0 / 0.1), 0 1px 2px oklch(0% 0 0 / 0.3);
     --sh-card: 0 0 0 1px oklch(100% 0 0 / 0.11), 0 1px 2px oklch(0% 0 0 / 0.2), 0 2px 6px oklch(0% 0 0 / 0.2);
     --sh-raised: 0 0 0 1px oklch(100% 0 0 / 0.13), 0 2px 10px oklch(0% 0 0 / 0.22);
@@ -110,6 +117,17 @@ html,
 body,
 #app {
   height: 100%;
+}
+/* Only the transcript scrolls: the page itself never does, so iOS has
+ * one scroller to move (and the visible height, toolbars aside). */
+html,
+body {
+  overflow: hidden;
+}
+@supports (height: 100dvh) {
+  #app {
+    height: 100dvh;
+  }
 }
 
 body {
@@ -244,6 +262,14 @@ body {
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+@keyframes sheet-up {
+  0% {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
   }
 }
 @keyframes spin {

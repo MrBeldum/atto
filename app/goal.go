@@ -36,6 +36,7 @@ func (a *App) snapshotGoal(g *goal.Goal) {
 		raw, _ = json.Marshal(g)
 	}
 	a.sess.Append(session.Entry{Type: session.TypeGoal, Goal: raw})
+	a.remoteGoal()
 }
 
 // continueGoal starts the next goal turn when nothing else is waiting:
@@ -213,17 +214,14 @@ func goalSummaryLines(g *goal.Goal) []string {
 
 // goalPrompt is a picker with a heading above it, as codex's confirmations.
 type goalPrompt struct {
-	head []string
-	list *tui.SelectList
+	title, subtitle string
+	list            *tui.SelectList
 }
 
 func (p goalPrompt) HandleInput(data string) { p.list.HandleInput(data) }
 
 func (p goalPrompt) Render(width int) []string {
-	var out []string
-	for _, l := range p.head {
-		out = append(out, tui.Truncate(l, width, "…"))
-	}
+	out := []string{tui.Truncate(" "+tui.Bold(p.title), width, "…"), tui.Truncate(" "+tui.Dim(p.subtitle), width, "…"), ""}
 	out = append(out, p.list.Render(width)...)
 	return append(out, "", tui.Truncate(tui.Dim("  Press enter to confirm or esc to go back"), width, "…"))
 }
@@ -238,7 +236,7 @@ func (a *App) goalChoice(title, subtitle string, yes, no tui.SelectItem, onYes f
 		}
 	}
 	l.OnCancel = a.closeModal
-	a.openModal(goalPrompt{head: []string{" " + tui.Bold(title), " " + tui.Dim(subtitle), ""}, list: l})
+	a.openModal(goalPrompt{title: title, subtitle: subtitle, list: l})
 }
 
 // confirmReplaceGoal is codex's "Replace goal?" before a new objective
@@ -276,7 +274,7 @@ func (a *App) editGoal() {
 		a.add(&infoBlock{title: goalUsage, hint: "Create a goal before editing it."})
 		return
 	}
-	in := &labelInput{title: "Edit goal", hint: "Type a goal objective and press Enter · esc cancel", text: oneLine(g.Objective)}
+	in := &labelInput{title: "Edit goal", hint: "Type a goal objective and press Enter · esc cancel", placeholder: "Type a goal objective", text: oneLine(g.Objective)}
 	in.onDone = func(ok bool, text string) {
 		a.closeModal()
 		if ok {

@@ -2,14 +2,17 @@
 // own live session. See server/protocol.go for the protocol.
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import GoalBar, { type GoalAction } from "./components/GoalBar";
 import { ArrowDown, Bolt, Branch, Flag, Info, Layers, Menu, Plus, Radio, Target } from "./components/icons";
 import Loading from "./components/Loading";
 import PromptBar, { type Pending } from "./components/PromptBar";
+import PromptSheet, { type Answer } from "./components/PromptSheet";
 import Thinking from "./components/Thinking";
 import ToolRow from "./components/ToolRow";
 import { Markdown } from "./markdown";
 import { Client, initialToken, saveToken, Unauthorized } from "./rpc";
-import type { Item, Model, Notification, ThreadInfo, ThreadSummary } from "./types";
+import { anchorIndex, anchorShift, atBottom, nextFollow } from "./scroll";
+import type { GoalInfo, Item, Model, Notification, Prompt, ThreadInfo, ThreadSummary } from "./types";
 
 // --- items ---
 
@@ -156,6 +159,9 @@ export default function App() {
   const [models, setModels] = useState<Model[]>([]);
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [info, setInfo] = useState<ThreadInfo | null>(null);
+  // The live session's open prompt and goal.
+  const [prompt, setPrompt] = useState<Prompt | null>(null);
+  const [goal, setGoal] = useState<GoalInfo | null>(null);
   const [connected, setConnected] = useState(true);
   const [drawer, setDrawer] = useState(false);
   const [busySince, setBusySince] = useState(Date.now());
@@ -165,7 +171,17 @@ export default function App() {
   const infoRef = useRef<ThreadInfo | null>(null);
   infoRef.current = info;
   const logRef = useRef<HTMLDivElement>(null);
-  const stick = useRef(true);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // Scrolling (see scroll.ts): follow is whether new output scrolls into
+  // view; lastTop the last scroll position seen; ours the position the
+  // view itself scrolled to (its scroll event is not the reader's);
+  // anchor the item kept in place while the reader is scrolled up;
+  // touching is a finger on the transcript, which the view never fights.
+  const followRef = useRef(true);
+  const lastTop = useRef(0);
+  const ours = useRef(-1);
+  const anchor = useRef<{ el: HTMLElement; top: number } | null>(null);
+  const touching = useRef(false);
   const [away, setAway] = useState(false);
 
   // One render per frame for the transcript.
@@ -248,6 +264,15 @@ export default function App() {
         case "thread/reloaded":
           note(p.error ? "Reload failed: " + p.error : "Reloaded configuration.", p.error ? "error" : "info");
           break;
+        case "prompt/open":
+          setPrompt(p.prompt);
+          break;
+        case "prompt/closed":
+          setPrompt((cur) => (cur && cur.id === p.id ? null : cur));
+          break;
+        case "goal/updated":
+          setGoal(p.goal || null);
+          break;
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -264,9 +289,12 @@ export default function App() {
   const show = useCallback(
     (t: ThreadInfo) => {
       store.reset(t.items || []);
-      setInfo({ ...t, items: undefined });
+      setInfo({ ...t, items: undefined, prompt: undefined, goal: undefined });
+      setPrompt(t.prompt || null);
+      setGoal(t.goal || null);
       if (t.busy) setBusySince(Date.now());
-      stick.current = true;
+      followRef.current = true;
+      setAway(false);
       setDrawer(false);
       follow(t.eventId || 0);
       redraw();
@@ -317,23 +345,78 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Scrolling: follow new output while at the bottom.
+  // Scrolling: follow new output only while at the bottom.
+  const scrollTo = (el: HTMLElement, top: number) => {
+    el.scrollTop = top;
+    ours.current = el.scrollTop; // as the browser clamped it
+    lastTop.current = el.scrollTop;
+  };
+  const setAnchor = (el: HTMLElement) => {
+    const kids = Array.from(bodyRef.current?.children || []) as HTMLElement[];
+    const i = anchorIndex(
+      kids.map((k) => k.offsetTop),
+      kids.map((k) => k.offsetHeight),
+      el.scrollTop,
+    );
+    anchor.current = i >= 0 ? { el: kids[i], top: kids[i].offsetTop } : null;
+  };
+  // settle runs after every layout change: to the bottom while
+  // following, else the anchor stays put when what is above it changes
+  // height (a thinking block opens, a display block is replaced).
+  const settle = useCallback(() => {
+    const el = logRef.current;
+    if (!el || touching.current) return;
+    if (followRef.current) {
+      if (!atBottom(el.scrollTop, el.scrollHeight, el.clientHeight)) scrollTo(el, el.scrollHeight);
+      return;
+    }
+    const a = anchor.current;
+    if (!a || !a.el.isConnected) {
+      setAnchor(el);
+      return;
+    }
+    const d = anchorShift(a.top, a.el.offsetTop);
+    a.top = a.el.offsetTop;
+    if (d) scrollTo(el, el.scrollTop + d);
+  }, []);
   const onScroll = () => {
     const el = logRef.current;
     if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-    stick.current = atBottom;
-    setAway(!atBottom);
+    if (ours.current >= 0 && Math.abs(el.scrollTop - ours.current) < 1) {
+      ours.current = -1;
+      return;
+    }
+    ours.current = -1;
+    const f = nextFollow(followRef.current, lastTop.current, el.scrollTop, el.scrollHeight, el.clientHeight);
+    lastTop.current = el.scrollTop;
+    followRef.current = f;
+    if (!f) setAnchor(el);
+    setAway(!f);
   };
-  useLayoutEffect(() => {
+  const unfollow = () => {
+    if (followRef.current) {
+      followRef.current = false;
+      setAway(true);
+      if (logRef.current) setAnchor(logRef.current);
+    }
+  };
+  useLayoutEffect(settle);
+  useEffect(() => {
     const el = logRef.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
-  });
-  const toBottom = () => {
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => settle());
+    ro.observe(el); // the composer grew, the keyboard opened
+    if (bodyRef.current) ro.observe(bodyRef.current);
+    return () => ro.disconnect();
+  }, [settle, phase]);
+  const toBottom = (smooth = true) => {
     const el = logRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-    stick.current = true;
+    followRef.current = true;
+    anchor.current = null;
     setAway(false);
+    if (!el) return;
+    if (smooth) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    else scrollTo(el, el.scrollHeight);
   };
 
   // Actions.
@@ -351,7 +434,7 @@ export default function App() {
         show(t);
         loadThreads();
       }
-      stick.current = true;
+      toBottom(false);
       if (!live && t.busy) {
         if (imgs.length) {
           note("Images go with a new turn: send them once this one finishes.");
@@ -388,6 +471,21 @@ export default function App() {
     } catch (e) {
       fail(e);
     }
+  };
+
+  const answer = async (a: Answer) => {
+    const p = prompt;
+    if (!p || !info) return;
+    setPrompt((cur) => (cur && cur.id === p.id ? null : cur));
+    try {
+      await client.call("prompt/answer", { threadId: info.threadId, id: p.id, ...a });
+    } catch (e) {
+      fail(e);
+    }
+  };
+
+  const goalAction = (a: GoalAction) => {
+    send("/goal " + a, []);
   };
 
   if (phase === "login") return <Login error={loginError} onToken={(t) => ((client.token = t), start())} />;
@@ -519,9 +617,19 @@ export default function App() {
             <span title={connected ? "connected" : "reconnecting"} className={`size-2 shrink-0 rounded-full ${connected ? "bg-green" : "bg-orange"}`} style={connected ? undefined : { animation: "caret-blink 1s step-end infinite" }} />
           </div>
         </header>
+        {live && goal && <GoalBar goal={goal} onAction={goalAction} />}
 
-        <div ref={logRef} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto flex w-full max-w-[820px] flex-col gap-3 px-4 pt-4 pb-6">
+        <div
+          ref={logRef}
+          onScroll={onScroll}
+          onWheel={(e) => e.deltaY < 0 && unfollow()}
+          onTouchStart={() => (touching.current = true)}
+          onTouchEnd={() => ((touching.current = false), settle())}
+          onTouchCancel={() => ((touching.current = false), settle())}
+          className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain"
+          style={{ WebkitOverflowScrolling: "touch", overflowAnchor: "none" }}
+        >
+          <div ref={bodyRef} className="mx-auto flex w-full max-w-[820px] flex-col gap-3 px-4 pt-4 pb-6">
             {!info && (
               <div className="py-16 text-center text-[14px] text-ink-3">{live ? "Waiting for the terminal session…" : "Pick a conversation, or write below to start one."}</div>
             )}
@@ -536,11 +644,11 @@ export default function App() {
           {away && (
             <button
               type="button"
-              onClick={toBottom}
-              aria-label="Jump to bottom"
-              className="absolute -top-12 left-1/2 z-10 flex size-10 -translate-x-1/2 items-center justify-center rounded-full bg-surface text-ink-2 shadow-raised"
+              onClick={() => toBottom()}
+              className="absolute -top-12 left-1/2 z-10 flex h-9 -translate-x-1/2 items-center gap-1.5 rounded-full bg-surface px-3.5 text-[13px] font-medium whitespace-nowrap text-ink-2 shadow-raised active:scale-[0.97]"
+              style={{ animation: "fade-in 160ms ease-out both" }}
             >
-              <ArrowDown size={16} />
+              <ArrowDown size={14} /> Jump to latest
             </button>
           )}
           <PromptBar
@@ -556,6 +664,7 @@ export default function App() {
           />
         </div>
       </main>
+      {live && prompt && <PromptSheet key={prompt.id} prompt={prompt} onAnswer={answer} />}
     </div>
   );
 }
