@@ -104,6 +104,10 @@ type ToolMeta struct {
 	DurationMs  int64  `json:"durationMs"`
 	TimedOut    bool   `json:"timedOut,omitempty"`
 	Canceled    bool   `json:"canceled,omitempty"`
+	// Job is the background job the command became, and Background why
+	// (agent.BackgroundRequested, ...).
+	Job        int    `json:"job,omitempty"`
+	Background string `json:"background,omitempty"`
 }
 
 // Writer appends entries to a session file. The file is created lazily on

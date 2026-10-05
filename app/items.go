@@ -128,7 +128,8 @@ func (a *App) itemCompleted(it *transcript.Item) {
 		if b := a.tools[it.ID]; b != nil {
 			b.done = true
 			if r := it.Result; r != nil {
-				b.res = agent.BashResult{ExitCode: r.ExitCode, TimedOut: r.TimedOut, Canceled: r.Canceled, Duration: it.Duration}
+				b.res = agent.BashResult{ExitCode: r.ExitCode, TimedOut: r.TimedOut, Canceled: r.Canceled, Duration: it.Duration,
+					Job: r.Job, Background: r.Background}
 				if r.Err != "" {
 					b.res.Err = errors.New(r.Err)
 				}

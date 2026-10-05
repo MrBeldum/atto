@@ -119,6 +119,7 @@ atto -p -goal "make the tests pass" -goal-budget 200k
 | `Esc` `Esc` | on an empty prompt: open the session tree to go back to an earlier message and edit it |
 | `Shift+Tab` | cycle reasoning effort |
 | `Ctrl+T` | expand all thinking and command output (or click a block) |
+| `Ctrl+B` | move the running command to the background: it keeps running as a job (`/jobs`), the agent goes on and gets an `[atto event]` when it exits |
 | `Ctrl+C` | interrupt; clears the input when idle; quits when the input is empty |
 | `Ctrl+V` / `Alt+V` | attach the image on the clipboard (use `Alt+V` where the terminal pastes text on `Ctrl+V`, as on Windows) |
 

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/app"
 	"github.com/sebastianrcnt/atto/cli"
 	"github.com/sebastianrcnt/atto/config"
@@ -87,6 +88,7 @@ func subcommands() map[string]func([]string, io.Writer) error {
 		"update":     cli.RunUpdate,
 		"channel":    cli.RunChannel,
 		"_supervise": cli.RunSupervise,
+		"_shell":     cli.RunShellHost,
 		"login":      cli.RunLogin,
 		"logout":     cli.RunLogout,
 		"serve": func(args []string, out io.Writer) error {
@@ -184,6 +186,9 @@ func resumeArgs(args []string) []string {
 
 func main() {
 	update.Cleanup()
+	// This binary serves `atto _shell`, so the agent's commands can run
+	// under shell hosts and move to the background.
+	agent.ShellHost = true
 	if len(os.Args) > 1 && os.Args[1] == "resume" {
 		// Not a subcommand function: it starts the TUI, like -resume / -session.
 		refuseNested("resume")

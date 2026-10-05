@@ -234,6 +234,16 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 		}
 		t.agent.Steer(p.Input)
 		return nil, nil
+	case "turn/background":
+		// Ctrl+B: the running command moves to the background.
+		t, err := s.thread(p.ThreadID)
+		if err != nil {
+			return nil, err
+		}
+		if !t.agent.Background() {
+			return nil, &rpcError{codeServer, "no command is running that can move to the background"}
+		}
+		return nil, nil
 	case "turn/interrupt":
 		t, err := s.thread(p.ThreadID)
 		if err != nil {

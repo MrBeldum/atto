@@ -216,14 +216,30 @@ func newDir(session string) (int, string, error) {
 // Start launches command in the background and returns once it runs.
 // mon and notify are optional; they are mutually exclusive.
 func Start(session, cwd, name, command string, mon *Monitor, notify *Notify) (Job, error) {
+	return start(session, cwd, name, command, mon, notify, nil)
+}
+
+// StartEnv is Start for a plain job whose command runs with env (the
+// complete environment) rather than the caller's: the agent's shell tool
+// starts jobs this way, with the variables it gives its commands.
+func StartEnv(session, cwd, name, command string, env []string) (Job, error) {
+	return start(session, cwd, name, command, nil, nil, env)
+}
+
+// reserve checks that session may start another job and reserves its ID.
+func reserve(session string) (int, string, error) {
 	if session == "" {
-		return Job{}, fmt.Errorf("no session: run inside atto (ATTO_SESSION_ID) or pass --session")
-	}
-	if strings.TrimSpace(command) == "" {
-		return Job{}, fmt.Errorf("empty command")
+		return 0, "", fmt.Errorf("no session: run inside atto (ATTO_SESSION_ID) or pass --session")
 	}
 	if ActiveCount(session) >= MaxRunning {
-		return Job{}, fmt.Errorf("%d jobs already running; stop some with `atto job kill <id>`", MaxRunning)
+		return 0, "", fmt.Errorf("%d jobs already running; stop some with `atto job kill <id>`", MaxRunning)
+	}
+	return newDir(session)
+}
+
+func start(session, cwd, name, command string, mon *Monitor, notify *Notify, env []string) (Job, error) {
+	if strings.TrimSpace(command) == "" {
+		return Job{}, fmt.Errorf("empty command")
 	}
 	if mon != nil && mon.Until != "" {
 		if _, err := regexp.Compile(mon.Until); err != nil {
@@ -241,7 +257,7 @@ func Start(session, cwd, name, command string, mon *Monitor, notify *Notify) (Jo
 			return Job{}, fmt.Errorf("--notify-limit must be positive")
 		}
 	}
-	id, dir, err := newDir(session)
+	id, dir, err := reserve(session)
 	if err != nil {
 		return Job{}, err
 	}
@@ -255,6 +271,7 @@ func Start(session, cwd, name, command string, mon *Monitor, notify *Notify) (Jo
 	}
 	sup := exec.Command(exe, "_supervise", dir)
 	sup.Dir = cwd
+	sup.Env = env // nil: the caller's
 	shell.Detach(sup)
 	if err := sup.Start(); err != nil {
 		j.Status, j.Error = Failed, err.Error()
@@ -450,13 +467,20 @@ func Supervise(dir string) error {
 		code, detail = run(ctx, dir, &j, j.Command, out, true)
 	}
 
-	now := time.Now()
-	j.Ended = &now
 	killMu.Lock()
 	wasKilled := killed
 	killMu.Unlock()
+	return finish(dir, j, code, detail, wasKilled)
+}
+
+// finish records how a job ended and, unless it was killed (by atto job
+// kill, which needs no telling), posts the exit event. code -2 means the
+// command could not start.
+func finish(dir string, j Job, code int, detail string, killed bool) error {
+	now := time.Now()
+	j.Ended = &now
 	switch {
-	case wasKilled:
+	case killed:
 		j.Status = Killed
 	case code == -2:
 		j.Status = Failed
@@ -468,7 +492,7 @@ func Supervise(dir string) error {
 	if err := save(dir, j); err != nil {
 		return err
 	}
-	if !wasKilled {
+	if !killed {
 		postEvent(j, detail)
 	}
 	return nil

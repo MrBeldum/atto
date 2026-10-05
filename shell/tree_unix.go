@@ -31,6 +31,18 @@ func Detach(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 }
 
+// Isolate makes cmd outlive its parent, like Detach. On Unix the two are
+// the same: a new session, so the terminal's hangup never reaches it.
+func Isolate(cmd *exec.Cmd) { Detach(cmd) }
+
+// KillGroup kills the process group led by pid (a command started with
+// NewTree).
+func KillGroup(pid int) {
+	if pid > 0 {
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+	}
+}
+
 // Terminate asks the process (a job supervisor) to stop; it kills its tree
 // and records the result.
 func Terminate(pid int) error { return syscall.Kill(pid, syscall.SIGTERM) }
