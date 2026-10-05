@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -152,7 +153,7 @@ func Run(opts Options) error {
 
 		clipboard: images.SystemClipboardImage,
 	}
-	if opts.Inline || settings.Renderer == "inline" || (settings.Renderer == "" && legacyConsole()) {
+	if opts.Inline || rendererMode(settings.Renderer) == tui.Inline {
 		a.ui.Mode = tui.Inline
 	}
 	a.escAction = settings.DoubleEscapeAction
@@ -221,7 +222,9 @@ func (a *App) build() {
 	a.editor.OnSubmit = a.submit
 	a.editor.OnPaste = a.pasteImagePath
 
-	a.ui.Footer.Add(tui.Func(a.renderActivity), tui.Func(a.renderPending), tui.Func(a.renderInput), tui.Func(a.renderSuggestions), tui.Func(a.renderStatus))
+	// The command list sits above the input, as in Claude Code, so the
+	// input and the status line keep their place as it opens and closes.
+	a.ui.Footer.Add(tui.Func(a.renderActivity), tui.Func(a.renderPending), jumpPill{a}, tui.Func(a.renderSuggestions), tui.Func(a.renderInput), tui.Func(a.renderStatus))
 	a.ui.SetFocus(a.editor)
 	a.ui.OnInput = a.onInput
 	a.ui.PaddingX = 1
@@ -532,9 +535,38 @@ func (a *App) renderInput(width int) []string {
 	return a.editor.Render(width)
 }
 
+// jumpPill is the centered "Jump to bottom" pill above the input while the
+// fullscreen transcript is scrolled up (Claude Code has the same). It is a
+// footer component, so the renderer routes clicks on it here.
+type jumpPill struct{ a *App }
+
+func (p jumpPill) Render(width int) []string {
+	if p.a.modal != nil || p.a.ui.ScrollOffset() == 0 {
+		return nil
+	}
+	text, style := " Jump to bottom (click) ↓ ", tui.Dim
+	if p.a.ui.NewBelow() {
+		// Reverse video, so it reads as new rather than as a hint.
+		text = " ↓ New output · Jump to bottom "
+		style = func(s string) string { return "\x1b[7m" + s + "\x1b[27m" }
+	}
+	pad := max(0, (width-tui.VisibleWidth(text))/2)
+	return []string{strings.Repeat(" ", pad) + style(tui.Truncate(text, width, "…"))}
+}
+
+// Click scrolls to the newest output. The renderer only reports the row,
+// so the whole line is the button.
+func (p jumpPill) Click(int) bool {
+	p.a.ui.ScrollToBottom()
+	return true
+}
+
 func shortPath(p string) string {
-	if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(p, home) {
-		return "~" + strings.TrimPrefix(p, home)
+	// Only whole path elements: /Users/bob2 is not under /Users/bob.
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if rest, ok := strings.CutPrefix(p, home); ok && (rest == "" || rest[0] == '/' || rest[0] == filepath.Separator) {
+			return "~" + rest
+		}
 	}
 	return p
 }
@@ -600,3 +632,50 @@ func (a *App) pinnedPrompt(firstVisible, width int) string {
 // Terminal as the default console sets no WT_SESSION, nor does sshd). Set
 // "renderer" in settings.json to override.
 func legacyConsole() bool { return windowsBuild() > 0 && windowsBuild() < 17763 }
+
+// rendererMode is the mode the "renderer" setting asks for; empty (or
+// anything unknown) lets atto pick, see legacyConsole.
+func rendererMode(setting string) tui.Mode {
+	switch setting {
+	case "inline":
+		return tui.Inline
+	case "fullscreen":
+		return tui.Fullscreen
+	}
+	if legacyConsole() {
+		return tui.Inline
+	}
+	return tui.Fullscreen
+}
+
+// cmdTui shows or changes the renderer. The choice is saved in
+// settings.json and applied to the running screen at once.
+func (a *App) cmdTui(arg string) {
+	name := func(m tui.Mode) string {
+		if m == tui.Inline {
+			return "inline"
+		}
+		return "fullscreen"
+	}
+	if arg == "" {
+		a.notice("Renderer: %s. Choices: auto (pick for this terminal), fullscreen, inline. Usage: /tui <choice>", name(a.ui.Mode))
+		return
+	}
+	var value string
+	switch arg {
+	case "auto":
+	case "fullscreen", "inline":
+		value = arg
+	default:
+		a.notice("Unknown renderer %q. Choices: auto, fullscreen, inline.", arg)
+		return
+	}
+	// An empty value is the same as no setting: atto picks again.
+	if err := config.UpdateSettings(map[string]any{"renderer": value}); err != nil {
+		a.errorNotice(err)
+		return
+	}
+	mode := rendererMode(value)
+	a.ui.SetMode(mode)
+	a.notice("Renderer set to %s.", arg+map[bool]string{true: " (" + name(mode) + ")"}[arg == "auto"])
+}

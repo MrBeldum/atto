@@ -252,7 +252,7 @@ func FromAssistantMessage(model *ai.Model, am *ai.AssistantMessage) Result {
 		msg.Reasoning = &ReasoningState{Model: am.Model, Items: items}
 	}
 	u := am.Usage
-	res.Usage = Usage{PromptTokens: u.Input + u.CacheRead + u.CacheWrite, CompletionTokens: u.Output, CachedTokens: u.CacheRead}
+	res.Usage = Usage{PromptTokens: u.Input + u.CacheRead + u.CacheWrite, CompletionTokens: u.Output, CachedTokens: u.CacheRead, CacheWriteTokens: u.CacheWrite, Cost: u.Cost.Total}
 	switch am.StopReason {
 	case ai.StopLength:
 		res.FinishReason = "length"

@@ -80,3 +80,67 @@ func TestSuggestionList(t *testing.T) {
 		t.Fatal("typing reopens it")
 	}
 }
+
+func TestTuiCommand(t *testing.T) {
+	t.Setenv("ATTO_DIR", t.TempDir())
+	a := &App{ui: tui.New(nil)}
+	a.ui.Body.Add(tui.Func(func(int) []string { return nil }))
+	a.cmdTui("inline")
+	if a.ui.Mode != tui.Inline {
+		t.Fatal("/tui inline switches the renderer")
+	}
+	s, err := config.LoadSettings()
+	if err != nil || s.Renderer != "inline" {
+		t.Fatalf("saved renderer %q, %v", s.Renderer, err)
+	}
+	a.cmdTui("auto")
+	if s, _ := config.LoadSettings(); s.Renderer != "" {
+		t.Fatalf("auto clears the setting: %q", s.Renderer)
+	}
+	if a.ui.Mode != rendererMode("") {
+		t.Fatal("auto picks the default again")
+	}
+	a.cmdTui("bogus")
+	a.cmdTui("")
+}
+
+func TestSuggestionsAboveInput(t *testing.T) {
+	a := &App{ui: tui.New(nil), agent: agent.New(config.ModelRef{}, "", t.TempDir())}
+	a.build()
+	a.editor.SetText("/co")
+	var rows []string
+	for _, l := range a.ui.Footer.Render(80) {
+		rows = append(rows, tui.StripEscapes(l))
+	}
+	sug, in := -1, -1
+	for i, l := range rows {
+		if strings.Contains(l, "/compact") && sug < 0 {
+			sug = i
+		}
+		if strings.Contains(l, "/co") && strings.Contains(l, "›") {
+			in = i
+		}
+	}
+	if sug < 0 || in < 0 || sug >= in {
+		t.Fatalf("the list (row %d) belongs above the input (row %d): %q", sug, in, rows)
+	}
+}
+
+func TestJumpPill(t *testing.T) {
+	a := &App{ui: tui.New(nil)}
+	p := jumpPill{a}
+	if p.Render(40) != nil {
+		t.Fatal("no pill at the bottom")
+	}
+	a.ui.ScrollBy(5)
+	got := p.Render(40)
+	if len(got) != 1 || !strings.Contains(tui.StripEscapes(got[0]), "Jump to bottom (click) ↓") {
+		t.Fatalf("pill: %q", got)
+	}
+	if text := tui.StripEscapes(got[0]); !strings.HasPrefix(text, strings.Repeat(" ", 7)) {
+		t.Fatalf("the pill is centered: %q", text)
+	}
+	if !p.Click(0) || a.ui.ScrollOffset() != 0 {
+		t.Fatal("click scrolls to the bottom")
+	}
+}

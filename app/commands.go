@@ -42,6 +42,7 @@ func init() {
 		{"stop", "", "Stop all background jobs", (*App).cmdStop},
 		{"timer", "<when> <msg>", "Wake the agent later (10m, 15:30)", (*App).cmdTimer},
 		{"timers", "", "List pending timers", (*App).cmdTimers},
+		{"tui", "[auto|fullscreen|inline]", "Choose the renderer (fullscreen or inline)", (*App).cmdTui},
 		{"clear", "", "Start a new conversation", (*App).cmdClear},
 		{"quit", "", "Exit atto", (*App).cmdQuit},
 		{"exit", "", "Exit atto", (*App).cmdQuit},
