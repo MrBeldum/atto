@@ -345,8 +345,11 @@ func (c *compactBlock) Render(width int) []string {
 	if c.elapsed > 0 {
 		head += tui.Dim(" · " + tui.FormatDuration(c.elapsed))
 	}
-	if c.before > 0 {
+	switch {
+	case c.before > 0 && c.after > 0:
 		head += tui.Dim(fmt.Sprintf(" · %s → ~%s tokens", tui.FormatTokens(c.before), tui.FormatTokens(c.after)))
+	case c.before > 0: // a session saved before the size after was recorded
+		head += tui.Dim(fmt.Sprintf(" · %s tokens before", tui.FormatTokens(c.before)))
 	}
 	if !c.expanded() {
 		return []string{tui.Truncate(head+tui.Dim(" · click to view notes"), width, "…")}

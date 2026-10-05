@@ -54,6 +54,10 @@ type HookNotice struct {
 // ErrPromptBlocked is returned when a UserPromptSubmit hook rejects input.
 var ErrPromptBlocked = errors.New("prompt blocked by hook")
 
+// StopHookPrefix starts the message that carries a Stop hook's reason to
+// keep working.
+const StopHookPrefix = "[Stop hook] "
+
 // ErrStoppedByHook is returned when a hook asks to stop the turn.
 var ErrStoppedByHook = errors.New("stopped by hook")
 
@@ -86,9 +90,12 @@ type (
 		ID    string
 		Chunk string
 	}
+	// ToolEnd fires when the command has ended. Text is the result as
+	// the model receives it, before PostToolUse hooks add to it.
 	ToolEnd struct {
 		ID     string
 		Result BashResult
+		Text   string
 	}
 	// StepEnd fires after each model response. Context is the estimated
 	// context size afterwards.
@@ -552,7 +559,7 @@ func (a *Agent) RunWithImages(ctx context.Context, input string, imgs []provider
 				emitHook(emit, "Stop", o)
 				if o.Block && o.Reason != "" && !stopHookActive && !o.Stop {
 					stopHookActive = true
-					a.appendMessage(provider.Message{Role: "user", Content: "[Stop hook] " + o.Reason}, session.Entry{})
+					a.appendMessage(provider.Message{Role: "user", Content: StopHookPrefix + o.Reason}, session.Entry{})
 					continue
 				}
 			}
@@ -604,7 +611,7 @@ func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, emit func(any
 		return fail("command is empty")
 	}
 	if args.Description == "" {
-		args.Description = firstLine(args.Command)
+		args.Description = FirstLine(args.Command)
 	}
 	if a.Hooks != nil {
 		updated, o := a.Hooks.PreToolUse(ctx, args)
@@ -622,8 +629,8 @@ func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, emit func(any
 	env := a.env
 	a.cfgMu.Unlock()
 	res := RunShell(ctx, a.Shell, a.Cwd, env, args, func(s string) { emit(ToolOutput{ID: tc.ID, Chunk: s}) })
-	emit(ToolEnd{ID: tc.ID, Result: res})
 	out := res.ForModel(args)
+	emit(ToolEnd{ID: tc.ID, Result: res, Text: out})
 	stop := false
 	if a.Hooks != nil {
 		o := a.Hooks.PostToolUse(ctx, args, res, out)
@@ -645,7 +652,9 @@ func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, emit func(any
 	}, stop
 }
 
-func firstLine(s string) string {
+// FirstLine is the first line of a command, the description of a call
+// that gave none.
+func FirstLine(s string) string {
 	s = strings.TrimSpace(s)
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
@@ -738,10 +747,12 @@ func (a *Agent) compact(ctx context.Context, emit func(any), auto bool) error {
 	for _, m := range replacement {
 		a.sinceUsage += messageChars(m)
 	}
+	after, elapsed := a.ContextTokens(), time.Since(start)
 	if a.Record != nil {
-		a.Record(session.Entry{Type: session.TypeCompaction, Replacement: replacement, Notes: notes, TokensBefore: before, Auto: auto})
+		a.Record(session.Entry{Type: session.TypeCompaction, Replacement: replacement, Notes: notes, TokensBefore: before,
+			TokensAfter: after, ElapsedMs: elapsed.Milliseconds(), Auto: auto})
 	}
-	emit(CompactEnd{Notes: notes, Before: before, After: a.ContextTokens(), Elapsed: time.Since(start)})
+	emit(CompactEnd{Notes: notes, Before: before, After: after, Elapsed: elapsed})
 	return nil
 }
 

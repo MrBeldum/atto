@@ -74,7 +74,7 @@ func (a *App) restoreToEditor(texts []string, att ...tui.Attachment) {
 // afterRun settles pending input once a turn or compaction finishes.
 func (a *App) afterRun(err error) {
 	if a.runKind == "turn" {
-		a.goalTurnEnded(err)
+		a.goal.EndTurn(err)
 	}
 	if a.runKind == "turn" && err == nil {
 		took := "<1s"

@@ -206,9 +206,9 @@ func (a *App) showBranch(entries []session.Entry) {
 // points out background jobs, which keep running: going back does not undo
 // what commands already did.
 func (a *App) afterGoingBack() {
-	if g := a.goal.g; g != nil && g.Status == goal.Active {
+	if g := a.goal.Goal; g != nil && g.Status == goal.Active {
 		g.Status, g.Note = goal.Paused, "went back in the session"
-		a.saveGoal(g)
+		a.goal.Set(g)
 		a.notice("The goal is paused. /goal resume to continue.")
 	}
 	if a.jobCount > 0 {

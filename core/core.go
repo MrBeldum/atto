@@ -2,7 +2,9 @@
 // does to run a conversation: load the configuration, pick the model and
 // effort, build the agent and hooks for a directory, bind them to a session
 // file, restore what a saved session last used, and clean up when leaving
-// it. Front ends own their display and input; the steps live here once.
+// it. GoalDriver keeps a goal going across turns, and core/transcript
+// turns the agent's events and saved sessions into the items they show.
+// Front ends own their display and input; the steps live here once.
 package core
 
 import (

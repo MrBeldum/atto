@@ -70,6 +70,9 @@ type BashArgs struct {
 	Timeout     int    `json:"timeout,omitempty"`
 }
 
+// TimeLimit is how long the command may run.
+func (a BashArgs) TimeLimit() time.Duration { return a.timeout() }
+
 func (a BashArgs) timeout() time.Duration {
 	if a.Timeout <= 0 {
 		return DefaultBashTimeout

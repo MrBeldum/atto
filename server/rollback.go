@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/sebastianrcnt/atto/agent"
+	"github.com/sebastianrcnt/atto/core/transcript"
 	"github.com/sebastianrcnt/atto/events"
 	"github.com/sebastianrcnt/atto/session"
 )
@@ -13,10 +14,16 @@ import (
 func (t *thread) restore(entries []session.Entry) {
 	branch := session.Active(entries)
 	t.agent.Restore(branch)
+	t.tr.Handler = transcript.Handler{} // no notifications for the replay
+	t.tr.Reset()
+	t.tr.Replay(branch)
+	items := make([]Item, 0, len(branch))
+	for _, it := range t.tr.Items() {
+		items = append(items, wireItem(&it))
+	}
 	t.mu.Lock()
 	t.ctxTokens = t.agent.ContextTokens()
-	t.items = ItemsFromEntries(t.id, branch)
-	t.itemSeq = len(t.items)
+	t.items = items
 	t.mu.Unlock()
 }
 

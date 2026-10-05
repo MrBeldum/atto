@@ -1,241 +1,105 @@
 package server
 
 import (
-	"encoding/json"
-	"fmt"
-	"strings"
-
 	"github.com/sebastianrcnt/atto/agent"
-	"github.com/sebastianrcnt/atto/events"
+	"github.com/sebastianrcnt/atto/core/transcript"
 	"github.com/sebastianrcnt/atto/session"
 )
 
-const outputKeep = 64 * 1024 // command output kept on items
-
-// itemMapper turns agent events of one turn into item notifications.
+// itemMapper sends one turn's items to clients. The thread's transcript
+// builder makes the items from the agent's events; this turns them into
+// item/started, item/delta and item/completed notifications and keeps the
+// completed ones on the thread.
 type itemMapper struct {
 	s      *Server
 	t      *thread
 	turnID string
-
-	reasoning *Item
-	message   *Item
-	compact   *Item
-	commands  map[string]*Item
 }
 
-func (m *itemMapper) started(it *Item) {
-	m.s.notify(m.t, "item/started", map[string]any{"turnId": m.turnID, "item": *it})
-}
-
-func (m *itemMapper) delta(it *Item, d string) {
-	m.s.notify(m.t, "item/delta", map[string]any{"turnId": m.turnID, "itemId": it.ID, "delta": d})
-}
-
-func (m *itemMapper) completed(it *Item) {
-	m.t.mu.Lock()
-	m.t.items = append(m.t.items, *it)
-	m.t.mu.Unlock()
-	m.s.notify(m.t, "item/completed", map[string]any{"turnId": m.turnID, "item": *it})
-}
-
-func (m *itemMapper) newItem(typ string) *Item {
-	m.t.mu.Lock()
-	id := m.t.nextItemID()
-	m.t.mu.Unlock()
-	return &Item{ID: id, Type: typ}
-}
-
-// closeText completes open reasoning/message items.
-func (m *itemMapper) closeText() {
-	for _, p := range []**Item{&m.reasoning, &m.message} {
-		if *p != nil {
-			m.completed(*p)
-			*p = nil
-		}
+// handler is the transcript handler for the turn.
+func (m *itemMapper) handler() transcript.Handler {
+	return transcript.Handler{
+		Started: func(it *transcript.Item) {
+			m.s.notify(m.t, "item/started", map[string]any{"turnId": m.turnID, "item": wireItem(it)})
+		},
+		Delta: func(it *transcript.Item, d string) {
+			m.s.notify(m.t, "item/delta", map[string]any{"turnId": m.turnID, "itemId": it.ID, "delta": d})
+		},
+		Completed: func(it *transcript.Item) {
+			w := wireItem(it)
+			m.t.mu.Lock()
+			m.t.items = append(m.t.items, w)
+			m.t.mu.Unlock()
+			m.s.notify(m.t, "item/completed", map[string]any{"turnId": m.turnID, "item": w})
+		},
 	}
 }
 
-// closeOpen completes everything still open when the turn ends.
-func (m *itemMapper) closeOpen() {
-	m.closeText()
-	for id, it := range m.commands {
-		it.Status = "failed"
-		m.completed(it)
-		delete(m.commands, id)
-	}
-	if m.compact != nil {
-		m.compact.Status = "failed"
-		m.completed(m.compact)
-		m.compact = nil
-	}
-}
-
-func (m *itemMapper) user(text string) {
-	it := m.newItem(ItemUser)
-	it.Text = text
-	m.started(it)
-	m.completed(it)
-}
-
+// event passes an agent event (or transcript.Input) to the builder, and
+// keeps the usage the turn reports.
 func (m *itemMapper) event(ev any) {
-	if m.commands == nil {
-		m.commands = map[string]*Item{}
-	}
+	m.t.tr.Event(ev)
 	switch e := ev.(type) {
-	case userInput:
-		m.user(e.text)
-	case eventInput:
-		it := m.newItem(ItemEvent)
-		it.Text = e.text
-		m.started(it)
-		m.completed(it)
-	case agent.ReasoningDelta:
-		if m.reasoning == nil {
-			m.reasoning = m.newItem(ItemReasoning)
-			m.started(m.reasoning)
-		}
-		m.reasoning.Text += e.Text
-		m.delta(m.reasoning, e.Text)
-	case agent.TextDelta:
-		if m.reasoning != nil {
-			m.completed(m.reasoning)
-			m.reasoning = nil
-		}
-		if m.message == nil {
-			m.message = m.newItem(ItemAgent)
-			m.started(m.message)
-		}
-		m.message.Text += e.Text
-		m.delta(m.message, e.Text)
-	case agent.ToolStart:
-		m.closeText()
-		it := m.newItem(ItemCommand)
-		it.Description, it.Command, it.Status = e.Args.Description, e.Args.Command, "inProgress"
-		m.commands[e.ID] = it
-		m.started(it)
-	case agent.ToolOutput:
-		if it := m.commands[e.ID]; it != nil {
-			if len(it.Output) < outputKeep {
-				it.Output += e.Chunk
-			}
-			m.delta(it, e.Chunk)
-		}
-	case agent.ToolEnd:
-		if it := m.commands[e.ID]; it != nil {
-			r := e.Result
-			code := r.ExitCode
-			it.ExitCode, it.DurationMs, it.TimedOut = &code, r.Duration.Milliseconds(), r.TimedOut
-			it.Status = "completed"
-			if code != 0 || r.Err != nil {
-				it.Status = "failed"
-			}
-			m.completed(it)
-			delete(m.commands, e.ID)
-		}
 	case agent.StepEnd:
-		m.closeText()
 		m.t.mu.Lock()
 		m.t.usage.PromptTokens += e.Usage.PromptTokens
 		m.t.usage.CachedTokens += e.Usage.CachedTokens
 		m.t.usage.CompletionTokens += e.Usage.CompletionTokens
 		m.t.ctxTokens = e.Context
 		m.t.mu.Unlock()
-	case agent.SteerCommitted:
-		m.closeText()
-		for _, txt := range e.Texts {
-			if strings.HasPrefix(txt, events.Prefix) {
-				it := m.newItem(ItemEvent)
-				it.Text = txt
-				m.started(it)
-				m.completed(it)
-			} else {
-				m.user(txt)
-			}
-		}
-	case agent.CompactStart:
-		m.closeText()
-		m.compact = m.newItem(ItemCompaction)
-		m.compact.Auto, m.compact.Status = e.Auto, "inProgress"
-		m.started(m.compact)
-	case agent.CompactDelta:
-		if m.compact != nil {
-			m.compact.Text += e.Text
-			m.delta(m.compact, e.Text)
-		}
-	case agent.CompactEnd:
-		if c := m.compact; c != nil {
-			c.Text, c.TokensBefore, c.TokensAfter, c.Status = e.Notes, e.Before, e.After, "completed"
-			m.completed(c)
-			m.compact = nil
-		}
 	case agent.HookNotice:
+		// Also as the notification clients had before hook items.
 		m.s.notify(m.t, "hook", map[string]any{"turnId": m.turnID, "event": e.Event, "message": e.Message, "blocked": e.Blocked})
 	}
 }
 
-// ItemsFromEntries rebuilds a thread's items from its session file.
-func ItemsFromEntries(threadID string, entries []session.Entry) []Item {
-	var out []Item
-	n := 0
-	next := func(typ string) Item {
-		n++
-		return Item{ID: fmt.Sprintf("%s-i%d", threadID, n), Type: typ, Status: "completed"}
-	}
-	cmds := map[string]int{} // tool call ID -> index in out
-	for _, e := range entries {
-		switch e.Type {
-		case session.TypeCompaction:
-			it := next(ItemCompaction)
-			it.Text, it.Auto, it.TokensBefore = e.Notes, e.Auto, e.TokensBefore
-			out = append(out, it)
-		case session.TypeMessage:
-			msg := e.Message
-			if msg == nil {
-				continue
-			}
-			switch msg.Role {
-			case "user":
-				it := next(ItemUser)
-				if strings.HasPrefix(msg.Content, events.Prefix) {
-					it.Type = ItemEvent
-				}
-				it.Text = msg.Content
-				out = append(out, it)
-			case "assistant":
-				if strings.TrimSpace(msg.ReasoningContent) != "" {
-					it := next(ItemReasoning)
-					it.Text = msg.ReasoningContent
-					out = append(out, it)
-				}
-				if strings.TrimSpace(msg.Content) != "" {
-					it := next(ItemAgent)
-					it.Text = msg.Content
-					out = append(out, it)
-				}
-				for _, tc := range msg.ToolCalls {
-					var args agent.BashArgs
-					_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
-					it := next(ItemCommand)
-					it.Description, it.Command, it.Status = args.Description, args.Command, "failed"
-					cmds[tc.ID] = len(out)
-					out = append(out, it)
-				}
-			case "tool":
-				if i, ok := cmds[msg.ToolCallID]; ok {
-					it := &out[i]
-					it.Output = msg.Content
-					if t := e.Tool; t != nil {
-						code := t.ExitCode
-						it.ExitCode, it.DurationMs, it.TimedOut = &code, t.DurationMs, t.TimedOut
-						it.Status = "completed"
-						if code != 0 {
-							it.Status = "failed"
-						}
-					}
-				}
-			}
+// closeOpen completes everything still open when the turn ends.
+func (m *itemMapper) closeOpen() { m.t.tr.End() }
+
+// wireItem is the protocol form of a transcript item.
+func wireItem(it *transcript.Item) Item {
+	w := Item{ID: it.ID, Text: it.Text, Status: string(it.Status)}
+	switch it.Kind {
+	case transcript.User:
+		w.Type = ItemUser
+	case transcript.Assistant:
+		w.Type = ItemAgent
+	case transcript.Reasoning:
+		w.Type = ItemReasoning
+	case transcript.Event:
+		w.Type = ItemEvent
+	case transcript.Goal:
+		w.Type = ItemGoal
+	case transcript.Hook:
+		w.Type, w.HookEvent, w.Blocked = ItemHook, it.HookEvent, it.Blocked
+	case transcript.Notice:
+		w.Type = ItemNotice
+	case transcript.GoalStatus:
+		w.Type = ItemGoalStatus
+		if g := it.GoalState; g != nil {
+			w.GoalStatus, w.Text = string(g.Status), g.Note
 		}
+	case transcript.Tool:
+		w.Type, w.Description, w.Command, w.Output = ItemCommand, it.Description, it.Command, it.Output
+		if r := it.Result; r != nil {
+			code := r.ExitCode
+			w.ExitCode, w.DurationMs, w.TimedOut = &code, it.Duration.Milliseconds(), r.TimedOut
+		}
+	case transcript.Compaction:
+		w.Type, w.Auto, w.TokensBefore, w.TokensAfter = ItemCompaction, it.Auto, it.TokensBefore, it.TokensAfter
+	}
+	return w
+}
+
+// ItemsFromEntries rebuilds a thread's items from its session file: pass
+// the active branch.
+func ItemsFromEntries(threadID string, entries []session.Entry) []Item {
+	items := transcript.FromEntries(itemPrefix(threadID), entries)
+	out := make([]Item, len(items))
+	for i := range items {
+		out[i] = wireItem(&items[i])
 	}
 	return out
 }
+
+func itemPrefix(threadID string) string { return threadID + "-i" }

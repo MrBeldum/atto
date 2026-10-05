@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/sebastianrcnt/atto/core"
+	"github.com/sebastianrcnt/atto/core/transcript"
 	"github.com/sebastianrcnt/atto/tui"
 	"io"
 	"os"
@@ -204,11 +205,14 @@ func RunPrint(o PrintOptions) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	p := &printer{format: o.Format, partial: o.Partial, verbose: o.Verbose, out: os.Stdout, errOut: os.Stderr}
 	res := printResult{Type: "result", SessionID: sess.ID, Model: model.ProviderName + "/" + model.Model.ID}
+	p := &printer{format: o.Format, partial: o.Partial, verbose: o.Verbose, out: os.Stdout, errOut: os.Stderr, res: &res}
 	p.emit(map[string]any{"type": "init", "session_id": sess.ID, "model": res.Model, "effort": ag.Effort(), "cwd": cwd})
 
-	var g *goal.Goal
+	// The goal lives here; from the file only the model's complete/blocked
+	// report is taken (see goal.Adopt). Its snapshot goes into the session
+	// once, at the end.
+	d := core.GoalDriver{Session: sess.ID, Steer: ag.Steer}
 	if o.Goal != "" {
 		budget := 0
 		if o.GoalBudget != "" {
@@ -216,64 +220,34 @@ func RunPrint(o PrintOptions) error {
 				return err
 			}
 		}
-		if g, err = goal.New(o.Goal, budget); err != nil {
+		g, err := goal.New(o.Goal, budget)
+		if err != nil {
 			return err
 		}
 		if err := goal.Save(sess.ID, g); err != nil {
 			return err
 		}
+		d.Goal = g
 	}
 
 	began := time.Now()
 	input := o.Prompt
-	if input == "" && g != nil {
-		input = g.Continuation()
+	if input == "" && d.Goal != nil {
+		input = d.Goal.Continuation()
 	}
-	var runErr error
-	for {
-		turnStart, tools := time.Now(), 0
-		budgetSent := false
-		runErr = ag.Run(ctx, input, func(ev any) {
-			p.event(ev, &res)
-			if g == nil {
-				return
-			}
-			switch e := ev.(type) {
-			case agent.ToolStart:
-				tools++
-			case agent.StepEnd:
-				// The goal lives here; from the file only the model's
-				// complete/blocked report is taken (see goal.Adopt).
-				file, _ := goal.Load(sess.ID)
-				g.Adopt(file)
-				if g.Status == goal.Active && g.Account(e.Usage.PromptTokens, e.Usage.CachedTokens, e.Usage.CompletionTokens) && !budgetSent {
-					budgetSent = true
-					ag.Steer(g.BudgetMessage())
-				}
-				_ = goal.Save(sess.ID, g)
-			}
-		})
-		if g == nil {
-			break
-		}
-		file, _ := goal.Load(sess.ID)
-		g.Adopt(file)
-		var failed error
-		if runErr != nil && !errors.Is(runErr, context.Canceled) {
-			failed = runErr
-		}
-		g.TurnEnded(time.Since(turnStart), failed, tools)
-		_ = goal.Save(sess.ID, g)
-		if g.Status != goal.Active || errors.Is(runErr, context.Canceled) {
-			break
-		}
+	turn := func(ctx context.Context, input string, emit func(any)) error {
+		emit(transcript.Input{Text: input})
+		err := ag.Run(ctx, input, emit)
+		p.tr.End()
+		return err
+	}
+	runErr := d.Run(ctx, input, turn, p.event, func() {
 		p.flushStep()
 		if o.Verbose && (o.Format == "" || o.Format == "text") {
-			fmt.Fprintf(os.Stderr, "\n◎ continuing goal · turn %d · %s\n", g.Turns+1, g.Usage())
+			fmt.Fprintf(os.Stderr, "\n◎ continuing goal · turn %d · %s\n", d.Goal.Turns+1, d.Goal.Usage())
 		}
-		input = g.Continuation()
-	}
-	if g != nil {
+	})
+	if g := d.Goal; g != nil {
 		res.GoalStatus, res.GoalNote = string(g.Status), g.Note
 		if !o.NoSave { // so resuming the session shows the goal
 			raw, _ := json.Marshal(g)
@@ -315,19 +289,21 @@ func RunPrint(o PrintOptions) error {
 	return nil
 }
 
-// printer renders agent events for one output format.
+// printer renders a run for one output format, from the items the
+// transcript builder makes of the agent's events.
 type printer struct {
 	format  string
 	partial bool
 	verbose bool
 	out     io.Writer
 	errOut  io.Writer
+	res     *printResult
 
+	tr transcript.Builder
 	// Current step, flushed as one "assistant" event in stream-json.
 	text, reasoning strings.Builder
 	lastText        string
 	wroteText       bool
-	tools           map[string]agent.BashArgs
 }
 
 func (p *printer) emit(v any) {
@@ -337,6 +313,8 @@ func (p *printer) emit(v any) {
 	b, _ := json.Marshal(v)
 	fmt.Fprintf(p.out, "%s\n", b)
 }
+
+func (p *printer) textMode() bool { return p.format == "" || p.format == "text" }
 
 func (p *printer) flushStep() {
 	if p.text.Len() == 0 && p.reasoning.Len() == 0 {
@@ -350,60 +328,80 @@ func (p *printer) flushStep() {
 	p.reasoning.Reset()
 }
 
-func (p *printer) event(ev any, res *printResult) {
-	if p.tools == nil {
-		p.tools = map[string]agent.BashArgs{}
+// event passes an agent event to the builder; a step's end flushes it and
+// counts its usage.
+func (p *printer) event(ev any) {
+	if p.tr.Handler.Started == nil {
+		p.tr.Handler = transcript.Handler{Started: p.started, Delta: p.delta, Completed: p.completed}
 	}
-	switch e := ev.(type) {
-	case agent.ReasoningDelta:
-		p.reasoning.WriteString(e.Text)
-		if p.partial {
-			p.emit(map[string]any{"type": "delta", "kind": "reasoning", "text": e.Text})
+	p.tr.Event(ev)
+	if e, ok := ev.(agent.StepEnd); ok {
+		p.flushStep()
+		p.res.NumSteps++
+		addUsage(p.res, e.Usage)
+	}
+}
+
+func (p *printer) started(it *transcript.Item) {
+	switch it.Kind {
+	case transcript.Tool:
+		p.flushStep()
+		p.emit(map[string]any{"type": "tool_use", "id": it.CallID, "description": it.Description, "command": it.Command})
+		if p.verbose && p.textMode() {
+			fmt.Fprintf(p.errOut, "\n● %s  $ %s\n", it.Description, tui.FirstLine(it.Command))
 		}
-	case agent.TextDelta:
-		p.text.WriteString(e.Text)
-		if p.partial {
-			p.emit(map[string]any{"type": "delta", "kind": "text", "text": e.Text})
+	case transcript.Hook:
+		p.emit(map[string]any{"type": "hook", "event": it.HookEvent, "message": it.Text, "blocked": it.Blocked})
+		if p.textMode() {
+			fmt.Fprintf(p.errOut, "⚑ %s: %s\n", it.HookEvent, it.Text)
 		}
-		if p.format == "" || p.format == "text" {
-			fmt.Fprint(p.out, e.Text)
+	}
+}
+
+func (p *printer) delta(it *transcript.Item, d string) {
+	switch it.Kind {
+	case transcript.Reasoning:
+		p.reasoning.WriteString(d)
+		if p.partial {
+			p.emit(map[string]any{"type": "delta", "kind": "reasoning", "text": d})
+		}
+	case transcript.Assistant:
+		p.text.WriteString(d)
+		if p.partial {
+			p.emit(map[string]any{"type": "delta", "kind": "text", "text": d})
+		}
+		if p.textMode() {
+			fmt.Fprint(p.out, d)
 			p.wroteText = true
 		}
-	case agent.ToolStart:
-		p.tools[e.ID] = e.Args
-		p.flushStep()
-		p.emit(map[string]any{"type": "tool_use", "id": e.ID, "description": e.Args.Description, "command": e.Args.Command})
-		if p.verbose && (p.format == "" || p.format == "text") {
-			fmt.Fprintf(p.errOut, "\n● %s  $ %s\n", e.Args.Description, tui.FirstLine(e.Args.Command))
+	}
+}
+
+func (p *printer) completed(it *transcript.Item) {
+	switch it.Kind {
+	case transcript.Tool:
+		r := it.Result
+		if r == nil {
+			return
 		}
-	case agent.ToolEnd:
-		r := e.Result
-		args := p.tools[e.ID]
-		out := r.ForModel(args)
+		out := r.Text
 		if len(out) > 4000 {
 			out = out[:4000] + "\n[truncated]"
 		}
 		p.emit(map[string]any{
-			"type": "tool_result", "id": e.ID, "description": args.Description, "exit_code": r.ExitCode,
-			"timed_out": r.TimedOut, "duration_ms": r.Duration.Milliseconds(), "output": out,
+			"type": "tool_result", "id": it.CallID, "description": it.Description, "exit_code": r.ExitCode,
+			"timed_out": r.TimedOut, "duration_ms": it.Duration.Milliseconds(), "output": out,
 		})
-		if p.verbose && (p.format == "" || p.format == "text") {
+		if p.verbose && p.textMode() {
 			status := fmt.Sprintf("exit %d", r.ExitCode)
 			if r.TimedOut {
 				status = "timed out"
 			}
-			fmt.Fprintf(p.errOut, "  └ %s · %s\n", status, tui.FormatDuration(r.Duration))
+			fmt.Fprintf(p.errOut, "  └ %s · %s\n", status, tui.FormatDuration(it.Duration))
 		}
-	case agent.StepEnd:
-		p.flushStep()
-		res.NumSteps++
-		addUsage(res, e.Usage)
-	case agent.CompactEnd:
-		p.emit(map[string]any{"type": "compaction", "tokens_before": e.Before, "tokens_after": e.After})
-	case agent.HookNotice:
-		p.emit(map[string]any{"type": "hook", "event": e.Event, "message": e.Message, "blocked": e.Blocked})
-		if p.format == "" || p.format == "text" {
-			fmt.Fprintf(p.errOut, "⚑ %s: %s\n", e.Event, e.Message)
+	case transcript.Compaction:
+		if it.Status == transcript.Completed {
+			p.emit(map[string]any{"type": "compaction", "tokens_before": it.TokensBefore, "tokens_after": it.TokensAfter})
 		}
 	}
 }

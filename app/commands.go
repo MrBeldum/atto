@@ -259,6 +259,7 @@ func (a *App) reset() {
 	a.ctxTokens = 0
 	a.usage = usageStats{}
 	a.ui.Body.Clear()
+	a.resetItems()
 	a.ui.Redraw()
 	a.ui.ScrollToBottom()
 	a.addHeader()

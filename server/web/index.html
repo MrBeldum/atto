@@ -123,6 +123,10 @@ function update(el, it) {
   switch (it.type) {
     case "userMessage": el.className = "user"; el.textContent = it.text; break;
     case "event": el.className = "note"; el.textContent = "◆ " + (it.text || "").replace(/^\[atto event\] /, ""); break;
+    case "goal": el.className = "note"; el.textContent = "◎ " + (/<objective>/.test(it.text || "") ? "Continuing goal" : (it.text || "").replace(/^\[atto goal\] /, "")); break;
+    case "goalStatus": el.className = "note"; el.textContent = "◎ Goal " + (it.goalStatus || "") + (it.text ? ": " + it.text : ""); break;
+    case "hook": el.className = "note"; el.textContent = "⚑ " + (it.hookEvent || "hook") + ": " + (it.text || ""); break;
+    case "notice": el.className = "note"; el.textContent = it.text || ""; break;
     case "agentMessage": el.className = "agent"; el.innerHTML = md(it.text || ""); break;
     case "reasoning":
       el.innerHTML = `<details><summary>∴ Thinking</summary><pre></pre></details>`;
@@ -232,7 +236,7 @@ function connect() {
         if (it.type === "commandExecution") it.output = (it.output || "") + p.delta; else it.text = (it.text || "") + p.delta;
         update(rec.el, it); scrollDown(); break;
       }
-      case "hook": note("⚑ " + p.event + ": " + p.message); break;
+      case "hook": if (!p.turnId) note("⚑ " + p.event + ": " + p.message); break; // during a turn it is a hook item
       case "turn/completed":
         setBusy(false);
         if (p.status !== "completed") note(p.status + (p.error ? ": " + p.error : ""));

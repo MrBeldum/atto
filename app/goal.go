@@ -3,120 +3,39 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
-	"time"
 
+	"github.com/sebastianrcnt/atto/core"
+	"github.com/sebastianrcnt/atto/core/transcript"
 	"github.com/sebastianrcnt/atto/goal"
 	"github.com/sebastianrcnt/atto/session"
 	"github.com/sebastianrcnt/atto/tui"
 )
 
-// goalState is the TUI's goal. It lives in memory; the goal file is how
-// the model reports back (atto goal complete|blocked), and only those
-// reports are taken from it (goal.Adopt), so editing the file cannot
-// rewrite the objective or the budget.
-type goalState struct {
-	g          *goal.Goal
-	turnTools  int  // tool calls in the current turn
-	budgetSent bool // budget message already steered into this turn
-}
+// The goal is driven by core.GoalDriver, shared with atto -p: the TUI
+// feeds it the agent's events (onEvent), ends its turns (afterRun) and
+// starts the next goal turn whenever nothing else is waiting.
 
-// pollGoal picks up a report the model wrote with atto goal complete|blocked.
-func (a *App) pollGoal() {
-	g := a.goal.g
-	if g == nil {
-		return
-	}
-	file, err := goal.Load(a.sess.ID)
-	if err != nil {
-		a.errorNotice(err)
-		return
-	}
-	if g.Adopt(file) {
-		a.saveGoal(g)
-		a.announceGoal(g)
+// resetGoal sets up the goal driver for the current session, without a
+// goal: /goal sets one, a resume restores it.
+func (a *App) resetGoal() {
+	a.goal = core.GoalDriver{
+		Session:  a.sess.ID,
+		Steer:    func(text string) { a.agent.Steer(text) },
+		Snapshot: a.snapshotGoal,
+		Changed:  a.announceGoal,
+		Error:    a.errorNotice,
 	}
 }
 
-// saveGoal writes the goal file and records a snapshot in the session.
-func (a *App) saveGoal(g *goal.Goal) {
-	if g == nil {
-		_ = goal.Clear(a.sess.ID)
-		a.sess.Append(session.Entry{Type: session.TypeGoal, Goal: json.RawMessage("null")})
-	} else {
-		if err := goal.Save(a.sess.ID, g); err != nil {
-			a.errorNotice(err)
-		}
-		raw, _ := json.Marshal(g)
-		a.sess.Append(session.Entry{Type: session.TypeGoal, Goal: raw})
+// snapshotGoal records the goal in the session (null when cleared).
+func (a *App) snapshotGoal(g *goal.Goal) {
+	raw := json.RawMessage("null")
+	if g != nil {
+		raw, _ = json.Marshal(g)
 	}
-	a.goal.g = g
-}
-
-// announce shows a goal status change in the transcript.
-func (a *App) announceGoal(g *goal.Goal) {
-	var title string
-	switch g.Status {
-	case goal.Complete:
-		title = "◎ Goal achieved"
-	case goal.Blocked:
-		title = "◎ Goal blocked (/goal resume to retry)"
-	case goal.BudgetLimited:
-		title = "◎ Goal budget used (/goal budget <n> to extend)"
-	case goal.Paused:
-		title = "◎ Goal paused (/goal resume)"
-	default:
-		return
-	}
-	if g.Note != "" {
-		title += ": " + g.Note
-	}
-	a.add(&eventBlock{title: title + tui.Dim(" · "+g.Usage())})
-}
-
-// goalStep accounts a model call against an active goal and, when the
-// budget runs out, tells the model to wrap up (once, mid-turn as in codex).
-func (a *App) goalStep(input, cached, output int) {
-	a.pollGoal()
-	g := a.goal.g
-	if g == nil || g.Status != goal.Active {
-		return
-	}
-	exhausted := g.Account(input, cached, output)
-	_ = goal.Save(a.sess.ID, g) // the file follows memory; edits to it are dropped
-	if exhausted && !a.goal.budgetSent {
-		a.goal.budgetSent = true
-		a.agent.Steer(g.BudgetMessage())
-		a.announceGoal(g)
-	}
-}
-
-// goalTurnEnded applies stop conditions after a turn. Returns true if the
-// goal is still active.
-func (a *App) goalTurnEnded(err error) bool {
-	a.pollGoal()
-	g := a.goal.g
-	if g == nil {
-		return false
-	}
-	wasActive := g.Status == goal.Active
-	var failed error
-	switch {
-	case errors.Is(err, context.Canceled):
-		if g.Status == goal.Active {
-			g.Status, g.Note = goal.Paused, "interrupted"
-		}
-	case err != nil:
-		failed = err
-	}
-	g.TurnEnded(time.Since(a.runStart), failed, a.goal.turnTools)
-	a.saveGoal(g)
-	if wasActive && g.Status != goal.Active {
-		a.announceGoal(g)
-	}
-	return g.Status == goal.Active
+	a.sess.Append(session.Entry{Type: session.TypeGoal, Goal: raw})
 }
 
 // continueGoal starts the next goal turn when nothing else is waiting:
@@ -125,16 +44,15 @@ func (a *App) continueGoal() {
 	if a.busy || a.modal != nil || a.queuePaused || len(a.queued) > 0 || len(a.pendingEvents) > 0 {
 		return
 	}
-	a.pollGoal()
-	g := a.goal.g
-	if g == nil || g.Status != goal.Active {
+	text, ok := a.goal.Next()
+	if !ok {
 		return
 	}
+	g := a.goal.Goal
 	a.add(&eventBlock{title: fmt.Sprintf("◎ Continuing goal · turn %d · %s", g.Turns+1, g.Usage())})
-	text := g.Continuation()
 	a.runKind = "turn"
-	a.goal.turnTools, a.goal.budgetSent = 0, false
 	a.recordSettings()
+	a.tr().Event(transcript.Input{Text: text}) // shown above
 	a.start("Working on goal", func(ctx context.Context, emit func(any)) error {
 		return a.agent.Run(ctx, text, emit)
 	})
@@ -144,8 +62,8 @@ func (a *App) continueGoal() {
 // budget <n> | edit.
 func (a *App) cmdGoal(arg string) {
 	sub, rest, _ := strings.Cut(strings.TrimSpace(arg), " ")
-	a.pollGoal()
-	g := a.goal.g
+	a.goal.Poll()
+	g := a.goal.Goal
 	switch sub {
 	case "", "show":
 		if g == nil {
@@ -169,7 +87,7 @@ func (a *App) cmdGoal(arg string) {
 			return
 		}
 		g.Status, g.Note = goal.Paused, "paused by the user"
-		a.saveGoal(g)
+		a.goal.Set(g)
 		a.notice("Goal paused. The current turn finishes; no new goal turns start. /goal resume to continue.")
 	case "resume":
 		if g == nil || g.Status == goal.Active {
@@ -181,7 +99,7 @@ func (a *App) cmdGoal(arg string) {
 			return
 		}
 		g.Status, g.Note, g.FailStreak, g.IdleStreak = goal.Active, "", 0, 0
-		a.saveGoal(g)
+		a.goal.Set(g)
 		a.notice("Goal resumed.")
 		a.continueGoal()
 	case "clear":
@@ -189,7 +107,7 @@ func (a *App) cmdGoal(arg string) {
 			a.notice("No goal.")
 			return
 		}
-		a.saveGoal(nil)
+		a.goal.Set(nil)
 		a.notice("Goal cleared.")
 	case "budget":
 		if g == nil {
@@ -205,7 +123,7 @@ func (a *App) cmdGoal(arg string) {
 		if g.Status == goal.BudgetLimited && g.TokensUsed < b {
 			g.Status, g.Note = goal.Paused, "budget raised"
 		}
-		a.saveGoal(g)
+		a.goal.Set(g)
 		a.notice("Goal budget set to %s (%s used).", goal.Tokens(b), goal.Tokens(g.TokensUsed))
 	case "edit":
 		if g == nil {
@@ -222,7 +140,7 @@ func (a *App) cmdGoal(arg string) {
 		if g != nil && g.Status != goal.Complete {
 			a.notice("Replaced the previous goal.")
 		}
-		a.saveGoal(ng)
+		a.goal.Set(ng)
 		a.add(&eventBlock{title: "◎ Goal set: " + tui.FirstLine(ng.Objective)})
 		a.continueGoal() // starts now if idle, else after the current turn
 	}
@@ -231,32 +149,15 @@ func (a *App) cmdGoal(arg string) {
 // restoreGoal brings a resumed session's goal back from its last snapshot.
 // An active goal comes back paused, so resuming never starts work by itself.
 func (a *App) restoreGoal(entries []session.Entry) {
-	var last json.RawMessage
-	for _, e := range entries {
-		if e.Type == session.TypeGoal {
-			last = e.Goal
-		}
-	}
-	a.goal = goalState{}
-	if len(last) == 0 || string(last) == "null" {
-		_ = goal.Clear(a.sess.ID)
-		return
-	}
-	var g goal.Goal
-	if json.Unmarshal(last, &g) != nil {
-		return
-	}
-	if g.Status == goal.Active {
-		g.Status, g.Note = goal.Paused, "session resumed"
+	a.resetGoal()
+	if a.goal.Restore(entries) {
 		a.notice("This session has a goal; it is paused. /goal resume to continue.")
 	}
-	_ = goal.Save(a.sess.ID, &g)
-	a.goal.g = &g
 }
 
 // goalPill is the status line indicator.
 func (a *App) goalPill() string {
-	g := a.goal.g
+	g := a.goal.Goal
 	if g == nil {
 		return ""
 	}

@@ -1,0 +1,113 @@
+// Package transcript is a conversation as the front ends show it: a list
+// of items (user messages, assistant text, reasoning, tool calls,
+// compactions, events, hook messages...). A Builder makes the items from
+// the agent's live events as a turn runs, or in one go from the active
+// branch of a saved session (Replay), and both go through the same code,
+// so a resumed conversation looks the way it did live. The TUI turns items
+// into blocks, the server into JSON-RPC items and atto -p into text or
+// JSON lines; each keeps its own presentation.
+package transcript
+
+import (
+	"time"
+
+	"github.com/sebastianrcnt/atto/goal"
+	"github.com/sebastianrcnt/atto/provider"
+)
+
+// Kind is what an item is.
+type Kind string
+
+const (
+	User       Kind = "user"       // a message the user sent, with its images
+	Assistant  Kind = "assistant"  // the model's answer text
+	Reasoning  Kind = "reasoning"  // the model's thinking
+	Tool       Kind = "tool"       // a shell command the model ran
+	Compaction Kind = "compaction" // the context was replaced by handoff notes
+	Event      Kind = "event"      // an [atto event] for the model: a job exited, a timer fired, a monitor matched
+	Goal       Kind = "goal"       // a goal message for the model: a continuation, or the budget running out
+	Hook       Kind = "hook"       // something a hook said, or what it blocked
+	Notice     Kind = "notice"     // a message from atto itself (live only: not in the session)
+	GoalStatus Kind = "goalStatus" // the goal changed status (live only)
+)
+
+// Status is where an item stands. Messages are complete when they start;
+// streamed items (assistant text, reasoning, tools, compactions) are in
+// progress until their step ends.
+type Status string
+
+const (
+	InProgress Status = "inProgress"
+	Completed  Status = "completed"
+	Failed     Status = "failed" // a tool that failed, a compaction that did not finish
+)
+
+// Item is one entry of a transcript. Fields are used according to Kind.
+type Item struct {
+	ID     string
+	Kind   Kind
+	Status Status
+	// Text is the message (user, assistant, reasoning, event, goal), the
+	// handoff notes (compaction) or the message of a hook or notice.
+	Text string
+	// Images are a user message's images, without their bytes.
+	Images []provider.Image
+	// Duration is the thinking time (reasoning), the run time (tool) or
+	// how long a compaction took, to the millisecond. Zero when unknown.
+	Duration time.Duration
+
+	// Tool. Output is the command's output as shown: streamed, tidied when
+	// the command ends, and only the tail when long (Dropped counts the
+	// bytes let go).
+	CallID      string
+	Description string
+	Command     string
+	Timeout     time.Duration
+	Output      string
+	Dropped     int
+	Result      *ToolResult // set when the command ended
+
+	// Compaction: the context estimate before and after (After is zero for
+	// sessions saved before it was recorded).
+	Auto         bool
+	TokensBefore int
+	TokensAfter  int
+
+	// Hook
+	HookEvent string // UserPromptSubmit, PreToolUse, Stop...
+	Blocked   bool
+
+	// GoalStatus: the goal as it was when its status changed.
+	GoalState *goal.Goal
+}
+
+// ToolResult is how a command ended.
+type ToolResult struct {
+	ExitCode int
+	TimedOut bool
+	Canceled bool
+	Err      string // the command could not run
+	// Text is the result as the model received it (live: before any
+	// PostToolUse hook added to it).
+	Text string
+}
+
+// Failed reports whether the command did not succeed.
+func (r ToolResult) Failed() bool {
+	return r.ExitCode != 0 || r.Err != "" || r.Canceled || r.TimedOut
+}
+
+// clone copies it so that later changes to the original don't show.
+func (it *Item) clone() Item {
+	c := *it
+	c.Images = append([]provider.Image(nil), it.Images...)
+	if it.Result != nil {
+		r := *it.Result
+		c.Result = &r
+	}
+	if it.GoalState != nil {
+		g := *it.GoalState
+		c.GoalState = &g
+	}
+	return c
+}

@@ -14,6 +14,7 @@ import (
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/core"
+	"github.com/sebastianrcnt/atto/core/transcript"
 	"github.com/sebastianrcnt/atto/events"
 	"github.com/sebastianrcnt/atto/hooks"
 	"github.com/sebastianrcnt/atto/images"
@@ -73,11 +74,18 @@ type App struct {
 	sendSteersAfterInterrupt bool
 	queuePaused              bool
 
-	// Blocks receiving the current stream.
+	// items makes the transcript's items from agent events and session
+	// entries (see items.go); these are the blocks of the items being
+	// streamed, tools by item ID.
+	items    transcript.Builder
 	thinking *thinkingBlock
 	text     *textBlock
 	tools    map[string]*toolBlock
 	compact  *compactBlock
+	// steered collects the user messages of a committed steer, shown as
+	// one block; replaying is set while blocks come from saved entries.
+	steered   []string
+	replaying bool
 
 	// details expands every collapsible block (ctrl+t).
 	details details
@@ -96,7 +104,7 @@ type App struct {
 	pendingEvents        []events.Event
 	jobCount, timerCount int
 
-	goal goalState
+	goal core.GoalDriver
 
 	// Slash command list: selection, the text it belongs to, and the text
 	// for which Esc closed it.
@@ -237,7 +245,7 @@ func (a *App) newSession() {
 	a.sess = session.New(a.cwd)
 	core.Bind(a.agent, a.hooks, a.sess, time.Now(), true)
 	a.setLiveSession(a.sess.ID)
-	a.goal = goalState{}
+	a.resetGoal()
 	a.recModel, a.recEffort, a.sessName = "", "", ""
 	a.statusTrigger()
 }
@@ -415,9 +423,8 @@ func (a *App) startTurn(text string, att []tui.Attachment) {
 			return
 		}
 	}
-	a.add(&userBlock{text: text})
+	a.tr().Event(transcript.Input{Text: text, Images: imgs})
 	a.runKind = "turn"
-	a.goal.turnTools, a.goal.budgetSent = 0, false
 	a.recordSettings()
 	a.start("Thinking", func(ctx context.Context, emit func(any)) error {
 		return a.agent.RunWithImages(ctx, text, imgs, emit)
@@ -429,6 +436,9 @@ func (a *App) start(activity string, fn func(context.Context, func(any)) error) 
 	ctx, cancel := context.WithCancel(context.Background())
 	a.busy, a.cancel = true, cancel
 	a.runStart, a.activity = time.Now(), activity
+	if a.runKind == "turn" {
+		a.goal.BeginTurn()
+	}
 
 	go func() { // keep the spinner and timers moving
 		t := time.NewTicker(80 * time.Millisecond)
@@ -446,11 +456,7 @@ func (a *App) start(activity string, fn func(context.Context, func(any)) error) 
 		err := fn(ctx, func(ev any) { a.ui.Do(func() { a.onEvent(ev) }) })
 		ctxTokens := a.agent.ContextTokens() // safe: the run is over
 		a.ui.Do(func() {
-			a.endStream()
-			if a.compact != nil && a.compact.running { // failed or canceled
-				a.ui.Body.Remove(gap{a.compact})
-				a.compact = nil
-			}
+			a.tr().End() // a compaction that did not finish disappears
 			a.busy = false
 			a.ctxTokens = ctxTokens
 			cancel()
@@ -470,97 +476,6 @@ func (a *App) start(activity string, fn func(context.Context, func(any)) error) 
 			a.afterRun(err)
 		})
 	}()
-}
-
-func (a *App) endStream() {
-	if a.thinking != nil {
-		a.thinking.finish()
-	}
-	a.thinking, a.text = nil, nil
-}
-
-func (a *App) onEvent(ev any) {
-	switch e := ev.(type) {
-	case agent.ReasoningDelta:
-		if a.thinking == nil {
-			a.thinking = &thinkingBlock{start: time.Now(), expander: expander{d: &a.details}}
-			a.add(a.thinking)
-		}
-		a.thinking.text.WriteString(e.Text)
-	case agent.TextDelta:
-		if a.thinking != nil {
-			a.thinking.finish()
-		}
-		if a.text == nil {
-			if strings.TrimSpace(e.Text) == "" {
-				return
-			}
-			a.text = &textBlock{}
-			a.add(a.text)
-		}
-		a.text.text.WriteString(e.Text)
-	case agent.ToolStart:
-		a.goal.turnTools++
-		a.endStream()
-		b := &toolBlock{args: e.Args, timeout: e.Timeout, start: time.Now(), expander: expander{d: &a.details}}
-		a.tools[e.ID] = b
-		a.add(b)
-		a.activity = e.Args.Description
-	case agent.ToolOutput:
-		if b := a.tools[e.ID]; b != nil {
-			b.append(e.Chunk)
-		}
-	case agent.ToolEnd:
-		if b := a.tools[e.ID]; b != nil {
-			b.done, b.res = true, e.Result
-			delete(a.tools, e.ID)
-		}
-		a.activity = "Thinking"
-	case agent.StepEnd:
-		a.endStream()
-		a.ctxTokens = e.Context
-		a.usage.add(e.Usage)
-		a.goalStep(e.Usage.PromptTokens, e.Usage.CachedTokens, e.Usage.CompletionTokens)
-		a.statusTrigger()
-	case agent.SteerCommitted:
-		var user []string // events were already shown when they arrived
-		for _, t := range e.Texts {
-			if !isEvent(t) {
-				user = append(user, t)
-			}
-		}
-		a.pendingSteers = a.pendingSteers[min(len(user), len(a.pendingSteers)):]
-		a.endStream()
-		if len(user) > 0 {
-			a.add(&userBlock{text: strings.Join(user, "\n\n")})
-		}
-	case agent.HookNotice:
-		style := tui.Dim
-		if e.Blocked {
-			style = func(s string) string { return tui.FG(3, s) }
-		}
-		a.add(&noticeBlock{text: "⚑ " + e.Event + ": " + e.Message, style: style})
-	case agent.CompactStart:
-		a.endStream()
-		a.compact = &compactBlock{auto: e.Auto, running: true, expander: expander{d: &a.details}}
-		a.add(a.compact)
-		a.activity = "Compacting context"
-	case agent.CompactDelta:
-		if a.compact != nil {
-			a.compact.notes.WriteString(e.Text)
-		}
-	case agent.CompactEnd:
-		if c := a.compact; c != nil {
-			c.running = false
-			c.notes.Reset()
-			c.notes.WriteString(e.Notes)
-			c.before, c.after, c.elapsed = e.Before, e.After, e.Elapsed
-		}
-		a.compact = nil
-		a.ctxTokens = e.After
-		a.activity = "Thinking"
-		a.notice("Long threads and repeated compactions can make the model less accurate. Start a new conversation (/clear) when you can.")
-	}
 }
 
 // --- effort ---
