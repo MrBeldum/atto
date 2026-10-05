@@ -21,9 +21,10 @@ import (
 const Version = "0.0.3-dev"
 
 type Options struct {
-	Inline   bool // render inline instead of fullscreen
-	Continue bool // resume the latest session in this directory
-	Resume   bool // open the resume picker at startup
+	Inline   bool   // render inline instead of fullscreen
+	Continue bool   // resume the latest session in this directory
+	Resume   bool   // open the resume picker at startup
+	Model    string // provider/id to use instead of the default
 }
 
 // modal is a picker shown in place of the editor.
@@ -98,7 +99,10 @@ func Run(opts Options) error {
 	if len(all) == 0 {
 		return fmt.Errorf("no models configured; add a provider to %s", config.ModelsPath())
 	}
-	model, ok := models.Find(settings.DefaultProvider, settings.DefaultModel)
+	model, ok := pickModel(models, settings, opts.Model)
+	if !ok && opts.Model != "" {
+		return fmt.Errorf("unknown model %q (see: atto models)", opts.Model)
+	}
 	if !ok {
 		model = all[0]
 	}

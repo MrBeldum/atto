@@ -13,7 +13,7 @@ import (
 
 // RunPrint runs a single prompt non-interactively, streaming plain text to
 // stdout and tool activity to stderr.
-func RunPrint(prompt string) error {
+func RunPrint(prompt, modelID string) error {
 	settings, err := config.LoadSettings()
 	if err != nil {
 		return err
@@ -22,7 +22,10 @@ func RunPrint(prompt string) error {
 	if err != nil {
 		return err
 	}
-	model, ok := models.Find(settings.DefaultProvider, settings.DefaultModel)
+	model, ok := pickModel(models, settings, modelID)
+	if !ok && modelID != "" {
+		return fmt.Errorf("unknown model %q (see: atto models)", modelID)
+	}
 	if !ok {
 		all := models.List()
 		if len(all) == 0 {
@@ -65,4 +68,12 @@ func firstLine(s string) string {
 		}
 	}
 	return s
+}
+
+// pickModel resolves -m (provider/id or id), else the default model.
+func pickModel(models config.ModelsFile, settings config.Settings, modelID string) (config.ModelRef, bool) {
+	if modelID != "" {
+		return models.Find("", modelID)
+	}
+	return models.Find(settings.DefaultProvider, settings.DefaultModel)
 }

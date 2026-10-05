@@ -4,6 +4,8 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -113,7 +115,11 @@ func (a *Agent) commitSteers(emit func(any)) bool {
 }
 
 func New(model config.ModelRef, effort, cwd string) *Agent {
-	a := &Agent{Cwd: cwd, effort: effort}
+	// A default ID so session-routed providers work even without a saved
+	// session (e.g. atto -p); SetSession replaces it.
+	id := make([]byte, 8)
+	_, _ = rand.Read(id)
+	a := &Agent{Cwd: cwd, effort: effort, sessID: hex.EncodeToString(id)}
 	a.SetModel(model)
 	a.SetStart(time.Now())
 	return a

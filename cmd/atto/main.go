@@ -30,6 +30,7 @@ func main() {
 	prompt := flag.String("p", "", "run a single prompt non-interactively and print the result")
 	cont := flag.Bool("c", false, "continue the most recent session in this directory")
 	resume := flag.Bool("resume", false, "pick a saved session to resume")
+	model := flag.String("m", "", "model to use, as provider/id (see: atto models)")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("atto", app.Version)
@@ -37,9 +38,9 @@ func main() {
 	}
 	var err error
 	if *prompt != "" {
-		err = app.RunPrint(*prompt)
+		err = app.RunPrint(*prompt, *model)
 	} else {
-		err = app.Run(app.Options{Inline: *inline, Continue: *cont, Resume: *resume})
+		err = app.Run(app.Options{Inline: *inline, Continue: *cont, Resume: *resume, Model: *model})
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "atto:", err)
