@@ -17,9 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # All arm64, free for public repositories (macos-latest is Apple
-        # silicon). amd64 binaries are still cross-built below.
-        os: [ubuntu-24.04-arm, macos-latest, windows-11-arm]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
