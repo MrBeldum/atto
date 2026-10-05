@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"unsafe"
 
 	"github.com/rivo/uniseg"
 )
@@ -111,33 +112,71 @@ type cell struct {
 // cells splits s into graphemes, attaching escape sequences to the following
 // grapheme. Trailing escapes are returned separately.
 func cells(s string) (out []cell, trailing string) {
-	var esc strings.Builder
-	for i := 0; i < len(s); {
-		if n := escapeLen(s, i); n > 0 {
-			esc.WriteString(s[i : i+n])
-			i += n
-			continue
+	sc := cellScanner{s: s}
+	for {
+		c, ok := sc.next()
+		if !ok {
+			return out, c.esc
 		}
-		// Grapheme run up to the next escape.
-		end := strings.IndexByte(s[i:], 0x1b)
-		if end < 0 {
-			end = len(s)
-		} else {
-			end += i
-		}
-		g := uniseg.NewGraphemes(s[i:end])
-		for g.Next() {
-			t := g.Str()
-			w := g.Width()
-			if t == "\t" {
-				t, w = "   ", 3
-			}
-			out = append(out, cell{esc: esc.String(), text: t, width: w})
-			esc.Reset()
-		}
-		i = end
+		out = append(out, c)
 	}
-	return out, esc.String()
+}
+
+// cellScanner walks a string one cell at a time without allocating: a
+// cell's escapes and grapheme are substrings of the string. Graphemes are
+// segmented per run of text between escapes.
+type cellScanner struct {
+	s     string
+	i     int  // next byte
+	end   int  // end of the current run
+	ascii bool // the run is printable ASCII and tabs: one byte per cell
+	state int  // uniseg state within the run
+}
+
+// next returns the next cell. At the end it returns false, with the
+// trailing escapes in the cell's esc.
+func (sc *cellScanner) next() (cell, bool) {
+	var c cell
+	if sc.i >= sc.end {
+		start := sc.i
+		for sc.i < len(sc.s) {
+			n := escapeLen(sc.s, sc.i)
+			if n == 0 {
+				break
+			}
+			sc.i += n
+		}
+		c.esc = sc.s[start:sc.i]
+		if sc.i >= len(sc.s) {
+			return c, false
+		}
+		// The run lasts up to the next escape (a lone ESC, at the very
+		// end, is text).
+		sc.end = len(sc.s)
+		if j := strings.IndexByte(sc.s[sc.i+1:], 0x1b); j >= 0 {
+			sc.end = sc.i + 1 + j
+		}
+		sc.state, sc.ascii = -1, true
+		for k := sc.i; k < sc.end; k++ {
+			if b := sc.s[k]; (b < 0x20 || b >= 0x7f) && b != '\t' {
+				sc.ascii = false
+				break
+			}
+		}
+	}
+	if sc.ascii {
+		c.text, c.width = sc.s[sc.i:sc.i+1], 1
+		sc.i++
+	} else {
+		var b int
+		c.text, _, b, sc.state = uniseg.StepString(sc.s[sc.i:sc.end], sc.state)
+		c.width = b >> uniseg.ShiftWidth
+		sc.i += len(c.text)
+	}
+	if c.text == "\t" {
+		c.text, c.width = "   ", 3
+	}
+	return c, true
 }
 
 // Truncate cuts s to at most width columns, appending tail (e.g. "…") when it
@@ -150,11 +189,13 @@ func Truncate(s string, width int, tail string) string {
 	if tw > width {
 		tail, tw = "", 0
 	}
-	cs, _ := cells(s)
 	var b strings.Builder
+	b.Grow(len(s) + len(Reset) + len(tail))
+	sc := cellScanner{s: s}
 	w := 0
-	for _, c := range cs {
-		if w+c.width > width-tw {
+	for {
+		c, ok := sc.next()
+		if !ok || w+c.width > width-tw {
 			break
 		}
 		b.WriteString(c.esc)
@@ -211,10 +252,27 @@ const (
 // StripWrapMarks removes soft-wrap marks, for lines that leave the
 // renderer some other way.
 func StripWrapMarks(s string) string {
-	if !strings.Contains(s, wrapMark) {
+	i := strings.Index(s, wrapMark)
+	if i < 0 {
 		return s
 	}
-	return strings.NewReplacer(wrapSpace, "", wrapJoin, "").Replace(s)
+	var b strings.Builder
+	b.Grow(len(s))
+	for ; i >= 0; i = strings.Index(s, wrapMark) {
+		b.WriteString(s[:i])
+		s = s[i:]
+		switch {
+		case strings.HasPrefix(s, wrapSpace):
+			s = s[len(wrapSpace):]
+		case strings.HasPrefix(s, wrapJoin):
+			s = s[len(wrapJoin):]
+		default:
+			b.WriteString(wrapMark)
+			s = s[len(wrapMark):]
+		}
+	}
+	b.WriteString(s)
+	return b.String()
 }
 
 // Wrap word-wraps text to width columns. Explicit newlines are honoured,
@@ -222,87 +280,112 @@ func StripWrapMarks(s string) string {
 // carried onto the next line. Continuation lines start with a soft-wrap
 // mark (see wrapSpace).
 func Wrap(text string, width int) []string {
-	if width < 1 {
-		width = 1
+	w := wrapper{width: max(1, width)}
+	w.buf = make([]byte, 0, len(text)+len(text)/4+16)
+	for {
+		i := strings.IndexByte(text, '\n')
+		if i < 0 {
+			w.line(text)
+			return w.lines()
+		}
+		w.line(text[:i])
+		text = text[i+1:]
 	}
-	var out []string
-	var st sgrState
-	for _, logical := range strings.Split(text, "\n") {
-		out = append(out, wrapLine(logical, width, &st)...)
+}
+
+// wrapper builds all the lines of a Wrap in one buffer, so wrapping
+// allocates a few times per call, not per cell or per line.
+type wrapper struct {
+	width int
+	st    sgrState
+	buf   []byte
+	cuts  []int // where each finished line ends in buf
+}
+
+// lines returns the finished lines, substrings of one string.
+func (w *wrapper) lines() []string {
+	out := make([]string, len(w.cuts))
+	if len(w.buf) == 0 {
+		return out
+	}
+	// buf is not written again, so the string can share its bytes.
+	all := unsafe.String(&w.buf[0], len(w.buf))
+	from := 0
+	for i, to := range w.cuts {
+		out[i], from = all[from:to], to
 	}
 	return out
 }
 
-func wrapLine(line string, width int, st *sgrState) []string {
-	cs, trailing := cells(line)
-	if len(cs) == 0 {
-		st.feed(trailing)
-		return []string{trailing}
+// cut ends the line that began at from; trim drops its trailing spaces
+// (kept before a wrap).
+func (w *wrapper) cut(from int, trim bool) {
+	for trim && len(w.buf) > from && w.buf[len(w.buf)-1] == ' ' {
+		w.buf = w.buf[:len(w.buf)-1]
 	}
+	w.cuts = append(w.cuts, len(w.buf))
+}
 
-	var lines []string
-	var cur strings.Builder
-	curW := 0
+// line wraps one logical line.
+func (w *wrapper) line(line string) {
+	width, st := w.width, &w.st
+	sc := cellScanner{s: line}
+	c, ok := sc.next()
+	if !ok {
+		st.feed(c.esc)
+		w.buf = append(w.buf, c.esc...)
+		w.cut(len(w.buf), false)
+		return
+	}
+	var from, curW int
 	start := func(mark string) {
-		cur.Reset()
-		cur.WriteString(st.active)
-		cur.WriteString(mark)
+		from = len(w.buf)
+		w.buf = append(w.buf, st.active...)
+		w.buf = append(w.buf, mark...)
 		curW = 0
 	}
-	flush := func() {
-		lines = append(lines, cur.String())
-	}
 	start("")
-
-	isSpace := func(c cell) bool { return c.text == " " }
-
-	for i := 0; i < len(cs); {
-		// Collect the next token: a run of spaces or a run of non-spaces.
-		j := i
-		sp := isSpace(cs[i])
-		tokW := 0
-		for j < len(cs) && isSpace(cs[j]) == sp {
-			tokW += cs[j].width
-			j++
-		}
-		tok := cs[i:j]
-		i = j
-
-		if sp {
-			// Spaces at a break point are dropped; otherwise kept if they fit.
-			for _, c := range tok {
-				st.feed(c.esc)
-				cur.WriteString(c.esc)
-				if curW > 0 && curW+c.width <= width {
-					cur.WriteString(c.text)
-					curW += c.width
-				}
+	for ok {
+		// The next token: a run of spaces or a run of non-spaces. Measure
+		// it on a copy of the scanner, then write its cells.
+		sp := c.text == " "
+		tokW := c.width
+		for peek := sc; ; {
+			n, more := peek.next()
+			if !more || (n.text == " ") != sp {
+				break
 			}
-			continue
+			tokW += n.width
 		}
-
-		if curW+tokW > width && curW > 0 {
-			flush()
+		if !sp && curW+tokW > width && curW > 0 {
+			w.cut(from, true)
 			start(wrapSpace) // tokens alternate, so a space run came before
 		}
-		for _, c := range tok {
-			if curW+c.width > width && curW > 0 {
-				flush()
-				start(wrapJoin)
+		for {
+			if sp {
+				// Spaces at a break point are dropped; otherwise kept if they fit.
+				st.feed(c.esc)
+				w.buf = append(w.buf, c.esc...)
+				if curW > 0 && curW+c.width <= width {
+					w.buf = append(w.buf, c.text...)
+					curW += c.width
+				}
+			} else {
+				if curW+c.width > width && curW > 0 {
+					w.cut(from, true)
+					start(wrapJoin)
+				}
+				st.feed(c.esc)
+				w.buf = append(w.buf, c.esc...)
+				w.buf = append(w.buf, c.text...)
+				curW += c.width
 			}
-			st.feed(c.esc)
-			cur.WriteString(c.esc)
-			cur.WriteString(c.text)
-			curW += c.width
+			if c, ok = sc.next(); !ok || (c.text == " ") != sp {
+				break
+			}
 		}
 	}
-	st.feed(trailing)
-	cur.WriteString(trailing)
-	flush()
-
-	// Trim trailing spaces that were kept before a wrap.
-	for k := range lines {
-		lines[k] = strings.TrimRight(lines[k], " ")
-	}
-	return lines
+	st.feed(c.esc) // trailing escapes
+	w.buf = append(w.buf, c.esc...)
+	w.cut(from, true)
 }

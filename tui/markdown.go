@@ -547,24 +547,27 @@ func findClose(s string, from int, delim string) int {
 // all whitespace. Used for code. Continuation lines start with a soft-wrap
 // mark.
 func WrapHard(s string, width int) []string {
-	cs, trailing := cells(s)
-	var out []string
-	var cur strings.Builder
-	var st sgrState
-	w := 0
-	for _, c := range cs {
+	wr := wrapper{buf: make([]byte, 0, len(s)+16)}
+	sc := cellScanner{s: s}
+	from, w := 0, 0
+	for {
+		c, ok := sc.next()
+		if !ok {
+			wr.buf = append(wr.buf, c.esc...)
+			break
+		}
 		if w+c.width > width && w > 0 {
-			out = append(out, cur.String())
-			cur.Reset()
-			cur.WriteString(st.active)
-			cur.WriteString(wrapJoin)
+			wr.cut(from, false)
+			from = len(wr.buf)
+			wr.buf = append(wr.buf, wr.st.active...)
+			wr.buf = append(wr.buf, wrapJoin...)
 			w = 0
 		}
-		st.feed(c.esc)
-		cur.WriteString(c.esc)
-		cur.WriteString(c.text)
+		wr.st.feed(c.esc)
+		wr.buf = append(wr.buf, c.esc...)
+		wr.buf = append(wr.buf, c.text...)
 		w += c.width
 	}
-	cur.WriteString(trailing)
-	return append(out, cur.String())
+	wr.cut(from, false)
+	return wr.lines()
 }
