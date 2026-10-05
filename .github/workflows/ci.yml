@@ -75,7 +75,7 @@ jobs:
         # --prerelease and --latest=false keep it out of releases/latest, so
         # stable installs and "atto update" never see it.
         run: |
-          printf 'Commit: %s/%s/commit/%s\n\nUnstable build of main, replaced on every push. Install with `ATTO_VERSION=edge`.\n' \
+          printf 'Commit: %s/%s/commit/%s\n\nUnstable build of main, replaced on every push. Install with `ATTO_CHANNEL=edge`.\n' \
             "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA" > notes.md
           gh release delete edge --cleanup-tag --yes || true
           git push origin :refs/tags/edge || true

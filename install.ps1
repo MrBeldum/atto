@@ -2,16 +2,18 @@
 #
 #   irm https://raw.githubusercontent.com/sebastianrcnt/atto/main/install.ps1 | iex
 #
-# $env:ATTO_VERSION = "v0.1.0" picks a release (default: the latest; "edge" is
-# the unstable build of main);
+# $env:ATTO_CHANNEL = "stable" or "edge" picks the channel (default: stable, the
+# latest release; edge is the unstable build of main);
+# $env:ATTO_VERSION = "v0.1.0" pins an exact release and wins over ATTO_CHANNEL;
 # $env:ATTO_INSTALL_DIR picks the directory (default: %LOCALAPPDATA%\Programs\atto).
-# Running it again installs the latest release over the old one.
+# Running it again installs the newest build of the channel over the old one.
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $repo = "sebastianrcnt/atto"
 $dir = if ($env:ATTO_INSTALL_DIR) { $env:ATTO_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "Programs\atto" }
-$version = if ($env:ATTO_VERSION) { $env:ATTO_VERSION } else { "latest" }
+$channel = if ($env:ATTO_CHANNEL) { $env:ATTO_CHANNEL } else { "stable" }
+$version = $env:ATTO_VERSION
 
 $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
     "AMD64" { "amd64" }
@@ -19,13 +21,23 @@ $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
     default { throw "atto install: unsupported CPU $env:PROCESSOR_ARCHITECTURE" }
 }
 $asset = "atto_windows_$arch.exe"
-$base = if ($env:ATTO_DOWNLOAD_BASE) { $env:ATTO_DOWNLOAD_BASE } elseif ($version -eq "latest") { "https://github.com/$repo/releases/latest/download" } else { "https://github.com/$repo/releases/download/$version" }
+
+# ATTO_VERSION=edge and ATTO_VERSION=latest are older spellings of
+# ATTO_CHANNEL=edge and ATTO_CHANNEL=stable; they are still accepted.
+if ($version -eq "edge") { $channel = "edge"; $version = "" }
+elseif ($version -eq "latest") { $version = "" }
+if ($channel -ne "stable" -and $channel -ne "edge") { throw "atto install: unknown ATTO_CHANNEL '$channel'; use stable or edge" }
+
+$base = if ($env:ATTO_DOWNLOAD_BASE) { $env:ATTO_DOWNLOAD_BASE }
+    elseif ($version) { "https://github.com/$repo/releases/download/$version" }
+    elseif ($channel -eq "edge") { "https://github.com/$repo/releases/download/edge" }
+    else { "https://github.com/$repo/releases/latest/download" }
 
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ("atto-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $tmp | Out-Null
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Write-Host "Downloading $asset ($version)..."
+    Write-Host "Downloading $asset ($(if ($version) { $version } else { $channel }))..."
     Invoke-WebRequest -UseBasicParsing "$base/$asset" -OutFile "$tmp\atto.exe"
     Invoke-WebRequest -UseBasicParsing "$base/checksums.txt" -OutFile "$tmp\checksums.txt"
 

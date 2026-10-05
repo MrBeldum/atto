@@ -28,17 +28,17 @@ The install scripts:
 2. check it against the release's `checksums.txt`;
 3. install it to `~/.local/bin` (macOS and Linux) or `%LOCALAPPDATA%\Programs\atto` (Windows).
 
-They don't need root. Two environment variables change what gets installed:
+They don't need root. Three environment variables change what gets installed:
 
 | Variable | Effect |
 | --- | --- |
-| `ATTO_VERSION=v0.1.0` | installs that release |
-| `ATTO_VERSION=edge` | installs the edge build (see below) |
+| `ATTO_CHANNEL=edge` | installs the edge build (see below); `stable` is the default |
+| `ATTO_VERSION=v0.1.0` | pins that exact release; wins over `ATTO_CHANNEL` |
 | `ATTO_INSTALL_DIR=...` | installs somewhere else |
 
-Running the script again is safe. It installs the latest release over the old one.
+Running the script again is safe. It installs the newest build of the channel over the old one.
 
-**Edge builds.** Every push to `main` that passes the tests replaces the [`edge` prerelease](https://github.com/sebastianrcnt/atto/releases/tag/edge), named like `v0.0.3-dev.14+abc1234` (the next patch version, 14 commits after the last tag, at commit `abc1234`). It's unreleased code and may break. Install it with `ATTO_VERSION=edge` (`$env:ATTO_VERSION = "edge"` in PowerShell), or build from source with `go install github.com/sebastianrcnt/atto/cmd/atto@main`.
+**Edge builds.** Every push to `main` that passes the tests replaces the [`edge` prerelease](https://github.com/sebastianrcnt/atto/releases/tag/edge), named like `v0.0.3-dev.14+abc1234` (the next patch version, 14 commits after the last tag, at commit `abc1234`). It's unreleased code and may break. Install it with `curl -fsSL https://raw.githubusercontent.com/sebastianrcnt/atto/main/install.sh | ATTO_CHANNEL=edge sh` (`$env:ATTO_CHANNEL = "edge"` before running `install.ps1` in PowerShell), or build from source with `go install github.com/sebastianrcnt/atto/cmd/atto@main`.
 
 ### Update
 
