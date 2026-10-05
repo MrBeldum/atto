@@ -10,6 +10,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "history" {
+		if err := app.RunHistory(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	showVersion := flag.Bool("version", false, "print version and exit")
 	inline := flag.Bool("inline", false, "render inline in the main screen instead of fullscreen")
 	prompt := flag.String("p", "", "run a single prompt non-interactively and print the result")

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -169,8 +170,20 @@ func (a *App) newSession() {
 	a.sess.Close()
 	a.sess = session.New(a.cwd)
 	a.agent.Record = a.sess.Append
+	a.agent.SetStart(time.Now())
+	a.agent.SetEnv(sessionEnv(a.sess.ID))
 	a.recModel, a.recEffort, a.sessName = "", "", ""
 	a.statusTrigger()
+}
+
+// sessionEnv lets commands the agent runs find this session ("atto history")
+// and the atto binary itself.
+func sessionEnv(id string) []string {
+	env := []string{"ATTO_SESSION_ID=" + id}
+	if exe, err := os.Executable(); err == nil {
+		env = append(env, "PATH="+filepath.Dir(exe)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	return env
 }
 
 func (a *App) model() config.ModelRef {

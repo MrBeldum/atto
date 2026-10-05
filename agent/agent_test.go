@@ -141,3 +141,14 @@ func TestAutoCompactMidTurn(t *testing.T) {
 		t.Fatalf("restore mismatch:\n%v\n%v", b.messages, a.messages)
 	}
 }
+
+func TestSystemPromptStableAcrossDays(t *testing.T) {
+	a := newTestAgent("http://x")
+	start := time.Date(2026, 1, 2, 23, 59, 0, 0, time.Local)
+	a.SetStart(start)
+	first := a.system
+	a.SetStart(start) // e.g. after a resume the next day
+	if a.system != first || !strings.Contains(first, "2026-01-02") {
+		t.Fatalf("system prompt changed or lacks the start date:\n%s", first)
+	}
+}

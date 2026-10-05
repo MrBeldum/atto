@@ -10,7 +10,7 @@ import (
 func TestRunBashTimeoutKillsGroup(t *testing.T) {
 	start := time.Now()
 	// The background child would keep the pipe open without the group kill.
-	res := RunBash(context.Background(), t.TempDir(), BashArgs{Command: "sleep 30 & sleep 30", Timeout: 1}, nil)
+	res := RunBash(context.Background(), t.TempDir(), nil, BashArgs{Command: "sleep 30 & sleep 30", Timeout: 1}, nil)
 	if !res.TimedOut {
 		t.Fatalf("expected timeout, got %+v", res)
 	}
@@ -24,7 +24,7 @@ func TestRunBashTimeoutKillsGroup(t *testing.T) {
 
 func TestRunBashExitCodeAndStreaming(t *testing.T) {
 	var chunks strings.Builder
-	res := RunBash(context.Background(), t.TempDir(), BashArgs{Command: "echo out; echo err >&2; exit 3"}, func(s string) { chunks.WriteString(s) })
+	res := RunBash(context.Background(), t.TempDir(), nil, BashArgs{Command: "echo out; echo err >&2; exit 3"}, func(s string) { chunks.WriteString(s) })
 	if res.ExitCode != 3 || res.Output != "out\nerr\n" || chunks.String() != res.Output {
 		t.Fatalf("got %+v, streamed %q", res, chunks.String())
 	}
@@ -36,7 +36,7 @@ func TestRunBashExitCodeAndStreaming(t *testing.T) {
 func TestRunBashCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(200 * time.Millisecond); cancel() }()
-	res := RunBash(ctx, t.TempDir(), BashArgs{Command: "sleep 30"}, nil)
+	res := RunBash(ctx, t.TempDir(), nil, BashArgs{Command: "sleep 30"}, nil)
 	if !res.Canceled {
 		t.Fatalf("expected canceled, got %+v", res)
 	}

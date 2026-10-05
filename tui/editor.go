@@ -205,18 +205,17 @@ func (e *Editor) Render(width int) []string {
 		}
 		return s
 	}
-	// A rounded box with one column of padding inside: "│ › text │".
-	width = max(width, 6)
+	// Horizontal rules above and below, one column of padding before the
+	// prompt.
+	width = max(width, 4)
 	promptW := VisibleWidth(e.Prompt)
-	cw := max(1, width-4-promptW)
+	cw := max(1, width-2-promptW)
 
 	var rows []string
 	var row strings.Builder
 	rowW := 0
-	var widths []int
 	flush := func() {
 		rows = append(rows, row.String())
-		widths = append(widths, rowW)
 		row.Reset()
 		rowW = 0
 	}
@@ -245,15 +244,15 @@ func (e *Editor) Render(width int) []string {
 	flush()
 
 	indent := strings.Repeat(" ", promptW)
+	rule := border(strings.Repeat("─", width))
 	out := make([]string, 0, len(rows)+2)
-	out = append(out, border("╭"+strings.Repeat("─", width-2)+"╮"))
+	out = append(out, rule)
 	for i, r := range rows {
 		lead := indent
 		if i == 0 {
 			lead = e.Prompt
 		}
-		fill := strings.Repeat(" ", max(0, cw-widths[i]))
-		out = append(out, border("│")+" "+lead+r+fill+" "+border("│"))
+		out = append(out, " "+lead+r)
 	}
-	return append(out, border("╰"+strings.Repeat("─", width-2)+"╯"))
+	return append(out, rule)
 }

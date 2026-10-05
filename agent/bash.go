@@ -96,14 +96,14 @@ func (w *streamWriter) Write(p []byte) (int, error) {
 
 // RunBash executes args.Command with bash in cwd. The whole process group is
 // killed on timeout or when ctx is canceled.
-func RunBash(ctx context.Context, cwd string, args BashArgs, onOutput func(string)) BashResult {
+func RunBash(ctx context.Context, cwd string, env []string, args BashArgs, onOutput func(string)) BashResult {
 	start := time.Now()
 	tctx, cancel := context.WithTimeout(ctx, args.timeout())
 	defer cancel()
 
 	cmd := exec.CommandContext(tctx, "bash", "-c", args.Command)
 	cmd.Dir = cwd
-	cmd.Env = append(os.Environ(), "TERM=dumb", "PAGER=cat", "GIT_PAGER=cat")
+	cmd.Env = append(append(os.Environ(), "TERM=dumb", "PAGER=cat", "GIT_PAGER=cat"), env...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 2 * time.Second // don't hang on pipes held by orphaned children

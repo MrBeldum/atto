@@ -64,6 +64,7 @@ type Agent struct {
 	client *provider.Client
 	model  config.ModelRef
 	effort string
+	env    []string // extra environment for bash commands
 
 	// Record, if set, receives every change to the conversation, for
 	// persistence. Called on the goroutine running Run/Compact.
@@ -113,8 +114,23 @@ func (a *Agent) commitSteers(emit func(any)) bool {
 func New(model config.ModelRef, effort, cwd string) *Agent {
 	a := &Agent{Cwd: cwd, effort: effort}
 	a.SetModel(model)
-	a.system = systemPrompt(cwd)
+	a.SetStart(time.Now())
 	return a
+}
+
+// SetStart rebuilds the system prompt for a session that started at t.
+// The prompt embeds the session's start date rather than today's, so it
+// stays byte-identical for the whole session (and across resumes) and the
+// prefix cache survives midnight. Call only while no turn is running.
+func (a *Agent) SetStart(t time.Time) {
+	a.system = systemPrompt(a.Cwd, t)
+}
+
+// SetEnv sets extra environment variables for bash commands.
+func (a *Agent) SetEnv(env []string) {
+	a.cfgMu.Lock()
+	a.env = env
+	a.cfgMu.Unlock()
 }
 
 // SetModel switches the model; history is kept. Takes effect on the next
@@ -363,7 +379,10 @@ func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, emit func(any
 		args.Description = firstLine(args.Command)
 	}
 	emit(ToolStart{ID: tc.ID, Args: args, Timeout: args.timeout()})
-	res := RunBash(ctx, a.Cwd, args, func(s string) { emit(ToolOutput{ID: tc.ID, Chunk: s}) })
+	a.cfgMu.Lock()
+	env := a.env
+	a.cfgMu.Unlock()
+	res := RunBash(ctx, a.Cwd, env, args, func(s string) { emit(ToolOutput{ID: tc.ID, Chunk: s}) })
 	emit(ToolEnd{ID: tc.ID, Result: res})
 	return res.ForModel(args), &session.ToolMeta{
 		Description: args.Description,
@@ -391,14 +410,15 @@ Include:
 - Progress so far and what was learned: key files, commands, findings, decisions and why
 - Current state: what works, what is broken, open errors
 - Remaining steps
+- References: distinctive search terms for details left out of the notes (error message fragments, file names, identifiers, experiment names), so they can be found again in the full transcript
 
-Be specific: exact file paths, function names, commands, error messages. Stay under %d words. Output only the notes, no preamble. Do not call tools.`
+The full transcript stays searchable after compaction, so long logs and finished exploration need not be copied; but everything needed to continue must be in the notes. Be specific: exact file paths, function names, commands, error messages. Stay under %d words. Output only the notes, no preamble. Do not call tools.`
 
 // CompactNoteWords bounds the length of handoff notes.
 const CompactNoteWords = 700
 
 // SummaryPrefix introduces handoff notes in the compacted history.
-const SummaryPrefix = "[atto handoff notes] The conversation was compacted. Earlier messages were replaced by these notes, written by you from the full history; the tool state they describe (files, processes) is still in place. Build on them and avoid redoing finished work.\n\n"
+const SummaryPrefix = "[atto handoff notes] The conversation was compacted. Earlier messages were replaced by these notes, written by you from the full history; the tool state they describe (files, processes) is still in place. Build on them and avoid redoing finished work. If you need a detail the notes leave out, search the full transcript with `atto history grep <regexp>` and read an entry with `atto history show <n>`.\n\n"
 
 // keepUserTokens is how much recent user text survives compaction (codex
 // keeps 20k tokens of user messages).
@@ -465,21 +485,22 @@ func (a *Agent) compact(ctx context.Context, emit func(any), auto bool) error {
 	return nil
 }
 
-func systemPrompt(cwd string) string {
+func systemPrompt(cwd string, start time.Time) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `You are atto, a coding agent running in the user's terminal.
 
 You have one tool, bash. Use it for everything: exploring (ls, rg, cat, sed -n), editing files (heredocs, sed, python scripts, patch), building, and testing.
 Every bash call needs a short description of what it does, shown to the user, e.g. "JIT compile atto.py", "Run unit tests", "Read main.go".
 Commands time out after 60 seconds by default; set timeout for longer builds or tests.
+The full transcript of this session, including anything removed by compaction, can be searched with "atto history grep <regexp>" and read with "atto history show <n>".
 
 Work autonomously: investigate, make the change, verify it. Keep replies concise and plain; the user sees your tool calls.
 
 Environment:
 - Working directory: %s
 - Platform: %s/%s
-- Date: %s
-`, cwd, runtime.GOOS, runtime.GOARCH, time.Now().Format("2006-01-02"))
+- Session started: %s
+`, cwd, runtime.GOOS, runtime.GOARCH, start.Format("2006-01-02"))
 
 	for _, p := range []string{filepath.Join(config.Dir(), "AGENTS.md"), filepath.Join(cwd, "AGENTS.md")} {
 		if data, err := os.ReadFile(p); err == nil && len(strings.TrimSpace(string(data))) > 0 {
