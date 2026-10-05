@@ -63,8 +63,8 @@ type App struct {
 	tools    map[string]*toolBlock
 	compact  *compactBlock
 
-	// detailed expands every collapsible block (ctrl+t).
-	detailed bool
+	// details expands every collapsible block (ctrl+t).
+	details details
 	// Last model/effort written to the session, to record changes.
 	recModel, recEffort string
 	sessName            string
@@ -231,7 +231,8 @@ func (a *App) onInput(data string) bool {
 		a.cycleEffort()
 		return true
 	case "ctrl+t":
-		a.detailed = !a.detailed
+		a.details.on = !a.details.on
+		a.details.gen++
 		return true
 	case "escape":
 		if a.busy {
@@ -377,7 +378,7 @@ func (a *App) onEvent(ev any) {
 	switch e := ev.(type) {
 	case agent.ReasoningDelta:
 		if a.thinking == nil {
-			a.thinking = &thinkingBlock{start: time.Now(), detailed: &a.detailed}
+			a.thinking = &thinkingBlock{start: time.Now(), expander: expander{d: &a.details}}
 			a.add(a.thinking)
 		}
 		a.thinking.text.WriteString(e.Text)
@@ -395,7 +396,7 @@ func (a *App) onEvent(ev any) {
 		a.text.text.WriteString(e.Text)
 	case agent.ToolStart:
 		a.endStream()
-		b := &toolBlock{args: e.Args, timeout: e.Timeout, start: time.Now(), detailed: &a.detailed}
+		b := &toolBlock{args: e.Args, timeout: e.Timeout, start: time.Now(), expander: expander{d: &a.details}}
 		a.tools[e.ID] = b
 		a.add(b)
 		a.activity = e.Args.Description
@@ -419,7 +420,7 @@ func (a *App) onEvent(ev any) {
 		a.add(&userBlock{text: strings.Join(e.Texts, "\n\n")})
 	case agent.CompactStart:
 		a.endStream()
-		a.compact = &compactBlock{auto: e.Auto, running: true, detailed: &a.detailed}
+		a.compact = &compactBlock{auto: e.Auto, running: true, expander: expander{d: &a.details}}
 		a.add(a.compact)
 		a.activity = "Compacting context"
 	case agent.CompactDelta:

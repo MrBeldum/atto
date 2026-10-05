@@ -281,7 +281,7 @@ func (a *App) replay(entries []session.Entry) {
 	for _, e := range entries {
 		switch e.Type {
 		case session.TypeCompaction:
-			c := &compactBlock{auto: e.Auto, before: e.TokensBefore, detailed: &a.detailed}
+			c := &compactBlock{auto: e.Auto, before: e.TokensBefore, expander: expander{d: &a.details}}
 			c.notes.WriteString(e.Notes)
 			a.add(c)
 		case session.TypeMessage:
@@ -294,7 +294,7 @@ func (a *App) replay(entries []session.Entry) {
 				a.add(&userBlock{text: m.Content})
 			case "assistant":
 				if strings.TrimSpace(m.ReasoningContent) != "" {
-					t := &thinkingBlock{done: true, dur: time.Duration(e.ThinkingMs) * time.Millisecond, detailed: &a.detailed}
+					t := &thinkingBlock{done: true, dur: time.Duration(e.ThinkingMs) * time.Millisecond, expander: expander{d: &a.details}}
 					t.text.WriteString(m.ReasoningContent)
 					a.add(t)
 				}
@@ -309,7 +309,7 @@ func (a *App) replay(entries []session.Entry) {
 					if args.Description == "" {
 						args.Description = tc.Function.Name
 					}
-					b := &toolBlock{args: args, timeout: agent.DefaultBashTimeout, detailed: &a.detailed}
+					b := &toolBlock{args: args, timeout: agent.DefaultBashTimeout, expander: expander{d: &a.details}}
 					tools[tc.ID] = b
 					a.add(b)
 				}

@@ -207,7 +207,7 @@ func (a *App) renderStatus(width int) []string {
 	if off := a.ui.ScrollOffset(); off > 0 {
 		flags = append(flags, tui.FG(3, fmt.Sprintf("↓ %d more lines (scroll or PgDn)", off)))
 	}
-	if a.detailed {
+	if a.details.on {
 		flags = append(flags, tui.FG(3, "details on (ctrl+t)"))
 	}
 	if len(flags) > 0 {

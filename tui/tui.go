@@ -227,18 +227,14 @@ func (t *TUI) handleScroll(data string) bool {
 	if t.Mode != Fullscreen {
 		return false
 	}
-	if strings.HasPrefix(data, "\x1b[<") {
-		var btn, x, y int
-		var final byte
-		if n, _ := fmt.Sscanf(data, "\x1b[<%d;%d;%d%c", &btn, &x, &y, &final); n == 4 {
-			switch {
-			case btn == 64:
-				t.ScrollBy(3)
-			case btn == 65:
-				t.ScrollBy(-3)
-			case btn == 0 && final == 'M' && y-1 >= t.viewTop && y-1 < t.viewTop+t.viewRows:
-				t.Body.Click(t.viewStart + y - 1 - t.viewTop)
-			}
+	if btn, y, press, ok := parseMouse(data); ok {
+		switch {
+		case btn == 64:
+			t.ScrollBy(3)
+		case btn == 65:
+			t.ScrollBy(-3)
+		case btn == 0 && press && y-1 >= t.viewTop && y-1 < t.viewTop+t.viewRows:
+			t.Body.Click(t.viewStart + y - 1 - t.viewTop)
 		}
 		return true // swallow all other mouse events
 	}
@@ -584,4 +580,26 @@ func (t *TUI) doRenderFullscreen() {
 	if b.Len() > 0 {
 		t.term.Write(syncBegin + b.String() + syncEnd)
 	}
+}
+
+// parseMouse decodes a mouse report in SGR form (ESC [ < b ; x ; y M|m) or
+// the legacy X10 form (ESC [ M b x y, each byte offset by 32). It returns
+// the button code without modifier bits, the 1-based row, and whether it is
+// a press.
+func parseMouse(data string) (btn, y int, press, ok bool) {
+	switch {
+	case strings.HasPrefix(data, "\x1b[<"):
+		var x int
+		var final byte
+		if n, _ := fmt.Sscanf(data, "\x1b[<%d;%d;%d%c", &btn, &x, &y, &final); n != 4 {
+			return 0, 0, false, true // malformed but still a mouse report
+		}
+		return btn &^ 0b11100, y, final == 'M', true // drop shift/meta/ctrl bits
+	case len(data) == 6 && strings.HasPrefix(data, "\x1b[M"):
+		b := int(data[3]) - 32
+		y = int(data[5]) - 32
+		// X10 reports release as button 3 and cannot say which was released.
+		return b &^ 0b11100, y, b&3 != 3, true
+	}
+	return 0, 0, false, false
 }

@@ -70,6 +70,13 @@ func seqLen(s string) (int, bool) {
 	}
 	switch s[1] {
 	case '[':
+		// Legacy X10 mouse report: ESC [ M followed by three raw bytes.
+		if len(s) >= 3 && s[2] == 'M' {
+			if len(s) < 6 {
+				return 0, false
+			}
+			return 6, true
+		}
 		for j := 2; j < len(s); j++ {
 			if c := s[j]; c >= 0x40 && c <= 0x7e {
 				return j + 1, true

@@ -64,11 +64,42 @@ const (
 func disclosure(expanded bool, hidden int, what string) string {
 	switch {
 	case expanded:
-		return tui.Dim("    − Show less")
+		return tui.Dim("    − Show less (click)")
 	case hidden > 0:
 		return tui.Dim(fmt.Sprintf("    + %d %s (click or ctrl+t to expand)", hidden, what))
 	}
 	return ""
+}
+
+// details is the global "expand everything" state toggled by ctrl+t. Each
+// toggle bumps gen, which resets per-block choices.
+type details struct {
+	on  bool
+	gen int
+}
+
+// expander holds a block's expanded state: a click sets a per-block choice
+// that overrides the global ctrl+t state until ctrl+t is pressed again.
+type expander struct {
+	d   *details
+	set bool
+	val bool
+	gen int
+}
+
+func (e *expander) expanded() bool {
+	if e.set && (e.d == nil || e.gen == e.d.gen) {
+		return e.val
+	}
+	return e.d != nil && e.d.on
+}
+
+func (e *expander) toggle() {
+	v := !e.expanded()
+	e.set, e.val = true, v
+	if e.d != nil {
+		e.gen = e.d.gen
+	}
 }
 
 // gapped components forward clicks past the leading blank line.
@@ -82,12 +113,11 @@ func (g gap) Click(line int) bool {
 // thinkingBlock streams reasoning dimmed, then collapses to one line that
 // expands on click.
 type thinkingBlock struct {
-	text     strings.Builder
-	start    time.Time
-	dur      time.Duration
-	done     bool
-	expanded bool
-	detailed *bool // global ctrl+t toggle
+	expander
+	text  strings.Builder
+	start time.Time
+	dur   time.Duration
+	done  bool
 }
 
 func (t *thinkingBlock) finish() {
@@ -98,27 +128,36 @@ func (t *thinkingBlock) finish() {
 }
 
 func (t *thinkingBlock) Click(int) bool {
-	if !t.done {
+	if strings.TrimSpace(t.text.String()) == "" {
 		return false
 	}
-	t.expanded = !t.expanded
+	t.toggle()
 	return true
 }
 
 func (t *thinkingBlock) Render(width int) []string {
 	body := tui.Wrap(strings.TrimSpace(t.text.String()), max(1, width-4))
 	style := func(s string) string { return tui.Dim(tui.Italic(s)) }
+	expanded := t.expanded()
 	if !t.done {
-		out := []string{style("  ∴ Thinking…")}
-		if len(body) > thinkingPreviewLines {
-			body = body[len(body)-thinkingPreviewLines:]
+		// While streaming: the last few lines, or everything once clicked.
+		head := style("  ∴ Thinking…")
+		hidden := 0
+		if !expanded && len(body) > thinkingPreviewLines {
+			hidden = len(body) - thinkingPreviewLines
+			body = body[hidden:]
 		}
+		if hidden > 0 {
+			head += tui.Dim(fmt.Sprintf(" · %d earlier lines · click to expand", hidden))
+		} else if expanded {
+			head += tui.Dim(" · click to collapse")
+		}
+		out := []string{tui.Truncate(head, width, "…")}
 		for _, l := range body {
 			out = append(out, "    "+style(l))
 		}
 		return out
 	}
-	expanded := t.expanded || (t.detailed != nil && *t.detailed)
 	head := style(fmt.Sprintf("  ∴ Thought for %s", fmtDur(t.dur)))
 	if !expanded {
 		if len(body) > 0 {
@@ -136,15 +175,14 @@ func (t *thinkingBlock) Render(width int) []string {
 // toolBlock shows a bash call: the model's description, the command, the
 // last few output lines and the outcome. Click expands the full output.
 type toolBlock struct {
-	args     agent.BashArgs
-	timeout  time.Duration
-	start    time.Time
-	output   strings.Builder
-	total    int // total output bytes seen
-	done     bool
-	res      agent.BashResult
-	expanded bool
-	detailed *bool
+	expander
+	args    agent.BashArgs
+	timeout time.Duration
+	start   time.Time
+	output  strings.Builder
+	total   int // total output bytes seen
+	done    bool
+	res     agent.BashResult
 }
 
 func (b *toolBlock) append(s string) {
@@ -158,7 +196,7 @@ func (b *toolBlock) append(s string) {
 }
 
 func (b *toolBlock) Click(int) bool {
-	b.expanded = !b.expanded
+	b.toggle()
 	return true
 }
 
@@ -209,7 +247,7 @@ func (b *toolBlock) Render(width int) []string {
 	multiLine := strings.Contains(strings.TrimSpace(b.args.Command), "\n")
 	lines := displayLines(b.output.String())
 	collapsible := len(lines) > toolPreviewLines || multiLine
-	expanded := collapsible && (b.expanded || (b.detailed != nil && *b.detailed))
+	expanded := collapsible && b.expanded()
 
 	if expanded && multiLine {
 		for _, l := range strings.Split(strings.TrimSpace(b.args.Command), "\n") {
@@ -247,21 +285,20 @@ func (b *toolBlock) Render(width int) []string {
 
 // compactBlock reports a compaction; the notes expand on click.
 type compactBlock struct {
-	auto     bool
-	running  bool
-	notes    strings.Builder
-	before   int
-	after    int
-	elapsed  time.Duration
-	expanded bool
-	detailed *bool
+	expander
+	auto    bool
+	running bool
+	notes   strings.Builder
+	before  int
+	after   int
+	elapsed time.Duration
 }
 
 func (c *compactBlock) Click(int) bool {
 	if c.running {
 		return false
 	}
-	c.expanded = !c.expanded
+	c.toggle()
 	return true
 }
 
@@ -288,8 +325,7 @@ func (c *compactBlock) Render(width int) []string {
 	if c.before > 0 {
 		head += tui.Dim(fmt.Sprintf(" · %s → ~%s tokens", fmtTokens(c.before), fmtTokens(c.after)))
 	}
-	expanded := c.expanded || (c.detailed != nil && *c.detailed)
-	if !expanded {
+	if !c.expanded() {
 		return []string{tui.Truncate(head+tui.Dim(" · click to view notes"), width, "…")}
 	}
 	out := []string{tui.Truncate(head, width, "…")}

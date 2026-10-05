@@ -266,3 +266,30 @@ func TestFullscreenClick(t *testing.T) {
 		t.Fatalf("a=%v b=%v", a.clicked, b.clicked)
 	}
 }
+
+func TestParseMouse(t *testing.T) {
+	cases := []struct {
+		in        string
+		btn, y    int
+		press, ok bool
+	}{
+		{"\x1b[<0;5;7M", 0, 7, true, true},
+		{"\x1b[<0;5;7m", 0, 7, false, true},
+		{"\x1b[<64;5;7M", 64, 7, true, true},
+		{"\x1b[<4;5;7M", 0, 7, true, true},                      // shift held
+		{"\x1b[M" + string(rune(32)) + "%'", 0, 7, true, true},  // X10 press at (5,7)
+		{"\x1b[M" + string(rune(35)) + "%'", 3, 7, false, true}, // X10 release
+		{"\x1b[A", 0, 0, false, false},
+	}
+	for _, c := range cases {
+		btn, y, press, ok := parseMouse(c.in)
+		if btn != c.btn || y != c.y || press != c.press || ok != c.ok {
+			t.Errorf("parseMouse(%q) = %d,%d,%v,%v want %d,%d,%v,%v", c.in, btn, y, press, ok, c.btn, c.y, c.press, c.ok)
+		}
+	}
+	var p inputParser
+	got := p.feed("\x1b[M %'x")
+	if !slices.Equal(got, []string{"\x1b[M %'", "x"}) {
+		t.Fatalf("parser split X10 report wrong: %q", got)
+	}
+}
