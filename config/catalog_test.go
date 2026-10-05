@@ -10,7 +10,7 @@ import (
 
 const fixture = `{"opencode-go":{"models":{
  "glm-5.3":{"id":"glm-5.3","name":"GLM-5.3","tool_call":true,"reasoning":true,"limit":{"context":1000000,"output":131072}},
- "kimi-k2.6":{"id":"kimi-k2.6","name":"Kimi K2.6","tool_call":true,"reasoning":true,"limit":{"context":262144,"output":65536}},
+ "kimi-k2.6":{"id":"kimi-k2.6","name":"Kimi K2.6","tool_call":true,"reasoning":true,"modalities":{"input":["text","image","video"],"output":["text"]},"limit":{"context":262144,"output":65536}},
  "qwen3.8-flash":{"id":"qwen3.8-flash","tool_call":true,"reasoning":true,"limit":{"context":1000000,"output":131072},"provider":{"npm":"@ai-sdk/anthropic"}},
  "old":{"id":"old","tool_call":true,"status":"deprecated","limit":{"context":1000,"output":100}},
  "notools":{"id":"notools","tool_call":false,"limit":{"context":1000,"output":100}}
@@ -49,6 +49,9 @@ func TestCatalogAndMerge(t *testing.T) {
 		t.Fatalf("override/key/header: %+v", glm)
 	}
 	kimi, _ := m.Find("opencode-go", "kimi-k2.6")
+	if !kimi.Model.Images() || strings.Join(kimi.Model.Input, ",") != "text,image" || glm.Model.Images() {
+		t.Fatalf("modalities: kimi %v, glm %v", kimi.Model.Input, glm.Model.Input)
+	}
 	body := kimi.RequestBody()
 	if _, has := body["reasoning_effort"]; has || body["thinking"] == nil || len(kimi.Model.Levels()) != 2 {
 		t.Fatalf("kimi quirk: %+v %v", kimi.Model, body)

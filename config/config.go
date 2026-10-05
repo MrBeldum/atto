@@ -53,6 +53,7 @@ func ModelsPath() string    { return filepath.Join(Dir(), "models.json") }
 func AuthPath() string      { return filepath.Join(Dir(), "auth.json") }
 func SessionsDir() string   { return filepath.Join(Dir(), "sessions") }
 func ArchivedDir() string   { return filepath.Join(Dir(), "archived_sessions") }
+func ImagesDir() string     { return filepath.Join(Dir(), "images") }
 func ExtensionsDir() string { return filepath.Join(Dir(), "extensions") }
 func PromptsDir() string    { return filepath.Join(Dir(), "prompts") }
 func SkillsDir() string     { return filepath.Join(Dir(), "skills") }

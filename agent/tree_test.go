@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/sebastianrcnt/atto/images"
+	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/session"
 )
 
@@ -42,16 +44,20 @@ func rawServer(t *testing.T, replies ...[]string) (*httptest.Server, func() [][]
 }
 
 // Going back to before a user message and sending another must repeat the
-// earlier part of the conversation byte for byte, so the provider's prefix
-// cache still matches.
+// earlier part of the conversation byte for byte, images included, so the
+// provider's prefix cache still matches.
 func TestBranchKeepsPrefixBytes(t *testing.T) {
 	t.Setenv("ATTO_DIR", t.TempDir())
 	srv, seen := rawServer(t, toolCall("echo hi"), text("done"), text("two"), text("edited"))
 	w := session.New(t.TempDir())
-	a := newTestAgent(srv.URL)
+	a := imageAgent(srv.URL, "text", "image")
 	a.Record = w.Append
 	ctx := context.Background()
-	if err := a.Run(ctx, "first", func(any) {}); err != nil {
+	im := testPNG(t)
+	if err := images.Save(im); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.RunWithImages(ctx, "first [image 1: 3x2 PNG]", []provider.Image{im}, func(any) {}); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.Run(ctx, "second", func(any) {}); err != nil {
@@ -78,7 +84,7 @@ func TestBranchKeepsPrefixBytes(t *testing.T) {
 	r.Branch(leaf)
 	_, entries, _ = session.Load(w.Path)
 
-	b := newTestAgent(srv.URL)
+	b := imageAgent(srv.URL, "text", "image")
 	b.SetStart(h.Time)
 	b.Record = r.Append
 	b.Restore(session.Active(entries))
@@ -97,6 +103,9 @@ func TestBranchKeepsPrefixBytes(t *testing.T) {
 		if !bytes.Equal(before[i], after[i]) {
 			t.Fatalf("message %d differs:\n%s\n%s", i, before[i], after[i])
 		}
+	}
+	if !bytes.Contains(before[1], []byte("data:image/png;base64,")) {
+		t.Fatalf("the image should be in the request: %s", before[1])
 	}
 	if bytes.Equal(before[5], after[5]) {
 		t.Fatal("the edited message should differ")

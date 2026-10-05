@@ -185,7 +185,7 @@ func TestInputParser(t *testing.T) {
 func TestEditor(t *testing.T) {
 	e := NewEditor("> ")
 	var submitted string
-	e.OnSubmit = func(s string) { submitted = s }
+	e.OnSubmit = func(s string, _ []Attachment) { submitted = s }
 	for _, k := range []string{"h", "i", "\x1b\r", "y", "o", "\x1b[D", "\x7f", "\r"} {
 		e.HandleInput(k)
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -55,8 +56,8 @@ func (t *ProcessTerminal) Start(onInput func(string), onResize func()) error {
 	// The read loop is not joined on Stop: a blocking read on stdin cannot be
 	// interrupted portably, and the process exits shortly after anyway.
 	go func() {
-		parser := &inputParser{}
-		buf := make([]byte, 4096)
+		parser := &inputParser{bursts: runtime.GOOS == "windows"}
+		buf := make([]byte, 64*1024) // large, so a paste arrives in few reads
 		for {
 			n, err := t.in.Read(buf)
 			if n > 0 {

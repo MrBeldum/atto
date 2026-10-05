@@ -86,6 +86,21 @@ type Model struct {
 	MaxTokens     int                `json:"maxTokens,omitempty"`
 	// ExtraBody is merged over the provider's; a null value removes a key.
 	ExtraBody map[string]any `json:"extraBody,omitempty"`
+	// Input lists the input modalities, as in pi and models.dev: "text",
+	// "image". Unset means text only.
+	Input []string `json:"input,omitempty"`
+}
+
+// Images reports whether the model accepts image input.
+func (m Model) Images() bool { return contains(m.Input, "image") }
+
+func contains(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) DisplayName() string {
@@ -285,6 +300,9 @@ func mergeModel(base, over Model) Model {
 	}
 	if over.MaxTokens > 0 {
 		base.MaxTokens = over.MaxTokens
+	}
+	if len(over.Input) > 0 {
+		base.Input = over.Input
 	}
 	if len(over.EffortMap) > 0 {
 		merged := map[string]*string{}

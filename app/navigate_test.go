@@ -8,20 +8,15 @@ import (
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/goal"
+	"github.com/sebastianrcnt/atto/images"
 	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/session"
 	"github.com/sebastianrcnt/atto/tui"
 )
 
-type nullTerm struct{}
-
-func (nullTerm) Start(func(string), func()) error { return nil }
-func (nullTerm) Stop()                            {}
-func (nullTerm) Write(string)                     {}
-func (nullTerm) Size() (int, int)                 { return 80, 24 }
-
-// testApp builds an App without a terminal or a model; nothing is sent.
-func testApp(t *testing.T) *App {
+// treeApp builds an App with a session, without a terminal or a model;
+// nothing is sent.
+func treeApp(t *testing.T) *App {
 	t.Helper()
 	t.Setenv("ATTO_DIR", t.TempDir())
 	cwd := t.TempDir()
@@ -85,7 +80,7 @@ func TestDoubleEscTiming(t *testing.T) {
 }
 
 func TestDoubleEscOpensTree(t *testing.T) {
-	a := testApp(t)
+	a := treeApp(t)
 	a.record("user", "u1")
 	a.record("assistant", "a1")
 
@@ -137,13 +132,13 @@ func TestDoubleEscOpensTree(t *testing.T) {
 }
 
 func TestNavigateAndResume(t *testing.T) {
-	a := testApp(t)
+	a := treeApp(t)
 	a.record("user", "u1")
 	a.record("assistant", "a1")
 	a.record("user", "u2")
 	a.record("assistant", "a2")
 	a.goal.g = &goal.Goal{Objective: "x", Status: goal.Active}
-	a.queued = []string{"queued follow-up"}
+	a.queued = []queuedInput{{text: "queued follow-up"}}
 
 	a.navigateTree(entryID(t, a, "u2"))
 	if got := a.editor.Text(); !strings.Contains(got, "queued follow-up") {
@@ -170,7 +165,7 @@ func TestNavigateAndResume(t *testing.T) {
 	path := a.sess.Path
 	a.sess.Close()
 
-	b := testApp(t)
+	b := treeApp(t)
 	b.resume(path)
 	if got := strings.Join(userBlocks(b), ","); got != "u1,u2 edited" {
 		t.Fatalf("resumed transcript %q", got)
@@ -199,7 +194,7 @@ func TestNavigateAndResume(t *testing.T) {
 }
 
 func TestNavigateWhileBusyWaitsForTurn(t *testing.T) {
-	a := testApp(t)
+	a := treeApp(t)
 	a.record("user", "u1")
 	a.record("assistant", "a1")
 	canceled := false
@@ -221,7 +216,7 @@ func TestNavigateWhileBusyWaitsForTurn(t *testing.T) {
 }
 
 func TestTreePickerDrawsBranches(t *testing.T) {
-	a := testApp(t)
+	a := treeApp(t)
 	a.record("user", "u1")
 	a.record("assistant", "a1")
 	a.record("user", "u2")
@@ -289,5 +284,26 @@ func TestTreePickerDrawsBranches(t *testing.T) {
 	}
 	if label.Label != "ok" || label.TargetID != entryID(t, a, "u2") {
 		t.Fatalf("label %+v", label)
+	}
+}
+
+func TestNavigateBringsImagesBack(t *testing.T) {
+	a := treeApp(t)
+	im, err := images.ReadFile(writePNG(t, 3, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := images.Save(im); err != nil {
+		t.Fatal(err)
+	}
+	a.sess.Append(session.Entry{Type: session.TypeMessage, Message: &provider.Message{Role: "user", Content: "look [image 1: 3x2 PNG]", Images: []provider.Image{im}}})
+	a.record("assistant", "a1")
+	a.navigateTree(entryID(t, a, "look [image 1: 3x2 PNG]"))
+	att := a.editor.Attachments()
+	if a.editor.Text() != "look [image 1: 3x2 PNG]" || len(att) != 1 {
+		t.Fatalf("editor %q, %d attachments", a.editor.Text(), len(att))
+	}
+	if got, ok := att[0].Value.(provider.Image); !ok || len(got.Data) == 0 || got.File != im.File {
+		t.Fatalf("attachment %+v", att[0])
 	}
 }

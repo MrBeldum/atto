@@ -63,7 +63,11 @@ type modelsDevModel struct {
 	ToolCall  bool   `json:"tool_call"`
 	Reasoning bool   `json:"reasoning"`
 	Status    string `json:"status"`
-	Limit     struct {
+	// Modalities lists e.g. input ["text","image","pdf"].
+	Modalities struct {
+		Input []string `json:"input"`
+	} `json:"modalities"`
+	Limit struct {
 		Context int `json:"context"`
 		Input   int `json:"input"`
 		Output  int `json:"output"`
@@ -194,6 +198,11 @@ func catalogModel(cp catalogProvider, id string, m modelsDevModel) (Model, bool)
 	mod := Model{
 		ID: id, Name: m.Name, ContextWindow: ctx,
 		MaxTokens: min(max(m.Limit.Output, 0), catalogMaxTokens),
+	}
+	for _, in := range m.Modalities.Input {
+		if in == "text" || in == "image" { // the ones atto can send
+			mod.Input = append(mod.Input, in)
+		}
 	}
 	if mod.MaxTokens == 0 {
 		mod.MaxTokens = catalogMaxTokens

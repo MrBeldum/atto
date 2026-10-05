@@ -36,6 +36,8 @@ type Message struct {
 	// Reasoning carries opaque Responses API reasoning items so they can be
 	// replayed on later requests. Chat completions never sees it.
 	Reasoning *ReasoningState `json:"responses_reasoning,omitempty"`
+	// Images attached to a user message, sent after its text.
+	Images []Image `json:"images,omitempty"`
 }
 
 type ToolFunction struct {
@@ -154,7 +156,7 @@ func (c *Client) body(req Request) ([]byte, error) {
 		}
 	}
 	b["model"] = req.Model
-	b["messages"] = withoutReasoning(req.Messages)
+	b["messages"] = chatMessages(req.Messages)
 	b["stream"] = true
 	b["stream_options"] = map[string]any{"include_usage": true}
 	if req.MaxTokens > 0 {

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/sebastianrcnt/atto/goal"
+	"github.com/sebastianrcnt/atto/images"
 	"github.com/sebastianrcnt/atto/session"
 	"github.com/sebastianrcnt/atto/tui"
 )
@@ -141,7 +143,7 @@ func (a *App) navigateTree(id string) {
 	}
 	a.showBranch(a.loadSession())
 	if text != "" && strings.TrimSpace(a.editor.Text()) == "" {
-		a.editor.SetText(text)
+		a.editor.SetText(text, editorImages(entries, id)...)
 	}
 	a.notice("Navigated to the selected point. The earlier branch is kept (/tree).")
 	a.afterGoingBack()
@@ -150,15 +152,38 @@ func (a *App) navigateTree(id string) {
 // stashPending moves queued messages and unsent steers to the editor.
 func (a *App) stashPending() {
 	var texts []string
-	for _, s := range append(a.agent.DrainSteers(), a.queued...) {
+	var att []tui.Attachment
+	for _, s := range a.agent.DrainSteers() {
 		if !isEvent(s) {
 			texts = append(texts, s)
 		}
 	}
+	for _, q := range a.queued {
+		texts, att = append(texts, q.text), append(att, q.att...)
+	}
 	a.queued, a.pendingSteers, a.queuePaused, a.sendSteersAfterInterrupt = nil, nil, false, false
 	if len(texts) > 0 {
-		a.restoreToEditor(texts)
+		a.restoreToEditor(texts, att...)
 	}
+}
+
+// editorImages turns the images of user message id back into editor
+// attachments, labeled like the placeholders in its text ("[image 1: …]").
+func editorImages(entries []session.Entry, id string) []tui.Attachment {
+	var out []tui.Attachment
+	for _, e := range entries {
+		if e.ID != id || e.Message == nil {
+			continue
+		}
+		for i, im := range e.Message.Images {
+			if loaded, err := images.Load(im); err == nil {
+				im = loaded
+			}
+			out = append(out, tui.Attachment{Label: fmt.Sprintf("[image %d: %s]", i+1, images.Label(im)), Value: im})
+		}
+		break
+	}
+	return out
 }
 
 // showBranch loads the active branch into the agent and redraws the
@@ -244,7 +269,7 @@ func (a *App) fork(id string) {
 		a.newSession()
 	}
 	if strings.TrimSpace(a.editor.Text()) == "" {
-		a.editor.SetText(text)
+		a.editor.SetText(text, editorImages(entries, id)...)
 	}
 	a.notice("Forked to a new session.")
 }

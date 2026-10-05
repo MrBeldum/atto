@@ -27,39 +27,48 @@ func (a *App) steer(text string) {
 	events.Wake(a.sess.ID) // `atto sleep` / `atto job wait` return early
 }
 
-func (a *App) enqueue(text string) {
-	a.queued = append(a.queued, text)
+// queuedInput is a follow-up waiting for the current turn to end.
+type queuedInput struct {
+	text string
+	att  []tui.Attachment // images
+}
+
+func (a *App) enqueue(text string, att []tui.Attachment) {
+	a.queued = append(a.queued, queuedInput{text, att})
 	a.maybeSendNextQueued()
 }
 
 // queueFromEditor handles Tab: queue the draft, or submit it when idle.
 func (a *App) queueFromEditor() {
-	text := a.editor.Commit()
+	text, att := a.editor.Commit()
 	if text == "" {
 		return
 	}
 	if !a.busy {
-		a.submit(text)
+		a.submit(text, att)
 		return
 	}
-	a.enqueue(text)
+	a.enqueue(text, att)
 }
 
 func (a *App) editLastQueued() {
 	last := a.queued[len(a.queued)-1]
 	a.queued = a.queued[:len(a.queued)-1]
+	text := last.text
 	if cur := a.editor.Text(); strings.TrimSpace(cur) != "" {
-		last += "\n" + cur
+		text += "\n" + cur
 	}
-	a.editor.SetText(last)
+	a.editor.SetText(text, last.att...)
 }
 
-func (a *App) restoreToEditor(texts []string) {
+// restoreToEditor puts texts back in front of the current draft; att are
+// image attachments whose labels are in texts.
+func (a *App) restoreToEditor(texts []string, att ...tui.Attachment) {
 	text := strings.Join(texts, "\n\n")
 	if cur := a.editor.Text(); strings.TrimSpace(cur) != "" {
 		text += "\n\n" + cur
 	}
-	a.editor.SetText(text)
+	a.editor.SetText(text, att...)
 }
 
 // afterRun settles pending input once a turn or compaction finishes.
@@ -98,7 +107,7 @@ func (a *App) afterRun(err error) {
 		// to send right away with Esc, start the next turn. Otherwise (error,
 		// Ctrl+C) they go back into the editor.
 		if err == nil || (canceled && sendSteers) {
-			a.startTurn(strings.Join(leftover, "\n\n"))
+			a.startTurn(strings.Join(leftover, "\n\n"), nil)
 			return
 		}
 		a.restoreToEditor(leftover)
@@ -124,11 +133,11 @@ func (a *App) maybeSendNextQueued() {
 	for !a.busy && a.modal == nil && !a.queuePaused && len(a.queued) > 0 {
 		next := a.queued[0]
 		a.queued = a.queued[1:]
-		if strings.HasPrefix(next, "/") {
-			a.runCommand(next)
+		if strings.HasPrefix(next.text, "/") {
+			a.runCommand(next.text)
 			continue
 		}
-		a.startTurn(next)
+		a.startTurn(next.text, next.att)
 		return
 	}
 	a.continueGoal()
@@ -173,8 +182,8 @@ func (a *App) renderPending(width int) []string {
 			header += tui.Dim(" (paused — enter on empty prompt to resume)")
 		}
 		out = append(out, tui.Truncate(tui.Dim("• ")+header, width, "…"))
-		for _, s := range a.queued {
-			out = append(out, previewLines(s, width, tui.Italic)...)
+		for _, q := range a.queued {
+			out = append(out, previewLines(q.text, width, tui.Italic)...)
 		}
 		out = append(out, "    "+tui.FG(6, "shift+←")+tui.Dim(" edit last queued message"))
 	}
