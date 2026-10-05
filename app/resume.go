@@ -536,11 +536,14 @@ func (a *App) resume(path string) {
 	if ref, ok := a.models.Find("", saved.Model); ok {
 		a.agent.SetModel(ref)
 		a.recModel = saved.Model
+		a.modelFrom = core.FromSession
 	}
 	if saved.Effort != "" {
 		a.agent.SetEffort(saved.Effort)
 		a.recEffort = saved.Effort
+		a.effortFrom = core.FromSession
 	}
+	a.showLoaded()
 	entries := saved.Entries
 	a.replay(branch)
 	a.restoreGoal(entries)

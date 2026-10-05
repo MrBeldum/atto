@@ -50,6 +50,12 @@ type App struct {
 	agent  *agent.Agent
 	sess   *session.Writer
 	hooks  *hooks.Runner // nil when no hooks are configured
+	// hookSrc are the settings files the hooks came from, loaded what the
+	// session loaded (the "Loaded" block), and modelFrom/effortFrom where
+	// the model and effort in use came from.
+	hookSrc               []config.HookSource
+	loaded                core.Loaded
+	modelFrom, effortFrom core.Origin
 
 	editor *tui.Editor
 	modal  modal
@@ -141,7 +147,7 @@ func Run(opts Options) error {
 	if err != nil {
 		return err
 	}
-	model, err := core.PickModel(models, settings, opts.Model)
+	model, modelFrom, err := core.PickModelFrom(models, settings, opts.Model, "")
 	noModels := errors.Is(err, core.ErrNoModels)
 	if err != nil && !noModels {
 		return err
@@ -150,19 +156,23 @@ func Run(opts Options) error {
 	if err != nil {
 		return err
 	}
-	ag, hk, err := core.NewAgent(cwd, model, core.Effort(settings, opts.Effort))
+	effort, effortFrom := core.EffortFrom(settings, opts.Effort, "")
+	ag, hk, hookSrc, err := core.NewAgentSources(cwd, model, effort)
 	if err != nil {
 		return err
 	}
 
 	a := &App{
-		ui:     tui.New(tui.NewProcessTerminal()),
-		models: models,
-		agent:  ag,
-		hooks:  hk,
-		tools:  map[string]*toolBlock{},
-		cwd:    cwd,
-		quit:   make(chan struct{}),
+		ui:         tui.New(tui.NewProcessTerminal()),
+		models:     models,
+		agent:      ag,
+		hooks:      hk,
+		hookSrc:    hookSrc,
+		modelFrom:  modelFrom,
+		effortFrom: effortFrom,
+		tools:      map[string]*toolBlock{},
+		cwd:        cwd,
+		quit:       make(chan struct{}),
 
 		clipboard: images.SystemClipboardImage,
 	}
@@ -178,11 +188,7 @@ func Run(opts Options) error {
 		// First run: start anyway and say how to get a model, like pi.
 		a.notice("%s", core.NoModelsHint())
 	}
-	a.newSession("")
-	_, skillWarnings := a.agent.Skills()
-	for _, w := range skillWarnings {
-		a.notice("Skill: %s", w)
-	}
+	a.newSession("") // its "Loaded" block lists skill files that were skipped
 	a.sessionStartHook("startup")
 	a.statusCmd = settings.StatusLine != nil && settings.StatusLine.Command != ""
 	a.startStatusLine(settings.StatusLine)
@@ -288,6 +294,7 @@ func (a *App) newSession(reason string) {
 	a.setLiveSession(a.sess.ID)
 	a.resetGoal()
 	a.recModel, a.recEffort, a.sessName = "", "", ""
+	a.showLoaded()
 	a.statusTrigger()
 }
 
@@ -542,8 +549,18 @@ func (a *App) start(activity string, fn func(context.Context, func(any)) error) 
 	}()
 	go func() {
 		err := fn(ctx, func(ev any) { a.ui.Do(func() { a.onEvent(ev) }) })
+		// A reload that no step boundary reached (the turn ended first, or
+		// this was a compaction) runs now; its report for the model is
+		// delivered like an event.
+		var reported []events.Event
+		for _, f := range a.agent.TakeBoundary() {
+			if text := f(); text != "" {
+				reported = append(reported, events.Event{Source: sourceReloaded, Title: "Reload result sent to the agent", Text: strings.TrimPrefix(text, events.Prefix)})
+			}
+		}
 		ctxTokens := a.agent.ContextTokens() // safe: the run is over
 		a.ui.Do(func() {
+			a.pendingEvents = append(a.pendingEvents, reported...)
 			a.tr().End() // a compaction that did not finish disappears
 			a.busy = false
 			a.ctxTokens = ctxTokens
@@ -588,6 +605,7 @@ func (a *App) cycleEffort() {
 
 func (a *App) setEffort(level string, announce bool) {
 	a.agent.SetEffort(level)
+	a.effortFrom = core.FromCommand
 	a.statusTrigger()
 	if err := config.UpdateSettings(map[string]any{"defaultEffort": level}); err != nil {
 		a.errorNotice(err)

@@ -129,10 +129,17 @@ type HookSpec struct {
 // ProjectSettingsPath is a project's own settings file (hooks only).
 func ProjectSettingsPath(cwd string) string { return filepath.Join(cwd, ".atto", "settings.json") }
 
-// LoadHooks merges user hooks (~/.atto/settings.json) with project hooks
-// (<cwd>/.atto/settings.json); project hooks run after user hooks.
-func LoadHooks(cwd string) (map[string][]HookMatcher, error) {
-	out := map[string][]HookMatcher{}
+// HookSource is the hooks one settings file defines.
+type HookSource struct {
+	Path  string
+	Hooks map[string][]HookMatcher
+}
+
+// LoadHookSources reads the hooks of user settings (~/.atto/settings.json)
+// and project settings (<cwd>/.atto/settings.json), in the order they run.
+// Files that are missing or define no hooks are left out.
+func LoadHookSources(cwd string) ([]HookSource, error) {
+	var out []HookSource
 	for _, path := range []string{SettingsPath(), ProjectSettingsPath(cwd)} {
 		data, err := os.ReadFile(path)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -145,11 +152,33 @@ func LoadHooks(cwd string) (map[string][]HookMatcher, error) {
 		if err := json.Unmarshal(data, &s); err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
-		for ev, ms := range s.Hooks {
-			out[ev] = append(out[ev], ms...)
+		if len(s.Hooks) > 0 {
+			out = append(out, HookSource{Path: path, Hooks: s.Hooks})
 		}
 	}
 	return out, nil
+}
+
+// MergeHooks combines hook sources; later sources' hooks run after earlier
+// ones'.
+func MergeHooks(srcs []HookSource) map[string][]HookMatcher {
+	out := map[string][]HookMatcher{}
+	for _, src := range srcs {
+		for ev, ms := range src.Hooks {
+			out[ev] = append(out[ev], ms...)
+		}
+	}
+	return out
+}
+
+// LoadHooks merges user hooks (~/.atto/settings.json) with project hooks
+// (<cwd>/.atto/settings.json); project hooks run after user hooks.
+func LoadHooks(cwd string) (map[string][]HookMatcher, error) {
+	srcs, err := LoadHookSources(cwd)
+	if err != nil {
+		return nil, err
+	}
+	return MergeHooks(srcs), nil
 }
 
 // StatusLine configures a custom status line. The command runs with a JSON

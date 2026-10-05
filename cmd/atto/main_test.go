@@ -69,6 +69,18 @@ func TestResumeArgs(t *testing.T) {
 	}
 }
 
+// The agent may reload its own session and look at what it loaded.
+func TestNestedAllowsReloadAndContext(t *testing.T) {
+	for _, cmd := range []string{"reload", "context"} {
+		if nestedRefused[cmd] {
+			t.Errorf("%s must work from the agent's shell", cmd)
+		}
+		if subcommands()[cmd] == nil {
+			t.Errorf("%s is not a subcommand", cmd)
+		}
+	}
+}
+
 func TestImageFlagRepeats(t *testing.T) {
 	fs := flag.NewFlagSet("atto", flag.ContinueOnError)
 	p := fs.Bool("p", false, "")

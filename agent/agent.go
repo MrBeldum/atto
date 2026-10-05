@@ -159,10 +159,14 @@ type Agent struct {
 	// persistence. Called on the goroutine running Run/Compact.
 	Record func(session.Entry)
 
-	system    string
-	skills    []skills.Skill // snapshot taken with the system prompt
-	skillWarn []string
-	messages  []provider.Message
+	// The system prompt and what it was built from (a snapshot taken at
+	// session start and on Reload). srcMu guards writes, and reads from
+	// other goroutines than the one running the turn.
+	srcMu    sync.Mutex
+	system   string
+	start    time.Time
+	sources  Sources
+	messages []provider.Message
 	// MaxSteps stops a turn after this many model calls (0: unlimited).
 	MaxSteps int
 	// Hooks, if set, run around prompts, tool calls, stops and compaction.
@@ -173,8 +177,9 @@ type Agent struct {
 	// sinceUsage counts characters appended after the last reported usage.
 	sinceUsage int
 
-	steerMu sync.Mutex
-	steers  []string
+	steerMu  sync.Mutex
+	steers   []string
+	boundary []func() string
 
 	// DiscardPartial makes an interrupted model call leave nothing behind,
 	// instead of its streamed text (experimental: set when the run goes on
@@ -223,6 +228,37 @@ func (a *Agent) DrainSteers() []string {
 	return s
 }
 
+// AtBoundary queues fn for the running turn's next step boundary: after
+// the step's tool calls, or when the model stops. It runs on the turn's
+// goroutine with no request in flight, so it may Reload or change Hooks,
+// and before steers are committed: a non-empty result is added to the
+// conversation like a steer, which keeps the turn going. Functions no
+// boundary reached (the turn ended first, or it was a compaction) are
+// left for TakeBoundary. Safe to call from any goroutine.
+func (a *Agent) AtBoundary(fn func() string) {
+	a.steerMu.Lock()
+	a.boundary = append(a.boundary, fn)
+	a.steerMu.Unlock()
+}
+
+// TakeBoundary removes and returns the functions queued by AtBoundary that
+// have not run.
+func (a *Agent) TakeBoundary() []func() string {
+	a.steerMu.Lock()
+	defer a.steerMu.Unlock()
+	fns := a.boundary
+	a.boundary = nil
+	return fns
+}
+
+func (a *Agent) runBoundary() {
+	for _, fn := range a.TakeBoundary() {
+		if text := fn(); text != "" {
+			a.Steer(text)
+		}
+	}
+}
+
 // commitSteers appends pending steers as a user message.
 func (a *Agent) commitSteers(emit func(any)) bool {
 	s := a.DrainSteers()
@@ -251,15 +287,86 @@ func New(model config.ModelRef, effort, cwd string) *Agent {
 // prefix cache survives midnight. Call only while no turn is running.
 func (a *Agent) SetStart(t time.Time) {
 	// Skills are listed once here and not rescanned, like AGENTS files, so
-	// the prompt (and the prefix cache) holds for the whole session.
-	home, _ := os.UserHomeDir()
-	a.skills, a.skillWarn = skills.Load(skills.Dirs(config.SkillsDir(), projectRoot(a.Cwd), home))
-	a.system = systemPrompt(a.Cwd, a.Shell, t, a.skills)
+	// the prompt (and the prefix cache) holds for the whole session; only
+	// Reload reads them again.
+	src, prompt := a.scan(t)
+	a.srcMu.Lock()
+	a.start, a.sources, a.system = t, src, prompt
+	a.srcMu.Unlock()
 }
 
-// Skills returns the skills found when the session started, and warnings
-// about skill files that were invalid or shadowed.
-func (a *Agent) Skills() ([]skills.Skill, []string) { return a.skills, a.skillWarn }
+// Reload reads the AGENTS files and skills again and rebuilds the system
+// prompt for the session's start date. The prompt is replaced only when its
+// text changed, which is what Reload reports: an unchanged prompt keeps the
+// prefix cache. Call it while no request is in flight: when no turn runs,
+// or from a step boundary (AtBoundary).
+func (a *Agent) Reload() (changed bool) {
+	a.srcMu.Lock()
+	start, old := a.start, a.system
+	a.srcMu.Unlock()
+	src, prompt := a.scan(start)
+	a.srcMu.Lock()
+	defer a.srcMu.Unlock()
+	a.sources = src
+	if prompt == old {
+		return false
+	}
+	a.system = prompt
+	a.sinceUsage = max(0, a.sinceUsage+len(prompt)-len(old))
+	return true
+}
+
+// Sources is what the system prompt was built from.
+type Sources struct {
+	Cwd          string
+	Shell        string // the shell's path
+	Start        time.Time
+	Instructions []Instruction // in prompt order
+	Skipped      []SkippedInstruction
+	Skills       []skills.Skill
+	SkillIssues  []skills.Issue
+	SkillDirs    []string // searched, highest priority first
+	// Sizes of the prompt and of its parts, in bytes.
+	PromptBytes, InstructionBytes, SkillBytes int
+}
+
+// scan reads the files the system prompt is built from and builds it.
+func (a *Agent) scan(start time.Time) (Sources, string) {
+	home, _ := os.UserHomeDir()
+	dirs := skills.Dirs(config.SkillsDir(), projectRoot(a.Cwd), home)
+	sk, issues := skills.LoadIssues(dirs)
+	files, skipped := scanInstructions(a.Cwd)
+	prompt := buildPrompt(a.Cwd, a.Shell, start, sk, files)
+	var instr strings.Builder
+	writeInstructions(&instr, files)
+	return Sources{
+		Cwd: a.Cwd, Shell: a.Shell.Path, Start: start,
+		Instructions: describeInstructions(files), Skipped: skipped,
+		Skills: sk, SkillIssues: issues, SkillDirs: dirs,
+		PromptBytes: len(prompt), InstructionBytes: instr.Len(),
+		SkillBytes: len(skills.FormatForPrompt(sk, a.Shell.ToolName())),
+	}, prompt
+}
+
+// Sources returns what the system prompt in use was built from.
+func (a *Agent) Sources() Sources {
+	a.srcMu.Lock()
+	defer a.srcMu.Unlock()
+	return a.sources
+}
+
+// Skills returns the skills found when the session started (or on the
+// last Reload), and warnings about skill files that were invalid or
+// shadowed.
+func (a *Agent) Skills() ([]skills.Skill, []string) {
+	a.srcMu.Lock()
+	defer a.srcMu.Unlock()
+	var warns []string
+	for _, is := range a.sources.SkillIssues {
+		warns = append(warns, is.String())
+	}
+	return a.sources.Skills, warns
+}
 
 // SetSession sets the session ID (for provider routing headers) and extra
 // environment variables for bash commands.
@@ -318,7 +425,7 @@ func (b Breakdown) Total() int {
 }
 
 func (a *Agent) Breakdown() Breakdown {
-	b := Breakdown{System: len(a.system), Messages: len(a.messages)}
+	b := Breakdown{System: len(a.SystemPrompt()), Messages: len(a.messages)}
 	for _, t := range a.tools() {
 		b.Tools += len(t.Function.Name) + len(t.Function.Description) + len(t.Function.Parameters)
 	}
@@ -345,7 +452,11 @@ func (a *Agent) Breakdown() Breakdown {
 }
 
 // SystemPrompt returns the system prompt in use.
-func (a *Agent) SystemPrompt() string { return a.system }
+func (a *Agent) SystemPrompt() string {
+	a.srcMu.Lock()
+	defer a.srcMu.Unlock()
+	return a.system
+}
 
 // Effort returns the effort in use.
 func (a *Agent) Effort() string {
@@ -485,7 +596,7 @@ func (a *Agent) request(extra ...provider.Message) (provider.Streamer, provider.
 	client, sessID := a.client, a.sessID
 	a.cfgMu.Unlock()
 	msgs := make([]provider.Message, 0, len(a.messages)+len(extra)+1)
-	msgs = append(msgs, provider.Message{Role: "system", Content: a.system})
+	msgs = append(msgs, provider.Message{Role: "system", Content: a.SystemPrompt()})
 	msgs = append(msgs, a.messages...)
 	msgs = append(msgs, extra...)
 	if !model.Model.Images() {
@@ -547,6 +658,30 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(any)) error {
 	return a.RunWithImages(ctx, input, nil, emit)
 }
 
+// modelChangeNote tells the model that the conversation's last reply came
+// from another model, so it doesn't take that reply's words or habits for
+// its own. It goes with the next user message only: once this model has
+// replied, the last reply is its own.
+func (a *Agent) modelChangeNote() string {
+	a.cfgMu.Lock()
+	cur := a.model.ProviderName + "/" + a.model.Model.ID
+	a.cfgMu.Unlock()
+	for i := len(a.messages) - 1; i >= 0; i-- {
+		m := a.messages[i]
+		if m.Role != "assistant" {
+			continue
+		}
+		if m.Model == "" { // written before atto recorded models
+			return ""
+		}
+		if prev := m.Provider + "/" + m.Model; prev != cur {
+			return fmt.Sprintf("[atto] The model changed from %s to %s. Earlier assistant messages were written by %s.", prev, cur, prev)
+		}
+		return ""
+	}
+	return ""
+}
+
 // RunWithImages is Run with images attached to the user message. Their
 // bytes must be loaded, and saved with images.Save for the session to
 // resume with them.
@@ -562,6 +697,9 @@ func (a *Agent) RunWithImages(ctx context.Context, input string, imgs []provider
 		case o.Context != "":
 			input += "\n\n" + o.Context
 		}
+	}
+	if note := a.modelChangeNote(); note != "" {
+		input += "\n\n" + note
 	}
 	if a.needsCompact() {
 		if err := a.compact(ctx, emit, true); err != nil {
@@ -631,6 +769,7 @@ func (a *Agent) loop(ctx context.Context, emit func(any)) error {
 		emit(StepEnd{Usage: usage, Context: a.ContextTokens()})
 
 		if len(res.Message.ToolCalls) == 0 {
+			a.runBoundary()
 			if a.commitSteers(emit) {
 				continue
 			}
@@ -678,6 +817,7 @@ func (a *Agent) loop(ctx context.Context, emit func(any)) error {
 		if stopTurn {
 			return ErrStoppedByHook
 		}
+		a.runBoundary()
 		a.commitSteers(emit)
 		if a.needsCompact() {
 			if err := a.compact(ctx, emit, true); err != nil {
@@ -885,6 +1025,10 @@ func shellGuide(sh shell.Shell) string {
 }
 
 func systemPrompt(cwd string, sh shell.Shell, start time.Time, sk []skills.Skill) string {
+	return buildPrompt(cwd, sh, start, sk, loadInstructions(cwd))
+}
+
+func buildPrompt(cwd string, sh shell.Shell, start time.Time, sk []skills.Skill, instr []instructionFile) string {
 	var b strings.Builder
 	name := sh.ToolName()
 	fmt.Fprintf(&b, `You are atto, a coding agent running in the user's terminal.
@@ -894,6 +1038,7 @@ Every %s call needs a short description of what it does, shown to the user, e.g.
 Commands time out after 60 seconds by default; set timeout for longer builds or tests.`, shellGuide(sh), name)
 	fmt.Fprintf(&b, `
 The full transcript of this session, including anything removed by compaction, can be searched with "atto history grep <regexp>" and read with "atto history show <n>".
+After you change AGENTS.md files, skills or atto's settings, "atto reload" applies them to this session; "atto context" shows what is loaded.
 
 Background work: start long-running commands (dev servers, watchers, long builds) with "atto job start -- '<command>'" instead of blocking; quote the command so your shell passes it whole (e.g. atto job start -- 'npm run build && npm test'). When a job exits you receive an "[atto event]" message; check on it with "atto job output <id>", "atto job wait <id> -timeout 10m", or stop it with "atto job kill <id>". To wait for a condition, use "atto monitor -every 30s -until <regexp> -- '<check command>'"; to come back later, use "atto timer in 10m <note>". Then end your turn: you are woken with an [atto event]. "atto sleep <duration>" waits but returns early on events or user input. Run "atto job" for details. Jobs stop when the session ends.
 
@@ -908,7 +1053,7 @@ Environment:
 - Session started: %s
 `, cwd, runtime.GOOS, runtime.GOARCH, sh.Path, start.Format("2006-01-02"))
 
-	writeInstructions(&b, loadInstructions(cwd))
+	writeInstructions(&b, instr)
 	b.WriteString(skills.FormatForPrompt(sk, name))
 	return b.String()
 }
