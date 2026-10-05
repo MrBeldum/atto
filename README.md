@@ -163,6 +163,19 @@ Pastes over 1000 characters show as `[Pasted Content 1234 chars]` and are sent i
 
 **Sessions** are JSONL files under `~/.atto/sessions/`. As in pi, entries form a tree: going back with `/tree` starts a new branch in the same file and keeps the old one. `atto history grep` searches every branch and marks entries on other branches; `-active` limits it to the current one.
 
+Manage sessions from the shell, without the TUI:
+
+```
+atto resume [id]                     resume a session (no id opens the picker; an id may be a unique prefix)
+atto sessions [-all] [-archived] [-json] [-n N]   list this directory's sessions (-all: every directory)
+atto sessions show <id>              details and the last user messages
+atto sessions rename <id> <name>
+atto sessions archive|unarchive <id>
+atto sessions delete [-y] <id>       permanent: also removes its jobs, inbox, goal and images no other session uses
+```
+
+`delete` asks first on a terminal and refuses without `-y` elsewhere. Inside an atto agent only `list` and `show` work, so a model can't destroy session history.
+
 **Hooks** use the same format as Claude Code: `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop`, `PreCompact` and `SessionStart`.
 
 - Put them in `~/.atto/settings.json` or in the project's `.atto/settings.json`.

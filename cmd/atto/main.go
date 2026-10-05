@@ -30,6 +30,9 @@ usage:
   atto auth set <provider>          store an API key
   atto login openai                 sign in with ChatGPT (subscription)
   atto logout <provider>            remove stored credentials
+  atto resume [id]                  resume a session (no id: pick one)
+  atto sessions [list|show|rename|archive|unarchive|delete]
+                                    manage saved sessions (atto sessions -h)
   atto history grep|show ...        search a session transcript
   atto job|monitor|timer|sleep ...  background jobs and wake-ups (atto job for details)
   atto goal [complete|blocked|set]  the session goal (set one with /goal or -goal)
@@ -43,7 +46,7 @@ flags:
 // nestedRefused are the commands an atto agent may not run from its shell:
 // starting another agent (which would recurse and spend tokens unseen) or
 // changing credentials. "" is atto itself (interactive or -p).
-var nestedRefused = map[string]bool{"": true, "serve": true, "app-server": true, "login": true, "logout": true, "auth": true, "update": true, "channel": true}
+var nestedRefused = map[string]bool{"": true, "serve": true, "app-server": true, "resume": true, "login": true, "logout": true, "auth": true, "update": true, "channel": true}
 
 func refuseNested(cmd string) {
 	if !config.InAgent() || !nestedRefused[cmd] {
@@ -73,6 +76,7 @@ func subcommandNames() []string {
 func subcommands() map[string]func([]string, io.Writer) error {
 	return map[string]func([]string, io.Writer) error{
 		"history":    cli.RunHistory,
+		"sessions":   cli.RunSessions,
 		"auth":       cli.RunAuth,
 		"models":     cli.RunModels,
 		"job":        cli.RunJob,
@@ -158,8 +162,33 @@ func editDistance(a, b string) int {
 // atto fix the build and atto "fix the build" start the same session.
 func initialPrompt(positional []string) string { return strings.Join(positional, " ") }
 
+// resumeArgs rewrites "atto resume [id] [flags]" into the flags it means:
+// -session <id>, or -resume for the picker. Other flags pass through.
+func resumeArgs(args []string) []string {
+	out := []string{args[0]}
+	var id string
+	for i, a := range args[2:] {
+		// A bare word right after -m or -effort is that flag's value.
+		valueOf := i > 0 && (args[i+1] == "-m" || args[i+1] == "-effort")
+		if id == "" && !strings.HasPrefix(a, "-") && !valueOf {
+			id = a
+			continue
+		}
+		out = append(out, a)
+	}
+	if id != "" {
+		return append(out, "-session", id)
+	}
+	return append(out, "-resume")
+}
+
 func main() {
 	update.Cleanup()
+	if len(os.Args) > 1 && os.Args[1] == "resume" {
+		// Not a subcommand function: it starts the TUI, like -resume / -session.
+		refuseNested("resume")
+		os.Args = resumeArgs(os.Args)
+	}
 	if len(os.Args) > 1 {
 		refuseNested(os.Args[1])
 		sub := subcommands()[os.Args[1]]

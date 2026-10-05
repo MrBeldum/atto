@@ -5,27 +5,77 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/sebastianrcnt/atto/config"
 )
 
 // Find locates a session file by ID in the active and archived directories.
+// An exact ID wins; otherwise a prefix that matches exactly one session is
+// accepted, so the short IDs shown in listings can be pasted as typed.
 func Find(id string) (string, error) {
-	var found string
+	if id == "" || strings.ContainsAny(id, `/\*?[`) {
+		return "", fmt.Errorf("session %q not found", id)
+	}
+	var exact string
+	prefix := map[string]string{} // full ID -> path
 	for _, root := range []string{config.SessionsDir(), config.ArchivedDir()} {
 		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-			if err == nil && !d.IsDir() && strings.HasSuffix(path, "-"+id+".jsonl") {
-				found = path
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".jsonl") {
+				return nil
+			}
+			// Files are <YYYYMMDD-HHMMSS>-<id>.jsonl.
+			base := strings.TrimSuffix(d.Name(), ".jsonl")
+			i := strings.LastIndex(base, "-")
+			if i < 0 {
+				return nil
+			}
+			full := base[i+1:]
+			switch {
+			case full == id:
+				exact = path
 				return fs.SkipAll
+			case strings.HasPrefix(full, id):
+				prefix[full] = path
 			}
 			return nil
 		})
-		if found != "" {
-			return found, nil
+		if exact != "" {
+			return exact, nil
 		}
 	}
-	return "", fmt.Errorf("session %s not found", id)
+	switch len(prefix) {
+	case 0:
+		return "", fmt.Errorf("session %s not found", id)
+	case 1:
+		for _, p := range prefix {
+			return p, nil
+		}
+	}
+	ids := make([]string, 0, len(prefix))
+	for full := range prefix {
+		ids = append(ids, full)
+	}
+	sort.Strings(ids)
+	return "", fmt.Errorf("session id %q is ambiguous: matches %s", id, strings.Join(ids, ", "))
+}
+
+// RelTime formats t as a short age: "now", "5m ago", "3d ago".
+func RelTime(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < 10*time.Second:
+		return "now"
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 }
 
 // Item is one searchable unit of a session: a message or compaction
