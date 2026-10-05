@@ -193,6 +193,10 @@ func Key(data string) string {
 		return "shift+left"
 	case "\x1b[1;2C":
 		return "shift+right"
+	case "\x1b[1;2A":
+		return "shift+up"
+	case "\x1b[1;2B":
+		return "shift+down"
 	case "\x1b[1;5C", "\x1bf":
 		return "word-right"
 	case "\x1b[1;5D", "\x1bb":

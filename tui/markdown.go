@@ -356,6 +356,10 @@ func (r *mdRenderer) table(rows [][]string, aligns []byte, width int) {
 		h := 1
 		for j, c := range row {
 			wrapped[j] = Wrap(c, max(1, widths[j]))
+			for k, l := range wrapped[j] {
+				// A row holds several cells: it can't join the next row.
+				wrapped[j][k] = StripWrapMarks(l)
+			}
 			h = max(h, len(wrapped[j]))
 		}
 		for k := 0; k < h; k++ {
@@ -540,7 +544,8 @@ func findClose(s string, from int, delim string) int {
 }
 
 // WrapHard breaks s every width columns without regard to words, preserving
-// all whitespace. Used for code.
+// all whitespace. Used for code. Continuation lines start with a soft-wrap
+// mark.
 func WrapHard(s string, width int) []string {
 	cs, trailing := cells(s)
 	var out []string
@@ -552,6 +557,7 @@ func WrapHard(s string, width int) []string {
 			out = append(out, cur.String())
 			cur.Reset()
 			cur.WriteString(st.active)
+			cur.WriteString(wrapJoin)
 			w = 0
 		}
 		st.feed(c.esc)
