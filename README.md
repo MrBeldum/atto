@@ -45,11 +45,12 @@ Running the script again is safe. It installs the latest release over the old on
 ```sh
 atto update          # install the latest release
 atto update -check   # only check
-atto update -channel edge     # follow edge builds from now on
-atto update -channel stable   # back to tagged releases
+atto channel         # show which channel this binary follows
+atto channel edge    # switch to edge builds
+atto channel stable  # go back to tagged releases
 ```
 
-`-channel` saves your choice as `"updateChannel": "edge"` (or `"stable"`, the default) in `~/.atto/settings.json`; the daily check and plain `atto update` follow it. Going from edge back to stable installs the latest stable release even though its version number is lower, and says so: `Switched to stable: atto v0.0.3-dev.14 → v0.0.2`. That only happens with an explicit `-channel stable`.
+The channel is part of the binary: release builds are `stable`, edge builds are `edge`, and `atto -version` shows which (`atto v0.0.3-dev.14+abc1234 (edge)`). `atto update` stays on the channel you're on. `atto channel <name>` installs the latest binary of that channel, which then follows it. Nothing is saved in settings. Going from edge back to stable installs the latest stable release even though its version number is lower, and says so: `Switched to stable: atto v0.0.3-dev.14 → v0.0.2`. Only `atto channel` does that. Builds from `go install` or a local `go build` have no channel (they report `dev`) and get no update notices.
 
 Once a day atto asks the GitHub API whether a newer release exists on your channel, and mentions it when you start atto. It never updates itself on its own. To turn the check off, set `"updateCheck": false` in `~/.atto/settings.json`.
 
@@ -185,7 +186,7 @@ Everything lives in `~/.atto`. Set `ATTO_DIR` to move it.
 
 | Path | Contents |
 | --- | --- |
-| `settings.json` | default model and effort, renderer, status line, hooks, `updateCheck`, `updateChannel` (`stable` or `edge`), `doubleEscapeAction` (`tree`, `fork` or `none`) |
+| `settings.json` | default model and effort, renderer, status line, hooks, `updateCheck`, `doubleEscapeAction` (`tree`, `fork` or `none`) |
 | `models.json` | your providers and models |
 | `auth.json` | keys and logins (mode 0600) |
 | `sessions/` | saved sessions |

@@ -60,7 +60,7 @@ jobs:
             out=dist/atto_${os}_${arch}
             [ "$os" = windows ] && out=$out.exe
             CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
-              -ldflags "-s -w -X github.com/sebastianrcnt/atto/update.Version=${VERSION}" \
+              -ldflags "-s -w -X github.com/sebastianrcnt/atto/update.Version=${VERSION} -X github.com/sebastianrcnt/atto/update.Channel=edge" \
               -o "$out" ./cmd/atto
           done
           (cd dist && sha256sum atto_* > checksums.txt)

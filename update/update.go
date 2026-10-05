@@ -31,10 +31,11 @@ const (
 	Install = "curl -fsSL https://raw.githubusercontent.com/" + Repo + "/main/install.sh | sh"
 
 	Stable = "stable"
-	Edge   = "edge"
-
-	// EdgeTag is the rolling prerelease every push to main replaces.
-	EdgeTag = "edge"
+	// Edge is the channel of builds from every push to main. Its release
+	// tag carries the same name; that tag is rolling, so its version lives
+	// in the release name.
+	Edge    = "edge"
+	EdgeTag = Edge
 )
 
 // The GitHub endpoints are variables so tests can point them at a local
@@ -48,6 +49,20 @@ var (
 // Builds without it report the module version (go install ...@v0.1.0) or
 // "dev".
 var Version = ""
+
+// Channel is the release channel this binary was built for, "stable" or
+// "edge" (-ldflags "-X .../update.Channel=edge"). Builds without it (go
+// install, local builds) have none: they report "dev" and are never told
+// about updates.
+var Channel = ""
+
+// Describe is the version with its channel, as `atto -version` prints it.
+func Describe() string {
+	if Channel == "" {
+		return Current()
+	}
+	return Current() + " (" + Channel + ")"
+}
 
 func Current() string {
 	if Version != "" {
@@ -70,14 +85,6 @@ func Asset() string {
 
 var client = &http.Client{Timeout: 60 * time.Second}
 
-// Channel normalizes a settings value: anything but "edge" is stable.
-func Channel(v string) string {
-	if strings.EqualFold(strings.TrimSpace(v), Edge) {
-		return Edge
-	}
-	return Stable
-}
-
 // Release is a downloadable release. Tag names where its assets live;
 // Version is what `atto -version` reports. They differ on the edge channel,
 // whose tag never changes but whose version does.
@@ -88,7 +95,7 @@ type Release struct {
 
 // Latest returns the newest release on a channel.
 func Latest(ctx context.Context, channel string) (Release, error) {
-	if Channel(channel) == Edge {
+	if channel == Edge {
 		var r struct {
 			Name string `json:"name"`
 		}
@@ -227,15 +234,14 @@ func parse(v string) (semver, bool) {
 }
 
 // Plan decides whether to install rel over cur. Normally only a newer
-// version qualifies (and a dev build takes anything). switchStable is an
-// explicit `-channel stable`: leaving an edge build for the stable release
-// is a step down in version number but is what the user asked for, so it
-// installs; downgrade reports that case.
-func Plan(rel Release, cur string, switchStable bool) (install, downgrade bool) {
+// version qualifies (and a dev build takes anything). switching is `atto
+// channel` moving to another channel: that installs whatever the channel
+// has, even a lower version (edge to stable); downgrade reports that case.
+func Plan(rel Release, cur string, switching bool) (install, downgrade bool) {
 	if Newer(rel.Version, cur) || cur == "dev" {
 		return true, false
 	}
-	if sv, ok := parse(cur); ok && switchStable && len(sv.pre) > 0 && Newer(cur, rel.Version) {
+	if switching && rel.Version != cur {
 		return true, true
 	}
 	return false, false
@@ -349,12 +355,14 @@ type check struct {
 	Latest  string    `json:"latest"`
 }
 
-// Available returns a newer version on the configured update channel, or "".
-// It asks GitHub at most once a day (per channel) and otherwise answers from
+// Available returns a newer version on this binary's channel, or "". It
+// asks GitHub at most once a day (per channel) and otherwise answers from
 // the cache, so it is cheap to call at startup.
 func Available(ctx context.Context) string {
-	s, _ := config.LoadSettings()
-	channel := Channel(s.UpdateChannel)
+	channel := Channel
+	if channel == "" {
+		return "" // dev builds aren't told about releases
+	}
 	var c check
 	if data, err := os.ReadFile(checkFile()); err == nil {
 		_ = json.Unmarshal(data, &c)
@@ -377,7 +385,7 @@ func Available(ctx context.Context) string {
 		}
 	}
 	if _, ok := parse(Current()); ok && Newer(c.Latest, Current()) {
-		return c.Latest // dev builds aren't told about releases
+		return c.Latest
 	}
 	return ""
 }

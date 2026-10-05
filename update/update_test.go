@@ -124,23 +124,21 @@ func TestPlan(t *testing.T) {
 		name          string
 		rel           Release
 		cur           string
-		switchStable  bool
+		switching     bool
 		install, down bool
 	}{
 		{"stable upgrade", stable, "v0.0.1", false, true, false},
 		{"stable current", stable, "v0.0.2", false, false, false},
 		{"edge upgrade", edge, "v0.0.3-dev.13+aaa", false, true, false},
 		{"edge current", edge, "v0.0.3-dev.14+abc1234", false, false, false},
-		{"edge from stable", edge, "v0.0.2", false, true, false},
+		{"stable to edge", edge, "v0.0.2", true, true, false},
 		{"dev build takes anything", stable, "dev", false, true, false},
-		// Stable is lower than an edge build: only an explicit switch installs it.
-		{"edge to stable, no flag", stable, "v0.0.3-dev.14+abc1234", false, false, false},
-		{"edge to stable, explicit", stable, "v0.0.3-dev.14+abc1234", true, true, true},
-		// A newer stable release is never rolled back.
-		{"newer stable, explicit", stable, "v0.0.5", true, false, false},
-		{"already on it, explicit", stable, "v0.0.2", true, false, false},
+		// Stable is lower than an edge build: only a channel switch installs it.
+		{"edge to stable, update", stable, "v0.0.3-dev.14+abc1234", false, false, false},
+		{"edge to stable, switch", stable, "v0.0.3-dev.14+abc1234", true, true, true},
+		{"already on it, switch", stable, "v0.0.2", true, false, false},
 	} {
-		install, down := Plan(c.rel, c.cur, c.switchStable)
+		install, down := Plan(c.rel, c.cur, c.switching)
 		if install != c.install || down != c.down {
 			t.Errorf("%s: Plan = %v, %v", c.name, install, down)
 		}
@@ -202,9 +200,9 @@ func TestAvailableUsesCache(t *testing.T) {
 	data, _ := json.Marshal(check{Checked: time.Now(), Latest: "v9.0.0"})
 	os.WriteFile(checkFile(), data, 0o644)
 
-	old := Version
-	defer func() { Version = old }()
-	Version = "v0.1.0"
+	oldV, oldC := Version, Channel
+	defer func() { Version, Channel = oldV, oldC }()
+	Version, Channel = "v0.1.0", Stable
 	if got := Available(context.Background()); got != "v9.0.0" {
 		t.Fatalf("got %q", got)
 	}
@@ -214,31 +212,53 @@ func TestAvailableUsesCache(t *testing.T) {
 	}
 }
 
-func TestAvailableFollowsChannel(t *testing.T) {
+func TestAvailableFollowsBinaryChannel(t *testing.T) {
 	t.Setenv(config.EnvDir, t.TempDir())
 	fakeGitHub(t, "v0.0.3-dev.14+abc1234")
-	old := Version
-	defer func() { Version = old }()
+	oldV, oldC := Version, Channel
+	defer func() { Version, Channel = oldV, oldC }()
 	Version = "v0.0.2"
 
-	// Stable (the default): v0.0.2 is the latest, nothing to report.
+	// No channel (go install, local build): no check at all.
+	Channel = ""
+	if got := Available(context.Background()); got != "" {
+		t.Fatalf("no channel: got %q", got)
+	}
+	if _, err := os.Stat(checkFile()); err == nil {
+		t.Fatal("a build without a channel must not even ask GitHub")
+	}
+	// Stable: v0.0.2 is the latest, nothing to report.
+	Channel = Stable
 	if got := Available(context.Background()); got != "" {
 		t.Fatalf("stable: got %q", got)
 	}
-	// Switching channel must not reuse the stable answer cached today.
-	if err := config.UpdateSettings(map[string]any{"updateChannel": "edge"}); err != nil {
-		t.Fatal(err)
-	}
+	// The same cache file must not answer for the edge channel.
+	Channel = Edge
 	if got := Available(context.Background()); got != "v0.0.3-dev.14+abc1234" {
 		t.Fatalf("edge: got %q", got)
 	}
 	// A cache from before channels existed counts as stable.
 	data, _ := json.Marshal(map[string]any{"checked": time.Now(), "latest": "v9.0.0"})
 	os.WriteFile(checkFile(), data, 0o644)
-	if err := config.UpdateSettings(map[string]any{"updateChannel": "stable"}); err != nil {
-		t.Fatal(err)
-	}
+	Channel = Stable
 	if got := Available(context.Background()); got != "v9.0.0" {
 		t.Fatalf("old cache: got %q", got)
+	}
+}
+
+func TestDescribe(t *testing.T) {
+	oldV, oldC := Version, Channel
+	defer func() { Version, Channel = oldV, oldC }()
+	Version, Channel = "v0.0.3-dev.14+abc1234", Edge
+	if got := Describe(); got != "v0.0.3-dev.14+abc1234 (edge)" {
+		t.Fatal(got)
+	}
+	Version, Channel = "v0.0.2", Stable
+	if got := Describe(); got != "v0.0.2 (stable)" {
+		t.Fatal(got)
+	}
+	Version, Channel = "v0.0.2", ""
+	if got := Describe(); got != "v0.0.2" {
+		t.Fatal(got)
 	}
 }

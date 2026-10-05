@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -40,62 +39,47 @@ func fakeReleases(t *testing.T) {
 	t.Cleanup(update.SetEndpoints(srv.URL+"/api/", srv.URL+"/dl/"))
 }
 
-func readSettings(t *testing.T) map[string]any {
+func setBuild(t *testing.T, version, channel string) {
 	t.Helper()
-	data, err := os.ReadFile(config.SettingsPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		t.Fatal(err)
-	}
-	return m
+	oldV, oldC := update.Version, update.Channel
+	t.Cleanup(func() { update.Version, update.Channel = oldV, oldC })
+	update.Version, update.Channel = version, channel
 }
 
-func TestUpdateChannelSwitch(t *testing.T) {
+func newExe(t *testing.T) string {
+	t.Helper()
+	exe := filepath.Join(t.TempDir(), "atto")
+	os.WriteFile(exe, []byte("old"), 0o755)
+	return exe
+}
+
+func TestChannelSwitch(t *testing.T) {
 	t.Setenv(config.EnvDir, t.TempDir())
 	t.Setenv("GOBIN", "")
 	fakeReleases(t)
-	// A settings field Settings doesn't know must survive the write.
-	os.WriteFile(config.SettingsPath(), []byte(`{"defaultModel":"m","futureThing":{"a":1}}`), 0o644)
-	exe := filepath.Join(t.TempDir(), "atto")
-	os.WriteFile(exe, []byte("old"), 0o755)
+	exe := newExe(t)
 
-	// stable -> edge installs the edge build and saves the channel.
+	// stable -> edge installs the edge binary.
+	setBuild(t, "v0.0.2", "stable")
 	var out bytes.Buffer
-	if err := runUpdate([]string{"-channel", "edge"}, &out, "v0.0.2", exe); err != nil {
+	if err := runChannel([]string{"edge"}, &out, "v0.0.2", exe); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(exe); string(b) != "edge-binary" {
 		t.Fatalf("exe = %q\n%s", b, out.String())
 	}
-	m := readSettings(t)
-	if m["updateChannel"] != "edge" || m["defaultModel"] != "m" || m["futureThing"] == nil {
-		t.Fatalf("settings = %v", m)
-	}
-
-	// The saved channel now drives a plain `atto update`: already current.
-	out.Reset()
-	if err := runUpdate(nil, &out, "v0.0.3-dev.14+abc1234", exe); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "latest edge release") {
+	if !strings.Contains(out.String(), "Switched to edge: atto v0.0.2 → v0.0.3-dev.14+abc1234") {
 		t.Fatal(out.String())
 	}
-
-	// Without -channel stable, an edge build is never rolled back.
-	out.Reset()
-	if err := runUpdate([]string{"-check"}, &out, "v0.0.3-dev.20+abc1234", exe); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "latest edge release") {
-		t.Fatal(out.String())
+	// Nothing is saved: the channel travels with the binary.
+	if _, err := os.Stat(config.SettingsPath()); !os.IsNotExist(err) {
+		t.Fatal("atto channel must not write settings")
 	}
 
-	// edge -> stable is an explicit downgrade and says so.
+	// edge -> stable is a downgrade and says so.
+	setBuild(t, "v0.0.3-dev.14+abc1234", "edge")
 	out.Reset()
-	if err := runUpdate([]string{"-channel", "stable"}, &out, "v0.0.3-dev.14+abc1234", exe); err != nil {
+	if err := runChannel([]string{"stable"}, &out, "v0.0.3-dev.14+abc1234", exe); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "Switched to stable: atto v0.0.3-dev.14+abc1234 → v0.0.2") {
@@ -104,27 +88,81 @@ func TestUpdateChannelSwitch(t *testing.T) {
 	if b, _ := os.ReadFile(exe); string(b) != "stable-binary" {
 		t.Fatalf("exe = %q", b)
 	}
-	if m := readSettings(t); m["updateChannel"] != "stable" || m["defaultModel"] != "m" {
-		t.Fatalf("settings = %v", m)
+
+	// Naming the channel you're already on is just an update: no downgrade.
+	setBuild(t, "v0.0.3-dev.20+abc1234", "edge")
+	os.WriteFile(exe, []byte("old"), 0o755)
+	out.Reset()
+	if err := runChannel([]string{"edge"}, &out, "v0.0.3-dev.20+abc1234", exe); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "old" || !strings.Contains(out.String(), "already the latest edge") {
+		t.Fatalf("%q %s", b, out.String())
 	}
 }
 
-func TestUpdateChannelFlagValidation(t *testing.T) {
-	t.Setenv(config.EnvDir, t.TempDir())
+func TestChannelShowAndValidate(t *testing.T) {
 	var out bytes.Buffer
-	if err := runUpdate([]string{"-channel", "nightly"}, &out, "v0.0.2", "x"); err == nil {
+	setBuild(t, "v0.0.3-dev.14+abc1234", "edge")
+	if err := runChannel(nil, &out, update.Current(), "x"); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); got != "atto v0.0.3-dev.14+abc1234 (edge)\n" {
+		t.Fatalf("got %q", got)
+	}
+	if err := runChannel([]string{"nightly"}, &out, "v0.0.2", "x"); err == nil {
 		t.Fatal("unknown channel must fail")
 	}
-	if _, err := os.Stat(config.SettingsPath()); !os.IsNotExist(err) {
-		t.Fatal("a bad channel must not be saved")
+	if err := runChannel([]string{"edge", "stable"}, &out, "v0.0.2", "x"); err == nil {
+		t.Fatal("two channels must fail")
+	}
+}
+
+func TestChannelRefusesManagedBinaries(t *testing.T) {
+	t.Setenv(config.EnvDir, t.TempDir())
+	t.Setenv("GOBIN", "")
+	fakeReleases(t)
+	setBuild(t, "v0.0.2", "stable")
+	err := runChannel([]string{"edge"}, &bytes.Buffer{}, "v0.0.2", "/opt/homebrew/Cellar/atto/0.0.2/bin/atto")
+	if err == nil || !strings.Contains(err.Error(), "brew upgrade atto") {
+		t.Fatal(err)
+	}
+}
+
+func TestUpdateStaysOnBinaryChannel(t *testing.T) {
+	t.Setenv(config.EnvDir, t.TempDir())
+	t.Setenv("GOBIN", "")
+	fakeReleases(t)
+	exe := newExe(t)
+
+	// An edge binary is not pulled down to stable...
+	setBuild(t, "v0.0.3-dev.20+abc1234", "edge")
+	var out bytes.Buffer
+	if err := runUpdate(nil, &out, "v0.0.3-dev.20+abc1234", exe); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "latest edge release") {
+		t.Fatal(out.String())
+	}
+	// ...but follows edge forward.
+	out.Reset()
+	if err := runUpdate(nil, &out, "v0.0.3-dev.13+abc1234", exe); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "edge-binary" {
+		t.Fatalf("exe = %q\n%s", b, out.String())
+	}
+	// The -channel flag is gone.
+	if err := runUpdate([]string{"-channel", "edge"}, &out, "v0.0.2", exe); err == nil {
+		t.Fatal("update takes no -channel")
 	}
 }
 
 func TestUpdateCheckDoesNotInstall(t *testing.T) {
 	t.Setenv(config.EnvDir, t.TempDir())
 	fakeReleases(t)
-	exe := filepath.Join(t.TempDir(), "atto")
-	os.WriteFile(exe, []byte("old"), 0o755)
+	setBuild(t, "v0.0.1", "stable")
+	exe := newExe(t)
 	var out bytes.Buffer
 	if err := runUpdate([]string{"-check"}, &out, "v0.0.1", exe); err != nil {
 		t.Fatal(err)
