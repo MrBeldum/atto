@@ -125,3 +125,22 @@ func TestSuggestionsAboveInput(t *testing.T) {
 		t.Fatalf("the list (row %d) belongs above the input (row %d): %q", sug, in, rows)
 	}
 }
+
+func TestJumpPill(t *testing.T) {
+	a := &App{ui: tui.New(nil)}
+	p := jumpPill{a}
+	if p.Render(40) != nil {
+		t.Fatal("no pill at the bottom")
+	}
+	a.ui.ScrollBy(5)
+	got := p.Render(40)
+	if len(got) != 1 || !strings.Contains(tui.StripEscapes(got[0]), "Jump to bottom (click) ↓") {
+		t.Fatalf("pill: %q", got)
+	}
+	if text := tui.StripEscapes(got[0]); !strings.HasPrefix(text, strings.Repeat(" ", 7)) {
+		t.Fatalf("the pill is centered: %q", text)
+	}
+	if !p.Click(0) || a.ui.ScrollOffset() != 0 {
+		t.Fatal("click scrolls to the bottom")
+	}
+}

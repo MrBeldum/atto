@@ -218,9 +218,6 @@ func (a *App) renderStatus(width int) []string {
 	}
 	// Transient indicators go on their own line so custom output is untouched.
 	var flags []string
-	if off := a.ui.ScrollOffset(); off > 0 {
-		flags = append(flags, tui.FG(3, fmt.Sprintf("↓ %d more lines (scroll or PgDn)", off)))
-	}
 	if p := a.goalPill(); p != "" {
 		flags = append(flags, p)
 	}

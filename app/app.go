@@ -224,7 +224,7 @@ func (a *App) build() {
 
 	// The command list sits above the input, as in Claude Code, so the
 	// input and the status line keep their place as it opens and closes.
-	a.ui.Footer.Add(tui.Func(a.renderActivity), tui.Func(a.renderPending), tui.Func(a.renderSuggestions), tui.Func(a.renderInput), tui.Func(a.renderStatus))
+	a.ui.Footer.Add(tui.Func(a.renderActivity), tui.Func(a.renderPending), jumpPill{a}, tui.Func(a.renderSuggestions), tui.Func(a.renderInput), tui.Func(a.renderStatus))
 	a.ui.SetFocus(a.editor)
 	a.ui.OnInput = a.onInput
 	a.ui.PaddingX = 1
@@ -533,6 +533,32 @@ func (a *App) renderInput(width int) []string {
 		return append([]string{""}, a.modal.Render(width)...)
 	}
 	return a.editor.Render(width)
+}
+
+// jumpPill is the centered "Jump to bottom" pill above the input while the
+// fullscreen transcript is scrolled up (Claude Code has the same). It is a
+// footer component, so the renderer routes clicks on it here.
+type jumpPill struct{ a *App }
+
+func (p jumpPill) Render(width int) []string {
+	if p.a.modal != nil || p.a.ui.ScrollOffset() == 0 {
+		return nil
+	}
+	text, style := " Jump to bottom (click) ↓ ", tui.Dim
+	if p.a.ui.NewBelow() {
+		// Reverse video, so it reads as new rather than as a hint.
+		text = " ↓ New output · Jump to bottom "
+		style = func(s string) string { return "\x1b[7m" + s + "\x1b[27m" }
+	}
+	pad := max(0, (width-tui.VisibleWidth(text))/2)
+	return []string{strings.Repeat(" ", pad) + style(tui.Truncate(text, width, "…"))}
+}
+
+// Click scrolls to the newest output. The renderer only reports the row,
+// so the whole line is the button.
+func (p jumpPill) Click(int) bool {
+	p.a.ui.ScrollToBottom()
+	return true
 }
 
 func shortPath(p string) string {

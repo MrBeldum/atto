@@ -84,6 +84,8 @@ type TUI struct {
 	viewStart   int  // body line shown at viewTop
 	viewRows    int  // screen rows showing body
 	pinned      bool // the first body row shows the Pin line
+	footerTop   int  // first screen row of the footer
+	newBelow    bool // output arrived below the view while scrolled up
 	prevFrame   []string
 
 	// FullRedraws counts full redraws; useful for tests and debugging.
@@ -247,6 +249,10 @@ func (t *TUI) ScrollToBottom() { t.scroll = 0 }
 // ScrollOffset reports how many body lines are hidden below the viewport.
 func (t *TUI) ScrollOffset() int { return t.scroll }
 
+// NewBelow reports whether output has arrived below the view since it was
+// scrolled up; it clears when the view is back at the bottom.
+func (t *TUI) NewBelow() bool { return t.newBelow }
+
 // Redraw forces the next frame to repaint everything.
 func (t *TUI) Redraw() {
 	t.prevFrame = nil
@@ -271,6 +277,8 @@ func (t *TUI) handleScroll(data string) bool {
 			t.ScrollBy(t.viewRows / 2)
 		case btn == 0 && press && y-1 >= t.viewTop && y-1 < t.viewTop+t.viewRows:
 			t.Body.Click(t.viewStart + y - 1 - t.viewTop)
+		case btn == 0 && press && y-1 >= t.footerTop:
+			t.Footer.Click(y - 1 - t.footerTop)
 		}
 		return true // swallow all other mouse events
 	}
@@ -563,23 +571,39 @@ func (t *TUI) positionCursor(b *strings.Builder, cur *cursorPos, total int) {
 func (t *TUI) doRenderFullscreen() {
 	width, height := t.term.Size()
 	inner := t.innerWidth(width)
-	footer := t.pad(t.Footer.Render(inner))
 	body := t.pad(t.Body.Render(inner))
 
 	// Keep the view anchored while scrolled up and new output arrives.
 	if t.scroll > 0 && len(body) > t.prevBodyLen {
 		t.scroll += len(body) - t.prevBodyLen
+		t.newBelow = true
 	}
 	t.prevBodyLen = len(body)
 
-	if len(footer) > height {
-		footer = footer[len(footer)-height:]
+	// The footer may show something while scrolled up (a "jump to bottom"
+	// pill) and so change height with it; render it again if clamping the
+	// scroll to the body changed that.
+	var footer []string
+	var gap, avail, end, start int
+	for i := 0; i < 2; i++ {
+		scrolled := t.scroll > 0
+		footer = t.pad(t.Footer.Render(inner))
+		if len(footer) > height {
+			footer = footer[len(footer)-height:]
+		}
+		gap = min(t.GapY, max(0, (height-len(footer))/4))
+		avail = max(0, height-len(footer)-2*gap)
+		t.scroll = min(t.scroll, max(0, len(body)-avail))
+		if (t.scroll > 0) == scrolled {
+			break
+		}
 	}
-	gap := min(t.GapY, max(0, (height-len(footer))/4))
-	avail := max(0, height-len(footer)-2*gap)
-	t.scroll = min(t.scroll, max(0, len(body)-avail))
-	end := len(body) - t.scroll
-	start := max(0, end-avail)
+	if t.scroll == 0 {
+		t.newBelow = false
+	}
+	end = len(body) - t.scroll
+	start = max(0, end-avail)
+	t.footerTop = height - len(footer)
 
 	t.viewTop, t.viewStart, t.viewRows = gap, start, end-start
 	frame := make([]string, gap, height)
