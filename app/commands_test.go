@@ -80,3 +80,26 @@ func TestSuggestionList(t *testing.T) {
 		t.Fatal("typing reopens it")
 	}
 }
+
+func TestTuiCommand(t *testing.T) {
+	t.Setenv("ATTO_DIR", t.TempDir())
+	a := &App{ui: tui.New(nil)}
+	a.ui.Body.Add(tui.Func(func(int) []string { return nil }))
+	a.cmdTui("inline")
+	if a.ui.Mode != tui.Inline {
+		t.Fatal("/tui inline switches the renderer")
+	}
+	s, err := config.LoadSettings()
+	if err != nil || s.Renderer != "inline" {
+		t.Fatalf("saved renderer %q, %v", s.Renderer, err)
+	}
+	a.cmdTui("auto")
+	if s, _ := config.LoadSettings(); s.Renderer != "" {
+		t.Fatalf("auto clears the setting: %q", s.Renderer)
+	}
+	if a.ui.Mode != rendererMode("") {
+		t.Fatal("auto picks the default again")
+	}
+	a.cmdTui("bogus")
+	a.cmdTui("")
+}

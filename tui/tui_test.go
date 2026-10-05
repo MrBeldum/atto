@@ -293,3 +293,49 @@ func TestParseMouse(t *testing.T) {
 		t.Fatalf("parser split X10 report wrong: %q", got)
 	}
 }
+
+// logTerm records what the renderer writes, on top of the test terminal.
+type logTerm struct {
+	*vterm
+	out strings.Builder
+}
+
+func (l *logTerm) Write(s string) { l.out.WriteString(s); l.vterm.Write(s) }
+
+func TestSetMode(t *testing.T) {
+	l := &logTerm{vterm: newVterm(20, 5)}
+	ui := New(l)
+	ui.Body.Add(&lines{l: []string{"a", "b"}})
+	ui.Footer.Add(&lines{l: []string{"foot"}})
+
+	ui.SetMode(Inline) // before Start: only the mode changes
+	ui.SetMode(Fullscreen)
+	if l.out.Len() != 0 || ui.Mode != Fullscreen {
+		t.Fatalf("SetMode before Start wrote %q", l.out.String())
+	}
+
+	ui.started = true
+	ui.RenderNow()
+	l.out.Reset()
+	ui.SetMode(Inline)
+	if got := l.out.String(); got != "\x1b[?1000l\x1b[?1006l\x1b[?1049l" {
+		t.Fatalf("leaving fullscreen wrote %q", got)
+	}
+	ui.RenderNow()
+	if strings.Contains(l.out.String(), "\x1b[2J") {
+		t.Fatalf("the first inline frame cleared the screen: %q", l.out.String())
+	}
+	if !strings.Contains(l.out.String(), "foot") {
+		t.Fatalf("inline frame missing: %q", l.out.String())
+	}
+
+	l.out.Reset()
+	ui.SetMode(Fullscreen)
+	if !strings.HasPrefix(l.out.String(), "\x1b[?1049h\x1b[?1000h\x1b[?1006h") {
+		t.Fatalf("entering fullscreen wrote %q", l.out.String())
+	}
+	ui.RenderNow()
+	if got := l.screenRows(); got[len(got)-1] != "foot" {
+		t.Fatalf("fullscreen footer not pinned: %q", got)
+	}
+}

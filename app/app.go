@@ -152,7 +152,7 @@ func Run(opts Options) error {
 
 		clipboard: images.SystemClipboardImage,
 	}
-	if opts.Inline || settings.Renderer == "inline" || (settings.Renderer == "" && legacyConsole()) {
+	if opts.Inline || rendererMode(settings.Renderer) == tui.Inline {
 		a.ui.Mode = tui.Inline
 	}
 	a.escAction = settings.DoubleEscapeAction
@@ -600,3 +600,50 @@ func (a *App) pinnedPrompt(firstVisible, width int) string {
 // Terminal as the default console sets no WT_SESSION, nor does sshd). Set
 // "renderer" in settings.json to override.
 func legacyConsole() bool { return windowsBuild() > 0 && windowsBuild() < 17763 }
+
+// rendererMode is the mode the "renderer" setting asks for; empty (or
+// anything unknown) lets atto pick, see legacyConsole.
+func rendererMode(setting string) tui.Mode {
+	switch setting {
+	case "inline":
+		return tui.Inline
+	case "fullscreen":
+		return tui.Fullscreen
+	}
+	if legacyConsole() {
+		return tui.Inline
+	}
+	return tui.Fullscreen
+}
+
+// cmdTui shows or changes the renderer. The choice is saved in
+// settings.json and applied to the running screen at once.
+func (a *App) cmdTui(arg string) {
+	name := func(m tui.Mode) string {
+		if m == tui.Inline {
+			return "inline"
+		}
+		return "fullscreen"
+	}
+	if arg == "" {
+		a.notice("Renderer: %s. Choices: auto (pick for this terminal), fullscreen, inline. Usage: /tui <choice>", name(a.ui.Mode))
+		return
+	}
+	var value string
+	switch arg {
+	case "auto":
+	case "fullscreen", "inline":
+		value = arg
+	default:
+		a.notice("Unknown renderer %q. Choices: auto, fullscreen, inline.", arg)
+		return
+	}
+	// An empty value is the same as no setting: atto picks again.
+	if err := config.UpdateSettings(map[string]any{"renderer": value}); err != nil {
+		a.errorNotice(err)
+		return
+	}
+	mode := rendererMode(value)
+	a.ui.SetMode(mode)
+	a.notice("Renderer set to %s.", arg+map[bool]string{true: " (" + name(mode) + ")"}[arg == "auto"])
+}

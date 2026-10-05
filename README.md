@@ -132,6 +132,7 @@ Pastes over 1000 characters show as `[Pasted Content 1234 chars]` and are sent i
 | --- | --- |
 | `/model` | switch model mid-session |
 | `/effort` | set reasoning effort |
+| `/tui [auto\|fullscreen\|inline]` | show or change the renderer; saved to `settings.json` and applied at once |
 | `/compact` | compact the conversation now |
 | `/copy` | copy the last answer; works over SSH in terminals with OSC 52 |
 | `/context` | show what fills the context and how much is cached |

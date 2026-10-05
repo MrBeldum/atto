@@ -64,6 +64,7 @@ type TUI struct {
 	mu      sync.Mutex
 	focused Component
 	stopped bool
+	started bool
 	wake    chan struct{}
 	done    chan struct{}
 
@@ -103,6 +104,7 @@ func (t *TUI) Start() error {
 		t.term.Write("\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[2J")
 	}
 	t.term.Write("\x1b[?25l")
+	t.started = true
 	go t.loop()
 	t.RequestRender()
 	return nil
@@ -129,6 +131,31 @@ func (t *TUI) Stop() {
 	}
 	t.mu.Unlock()
 	t.term.Stop()
+}
+
+// SetMode switches between fullscreen and inline rendering while running:
+// it leaves or enters the alternate screen and mouse reporting, then makes
+// the next frame a first frame in the new mode. Call it inside Do (or from
+// an input handler). Before Start it only sets Mode.
+func (t *TUI) SetMode(m Mode) {
+	if t.Mode == m {
+		return
+	}
+	t.Mode = m
+	if !t.started {
+		return
+	}
+	if m == Fullscreen {
+		t.term.Write("\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[2J")
+	} else {
+		// The main screen returns with the cursor where it was left; the
+		// first inline frame is drawn from there.
+		t.term.Write("\x1b[?1000l\x1b[?1006l\x1b[?1049l")
+	}
+	t.prevFrame, t.prevLines = nil, nil
+	t.prevWidth, t.prevHeight = 0, 0
+	t.hwCursorRow, t.prevViewportTop, t.maxLinesRender = 0, 0, 0
+	t.scroll, t.prevBodyLen = 0, 0
 }
 
 // Do runs fn under the TUI lock and schedules a render.
