@@ -84,7 +84,7 @@ func (t *ProcessTerminal) Stop() {
 	}
 	close(t.done)
 	t.wg.Wait()
-	t.Write("\x1b[?2004l\x1b[?25h")
+	t.Write("\x1b[0m\x1b[?2004l\x1b[?25h") // plain text, no paste mode, cursor on
 	_ = term.Restore(int(t.in.Fd()), t.oldState)
 	restoreVT(t.console)
 	t.oldState = nil
