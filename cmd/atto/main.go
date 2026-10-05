@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"sort"
+	"strings"
 
 	"github.com/sebastianrcnt/atto/app"
 	"github.com/sebastianrcnt/atto/cli"
@@ -20,6 +23,7 @@ const usage = `atto — a terminal coding harness
 
 usage:
   atto [flags]                      interactive session
+  atto [flags] "prompt"             interactive session, starting with this message
   atto -p [flags] "prompt"          run one prompt and print the result
   cat file | atto -p "explain"      stdin is appended to the prompt
   atto models [refresh]             list available models
@@ -56,32 +60,108 @@ func refuseNested(cmd string) {
 	os.Exit(2)
 }
 
+func subcommandNames() []string {
+	var names []string
+	for k := range subcommands() {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// subcommands maps each subcommand to its implementation.
+func subcommands() map[string]func([]string, io.Writer) error {
+	return map[string]func([]string, io.Writer) error{
+		"history":    cli.RunHistory,
+		"auth":       cli.RunAuth,
+		"models":     cli.RunModels,
+		"job":        cli.RunJob,
+		"monitor":    cli.RunMonitor,
+		"timer":      cli.RunTimer,
+		"sleep":      cli.RunSleep,
+		"goal":       cli.RunGoal,
+		"update":     cli.RunUpdate,
+		"_supervise": cli.RunSupervise,
+		"login":      cli.RunLogin,
+		"logout":     cli.RunLogout,
+		"serve": func(args []string, out io.Writer) error {
+			provider.UserAgent = "github.com/sebastianrcnt/atto/" + update.Current()
+			return server.RunHTTP(update.Current(), args, out)
+		},
+		"app-server": func([]string, io.Writer) error {
+			provider.UserAgent = "github.com/sebastianrcnt/atto/" + update.Current()
+			return server.RunStdio(update.Current())
+		},
+	}
+}
+
+// unknownCommand reports whether a lone argument is a mistyped subcommand
+// rather than a prompt, and what to print for it. A prompt is more than one
+// word or contains a space; one bare word is far likelier a typo.
+func unknownCommand(positional []string, known []string) (msg string, ok bool) {
+	if len(positional) != 1 || strings.ContainsAny(positional[0], " \t\n") {
+		return "", false
+	}
+	w := positional[0]
+	if sug := closestCommand(w, known); sug != "" {
+		return fmt.Sprintf("atto: unknown command %q. Did you mean %q?", w, sug), true
+	}
+	return fmt.Sprintf("atto: unknown command %q (see atto -h)", w), true
+}
+
+// commandAliases are common synonyms too far from the real name for edit
+// distance to catch ("upgrade" is 3 edits from "update").
+var commandAliases = map[string]string{"upgrade": "update"}
+
+// closestCommand returns the known name within edit distance 2 of w, or "".
+// Hidden names (leading underscore) are never suggested.
+func closestCommand(w string, known []string) string {
+	if to := commandAliases[w]; to != "" && slices.Contains(known, to) {
+		return to
+	}
+	best, bd := "", 3
+	for _, k := range known {
+		if strings.HasPrefix(k, "_") {
+			continue
+		}
+		if d := editDistance(w, k); d < bd || (d == bd && k < best) {
+			best, bd = k, d
+		}
+	}
+	return best
+}
+
+// editDistance is the Levenshtein distance between a and b.
+func editDistance(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	prev := make([]int, len(rb)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ra); i++ {
+		cur := make([]int, len(rb)+1)
+		cur[0] = i
+		for j := 1; j <= len(rb); j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(rb)]
+}
+
+// initialPrompt joins positional words into the first message, so
+// atto fix the build and atto "fix the build" start the same session.
+func initialPrompt(positional []string) string { return strings.Join(positional, " ") }
+
 func main() {
 	update.Cleanup()
 	if len(os.Args) > 1 {
 		refuseNested(os.Args[1])
-		sub := map[string]func([]string, io.Writer) error{
-			"history":    cli.RunHistory,
-			"auth":       cli.RunAuth,
-			"models":     cli.RunModels,
-			"job":        cli.RunJob,
-			"monitor":    cli.RunMonitor,
-			"timer":      cli.RunTimer,
-			"sleep":      cli.RunSleep,
-			"goal":       cli.RunGoal,
-			"update":     cli.RunUpdate,
-			"_supervise": cli.RunSupervise,
-			"login":      cli.RunLogin,
-			"logout":     cli.RunLogout,
-			"serve": func(args []string, out io.Writer) error {
-				provider.UserAgent = "github.com/sebastianrcnt/atto/" + update.Current()
-				return server.RunHTTP(update.Current(), args, out)
-			},
-			"app-server": func([]string, io.Writer) error {
-				provider.UserAgent = "github.com/sebastianrcnt/atto/" + update.Current()
-				return server.RunStdio(update.Current())
-			},
-		}[os.Args[1]]
+		sub := subcommands()[os.Args[1]]
 		if sub != nil {
 			if err := sub(os.Args[2:], os.Stdout); err != nil {
 				fmt.Fprintln(os.Stderr, err)
@@ -152,11 +232,11 @@ func main() {
 			})
 		}
 	} else {
-		if len(positional) > 0 {
-			fmt.Fprintln(os.Stderr, "atto: a prompt argument needs -p (print mode)")
+		if msg, ok := unknownCommand(positional, subcommandNames()); ok {
+			fmt.Fprintln(os.Stderr, msg)
 			os.Exit(2)
 		}
-		err = app.Run(app.Options{Inline: *inline, Continue: *cont, Resume: *resume, Model: *model, Session: *sessionID, Effort: *effort})
+		err = app.Run(app.Options{Prompt: initialPrompt(positional), Inline: *inline, Continue: *cont, Resume: *resume, Model: *model, Session: *sessionID, Effort: *effort})
 	}
 	if errors.Is(err, cli.ErrPrintFailed) {
 		os.Exit(1)

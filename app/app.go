@@ -34,6 +34,7 @@ type Options struct {
 	Model    string // provider/id to use instead of the default
 	Effort   string // effort to use instead of the default
 	Session  string // resume the session with this ID
+	Prompt   string // first message, submitted once the UI is up (atto "fix the build")
 }
 
 // modal is a picker shown in place of the editor.
@@ -174,6 +175,10 @@ func Run(opts Options) error {
 	if err := a.ui.Start(); err != nil {
 		return err
 	}
+	if opts.Prompt != "" {
+		// As if typed: goes through submit, so a leading "/" is a command too.
+		a.ui.Do(func() { a.submit(opts.Prompt, nil) })
+	}
 	go a.watchInbox()
 	if settings.UpdateCheck == nil || *settings.UpdateCheck {
 		go a.checkUpdate()
@@ -297,6 +302,13 @@ func (a *App) onInput(data string) bool {
 	case "ctrl+t":
 		a.details.on = !a.details.on
 		a.details.gen++
+		// Confirm in the transcript rather than a status-line flag, which
+		// would nag for as long as details stay on.
+		if a.details.on {
+			a.notice("Details on")
+		} else {
+			a.notice("Details off")
+		}
 		return true
 	case "escape":
 		if a.busy {

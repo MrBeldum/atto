@@ -26,11 +26,11 @@ func RunUpdate(args []string, out io.Writer) error {
 	}
 	cur := update.Current()
 	if !update.Newer(tag, cur) && cur != "dev" {
-		fmt.Fprintf(out, "atto %s is the latest release.\n", cur)
+		fmt.Fprintln(out, latestLine(cur))
 		return nil
 	}
 	if *checkOnly {
-		fmt.Fprintf(out, "atto %s is available (you have %s). Update with: atto update\n", tag, cur)
+		fmt.Fprintln(out, availableLine(cur, tag))
 		return nil
 	}
 	exe, err := os.Executable()
@@ -50,6 +50,18 @@ func RunUpdate(args []string, out io.Writer) error {
 		}
 		return err
 	}
-	fmt.Fprintf(out, "atto %s installed. Running sessions keep the old version until restarted.\n", tag)
+	fmt.Fprintln(out, updatedLine(cur, tag))
+	fmt.Fprintln(out, "Running sessions keep the old version until restarted.")
 	return nil
 }
+
+// The three outcomes of an update check, kept as functions so the wording is
+// tested without a network. cur is "dev" for builds without a release tag.
+
+func latestLine(cur string) string { return fmt.Sprintf("atto %s (latest)", cur) }
+
+func availableLine(cur, tag string) string {
+	return fmt.Sprintf("atto %s \u00b7 %s is available (atto update)", cur, tag)
+}
+
+func updatedLine(cur, tag string) string { return fmt.Sprintf("Updated atto %s \u2192 %s", cur, tag) }
