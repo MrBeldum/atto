@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"github.com/sebastianrcnt/atto/core"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -41,8 +42,7 @@ func (a *App) watchInbox() {
 		if s == "" {
 			continue
 		}
-		events.FireDue(s, time.Now())
-		evs := events.Drain(s)
+		evs := core.Poll(s)
 		nJobs, nTimers := jobs.ActiveCount(s), len(events.Timers(s))
 		a.ui.Do(func() {
 			if s != a.sess.ID {

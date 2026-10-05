@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -92,16 +93,7 @@ type Model struct {
 }
 
 // Images reports whether the model accepts image input.
-func (m Model) Images() bool { return contains(m.Input, "image") }
-
-func contains(xs []string, s string) bool {
-	for _, x := range xs {
-		if x == s {
-			return true
-		}
-	}
-	return false
-}
+func (m Model) Images() bool { return slices.Contains(m.Input, "image") }
 
 func (m Model) DisplayName() string {
 	if m.Name != "" {

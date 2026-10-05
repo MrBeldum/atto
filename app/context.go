@@ -70,11 +70,11 @@ func (a *App) cmdContext(arg string) {
 	}
 	m := a.model()
 	var lines []string
-	head := fmt.Sprintf("%s · %s tokens", tui.Bold("Context"), fmtTokens(a.ctxTokens))
+	head := fmt.Sprintf("%s · %s tokens", tui.Bold("Context"), tui.FormatTokens(a.ctxTokens))
 	if cw := m.Model.ContextWindow; cw > 0 {
-		head += fmt.Sprintf(" of %s (%d%%)", fmtTokens(cw), pct(a.ctxTokens, cw))
+		head += fmt.Sprintf(" of %s (%d%%)", tui.FormatTokens(cw), pct(a.ctxTokens, cw))
 		if limit := agent.AutoCompactLimit(m.Model); limit > 0 {
-			head += tui.Dim(" · auto-compacts at " + fmtTokens(limit))
+			head += tui.Dim(" · auto-compacts at " + tui.FormatTokens(limit))
 		}
 	}
 	lines = append(lines, head)
@@ -97,7 +97,7 @@ func (a *App) cmdContext(arg string) {
 				continue
 			}
 			p := pct(r.chars, total)
-			lines = append(lines, fmt.Sprintf("  %-15s %s %6s %3d%%", r.name, contextBar(p, 20), "~"+fmtTokens(r.chars/4), p))
+			lines = append(lines, fmt.Sprintf("  %-15s %s %6s %3d%%", r.name, contextBar(p, 20), "~"+tui.FormatTokens(r.chars/4), p))
 		}
 		lines = append(lines, tui.Dim(fmt.Sprintf("  %d messages · sizes estimated at 4 characters per token", b.Messages)))
 	}
@@ -105,9 +105,9 @@ func (a *App) cmdContext(arg string) {
 	u := a.usage
 	if u.last.PromptTokens > 0 {
 		lines = append(lines, "", fmt.Sprintf("Last request   %s input · %s cached (%d%%) · %s output",
-			fmtTokens(u.last.PromptTokens), fmtTokens(u.last.CachedTokens), pct(u.last.CachedTokens, u.last.PromptTokens), fmtTokens(u.last.CompletionTokens)))
+			tui.FormatTokens(u.last.PromptTokens), tui.FormatTokens(u.last.CachedTokens), pct(u.last.CachedTokens, u.last.PromptTokens), tui.FormatTokens(u.last.CompletionTokens)))
 		lines = append(lines, fmt.Sprintf("This session   %s input · %s cached (%d%%) · %s output",
-			fmtTokens(u.input), fmtTokens(u.cached), pct(u.cached, u.input), fmtTokens(u.output)))
+			tui.FormatTokens(u.input), tui.FormatTokens(u.cached), pct(u.cached, u.input), tui.FormatTokens(u.output)))
 	}
 	lines = append(lines, "", tui.Dim("/context system shows the system prompt · /request saves the raw last request"))
 	a.add(&contextBlock{lines: lines})

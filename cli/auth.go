@@ -1,9 +1,10 @@
-package app
+package cli
 
 import (
 	"bufio"
 	"context"
 	"fmt"
+	"github.com/sebastianrcnt/atto/tui"
 	"io"
 	"os"
 	"strings"
@@ -70,7 +71,7 @@ func RunModels(args []string, out io.Writer) error {
 			key = "-"
 		}
 		fmt.Fprintf(tw, "%s/%s\t%s\t%s\t%s\t%s\n", r.ProviderName, r.Model.ID, r.Model.DisplayName(),
-			fmtTokens(r.Model.ContextWindow), strings.Join(r.Model.Levels(), ","), key)
+			tui.FormatTokens(r.Model.ContextWindow), strings.Join(r.Model.Levels(), ","), key)
 	}
 	return tw.Flush()
 }

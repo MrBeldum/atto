@@ -79,7 +79,7 @@ func (a *App) afterRun(err error) {
 	if a.runKind == "turn" && err == nil {
 		took := "<1s"
 		if d := time.Since(a.runStart); d >= time.Second {
-			took = fmtDur(d.Truncate(time.Second))
+			took = tui.FormatDuration(d.Truncate(time.Second))
 		}
 		a.notice("Worked for %s • %s", took, time.Now().Format("3:04 PM"))
 	}

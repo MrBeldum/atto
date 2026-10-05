@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/sebastianrcnt/atto/core"
 	"strings"
 	"time"
 
@@ -233,44 +234,33 @@ func (a *App) cmdResume(string) {
 // resume loads a session file, restores the agent and redraws the
 // transcript, then keeps appending to the same file.
 func (a *App) resume(path string) {
-	h, entries, err := session.Load(path)
+	saved, file, err := core.Open(path)
 	if err != nil {
 		a.errorNotice(err)
 		return
 	}
+	h := saved.Header
 	a.leaveSession()
 	a.reset()
 	a.sess.Close()
-	a.sess = session.Resume(path, h)
-	a.sess.SetLeaf(session.Leaf(entries))
-	a.agent.Record = a.sess.Append
-	a.agent.SetStart(h.Time) // same system prompt as before: keeps the prefix cache
-	a.agent.SetSession(h.ID, sessionEnv(h.ID))
-	a.hooks.SetSession(h.ID, path)
+	a.sess = file
+	core.Bind(a.agent, a.hooks, a.sess, h.Time, true) // the session's own date keeps the prefix cache
 	a.setLiveSession(h.ID)
 	a.sessionStartHook("resume")
-	branch := session.Active(entries)
+	branch := saved.Branch()
 	a.agent.Restore(branch)
 	a.ctxTokens = a.agent.ContextTokens()
-	a.usage.fromEntries(entries)
-	a.recModel, a.recEffort, a.sessName = "", "", ""
-
-	// Restore the name, model and effort last used in the session. They
-	// are session-wide: the latest choice wins whichever branch it was on.
-	for _, e := range entries {
-		switch e.Type {
-		case session.TypeName:
-			a.sessName = e.Name
-		case session.TypeModel:
-			if ref, ok := a.models.Find(e.Provider, e.Model); ok {
-				a.agent.SetModel(ref)
-				a.recModel = e.Provider + "/" + e.Model
-			}
-		case session.TypeEffort:
-			a.agent.SetEffort(e.Effort)
-			a.recEffort = e.Effort
-		}
+	a.usage.fromEntries(saved.Entries)
+	a.recModel, a.recEffort, a.sessName = "", "", saved.Name
+	if ref, ok := a.models.Find("", saved.Model); ok {
+		a.agent.SetModel(ref)
+		a.recModel = saved.Model
 	}
+	if saved.Effort != "" {
+		a.agent.SetEffort(saved.Effort)
+		a.recEffort = saved.Effort
+	}
+	entries := saved.Entries
 	a.replay(branch)
 	a.restoreGoal(entries)
 	if h.Cwd != a.cwd {

@@ -253,7 +253,7 @@ func (a *App) builtinStatus(width int) string {
 	}
 	if cw := m.Model.ContextWindow; cw > 0 {
 		pct := a.ctxTokens * 100 / cw
-		bar := contextBar(pct, 10) + fmt.Sprintf(" %d%% %s/%s", pct, fmtTokens(a.ctxTokens), fmtTokens(cw))
+		bar := contextBar(pct, 10) + fmt.Sprintf(" %d%% %s/%s", pct, tui.FormatTokens(a.ctxTokens), tui.FormatTokens(cw))
 		if limit := agent.AutoCompactLimit(m.Model); limit > 0 && a.ctxTokens*100/limit >= 80 {
 			bar = tui.FG(3, bar) // nearing auto-compaction
 		} else {

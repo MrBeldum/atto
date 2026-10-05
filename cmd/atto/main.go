@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/sebastianrcnt/atto/app"
+	"github.com/sebastianrcnt/atto/cli"
 	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/server"
@@ -60,25 +61,25 @@ func main() {
 	if len(os.Args) > 1 {
 		refuseNested(os.Args[1])
 		sub := map[string]func([]string, io.Writer) error{
-			"history":    app.RunHistory,
-			"auth":       app.RunAuth,
-			"models":     app.RunModels,
-			"job":        app.RunJob,
-			"monitor":    app.RunMonitor,
-			"timer":      app.RunTimer,
-			"sleep":      app.RunSleep,
-			"goal":       app.RunGoal,
-			"update":     app.RunUpdate,
-			"_supervise": app.RunSupervise,
-			"login":      app.RunLogin,
-			"logout":     app.RunLogout,
+			"history":    cli.RunHistory,
+			"auth":       cli.RunAuth,
+			"models":     cli.RunModels,
+			"job":        cli.RunJob,
+			"monitor":    cli.RunMonitor,
+			"timer":      cli.RunTimer,
+			"sleep":      cli.RunSleep,
+			"goal":       cli.RunGoal,
+			"update":     cli.RunUpdate,
+			"_supervise": cli.RunSupervise,
+			"login":      cli.RunLogin,
+			"logout":     cli.RunLogout,
 			"serve": func(args []string, out io.Writer) error {
-				provider.UserAgent = "github.com/sebastianrcnt/atto/" + app.Version
-				return server.RunHTTP(app.Version, args, out)
+				provider.UserAgent = "github.com/sebastianrcnt/atto/" + update.Current()
+				return server.RunHTTP(update.Current(), args, out)
 			},
 			"app-server": func([]string, io.Writer) error {
-				provider.UserAgent = "github.com/sebastianrcnt/atto/" + app.Version
-				return server.RunStdio(app.Version)
+				provider.UserAgent = "github.com/sebastianrcnt/atto/" + update.Current()
+				return server.RunStdio(update.Current())
 			},
 		}[os.Args[1]]
 		if sub != nil {
@@ -125,10 +126,10 @@ func main() {
 	}
 
 	if *showVersion {
-		fmt.Println("atto", app.Version)
+		fmt.Println("atto", update.Current())
 		return
 	}
-	provider.UserAgent = "github.com/sebastianrcnt/atto/" + app.Version
+	provider.UserAgent = "github.com/sebastianrcnt/atto/" + update.Current()
 	refuseNested("")
 
 	var err error
@@ -141,10 +142,10 @@ func main() {
 		}
 		var prompt string
 		if *goalObj == "" || len(positional) > 0 {
-			prompt, err = app.ReadPromptInput(positional) // a goal needs no prompt
+			prompt, err = cli.ReadPromptInput(positional) // a goal needs no prompt
 		}
 		if err == nil {
-			err = app.RunPrint(app.PrintOptions{
+			err = cli.RunPrint(cli.PrintOptions{
 				Prompt: prompt, Model: *model, Effort: *effort, Format: *format, Partial: *partial,
 				Verbose: *verbose, MaxSteps: *maxSteps, Continue: *cont, Resume: *sessionID, NoSave: *noSave,
 				Goal: *goalObj, GoalBudget: *goalBudget,
@@ -157,7 +158,7 @@ func main() {
 		}
 		err = app.Run(app.Options{Inline: *inline, Continue: *cont, Resume: *resume, Model: *model, Session: *sessionID, Effort: *effort})
 	}
-	if errors.Is(err, app.ErrPrintFailed) {
+	if errors.Is(err, cli.ErrPrintFailed) {
 		os.Exit(1)
 	}
 	if err != nil {

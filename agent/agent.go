@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -234,7 +235,7 @@ func (a *Agent) SetModel(m config.ModelRef) {
 			OnRequest:      onRequest,
 		}
 	}
-	if lv := m.Model.Levels(); len(lv) > 0 && !contains(lv, a.effort) {
+	if lv := m.Model.Levels(); len(lv) > 0 && !slices.Contains(lv, a.effort) {
 		a.effort = lv[len(lv)/2]
 	}
 }
@@ -318,15 +319,6 @@ func AutoCompactLimit(m config.Model) int {
 		limit = min(limit, m.ContextWindow-m.MaxTokens)
 	}
 	return max(limit, 0)
-}
-
-func contains(xs []string, s string) bool {
-	for _, x := range xs {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 // Reset clears the conversation.

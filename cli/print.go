@@ -1,10 +1,12 @@
-package app
+package cli
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/sebastianrcnt/atto/core"
+	"github.com/sebastianrcnt/atto/tui"
 	"io"
 	"os"
 	"os/signal"
@@ -15,10 +17,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/sebastianrcnt/atto/agent"
-	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/goal"
-	"github.com/sebastianrcnt/atto/hooks"
-	"github.com/sebastianrcnt/atto/jobs"
 	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/session"
 )
@@ -130,14 +129,7 @@ func readStdin(r io.Reader, wait time.Duration) (string, error) {
 // RunPrint runs one prompt without the TUI. Assistant text goes to stdout;
 // in text mode tool activity goes to stderr with -v.
 func RunPrint(o PrintOptions) error {
-	if err := config.Ensure(); err != nil {
-		return err
-	}
-	settings, err := config.LoadSettings()
-	if err != nil {
-		return err
-	}
-	models, err := config.LoadModels()
+	settings, models, err := core.Load()
 	if err != nil {
 		return err
 	}
@@ -146,10 +138,10 @@ func RunPrint(o PrintOptions) error {
 		return err
 	}
 
-	// Session: new, latest (-c) or by ID (--resume).
+	// Session: new, latest (-c) or by ID (-session).
+	var saved core.Saved
 	var sess *session.Writer
-	var entries []session.Entry
-	var start time.Time
+	start, source := time.Now(), "startup"
 	switch {
 	case o.Resume != "" || o.Continue:
 		path := ""
@@ -162,67 +154,49 @@ func RunPrint(o PrintOptions) error {
 		} else {
 			return fmt.Errorf("no previous session in this directory")
 		}
-		var h session.Entry
-		if h, entries, err = session.Load(path); err != nil {
+		if saved, sess, err = core.Open(path); err != nil {
 			return err
 		}
-		sess, start = session.Resume(path, h), h.Time
-		sess.SetLeaf(session.Leaf(entries))
+		start, source = saved.Header.Time, "resume"
 	default:
-		sess, start = session.New(cwd), time.Now()
+		sess = session.New(cwd)
 	}
 	defer sess.Close()
 
-	// Model and effort: flags, else the session's last, else defaults.
-	// The model and effort last used in the session, unless given.
-	modelID, effort := o.Model, o.Effort
-	for _, e := range entries {
-		if e.Type == session.TypeModel && o.Model == "" {
-			modelID = e.Provider + "/" + e.Model
-		}
-		if e.Type == session.TypeEffort && o.Effort == "" {
-			effort = e.Effort
+	// Model and effort: flags, else what the session last used, else the
+	// defaults.
+	modelID := o.Model
+	if modelID == "" {
+		if _, ok := models.Find("", saved.Model); ok {
+			modelID = saved.Model
 		}
 	}
-	model, ok := pickModel(models, settings, modelID)
-	if !ok && o.Model != "" {
-		return fmt.Errorf("unknown model %q (see: atto models)", o.Model)
-	}
-	if !ok {
-		all := models.List()
-		if len(all) == 0 {
-			return fmt.Errorf("no models configured; add a provider to %s", config.ModelsPath())
-		}
-		model = all[0]
-	}
-	if effort == "" {
-		effort = settings.DefaultEffort
-	}
-	if effort == "" {
-		effort = "medium"
-	}
-	if lv := model.Model.Levels(); len(lv) > 0 && !contains(lv, effort) {
-		return fmt.Errorf("%s has no effort %q (levels: %s)", model.Model.ID, effort, strings.Join(lv, ", "))
-	}
-
-	ag := agent.New(model, effort, cwd)
-	ag.SetStart(start)
-	ag.SetSession(sess.ID, sessionEnv(sess.ID))
-	ag.MaxSteps = o.MaxSteps
-	hookCfg, err := config.LoadHooks(cwd)
+	model, err := core.PickModel(models, settings, modelID)
 	if err != nil {
 		return err
 	}
-	if hr := hooks.New(hookCfg, cwd); hr != nil {
-		hr.SetSession(sess.ID, sess.Path)
-		ag.Hooks = hr
-		for _, n := range hr.SessionStart(context.Background(), "startup") {
+	effort := o.Effort
+	if effort == "" {
+		effort = saved.Effort
+	}
+	effort = core.Effort(settings, effort)
+	if err := core.CheckEffort(model, effort); err != nil {
+		return err
+	}
+
+	ag, hk, err := core.NewAgent(cwd, model, effort)
+	if err != nil {
+		return err
+	}
+	ag.MaxSteps = o.MaxSteps
+	core.Bind(ag, hk, sess, start, !o.NoSave)
+	if hk != nil {
+		for _, n := range hk.SessionStart(context.Background(), source) {
 			fmt.Fprintln(os.Stderr, n)
 		}
 	}
-	ag.Restore(session.Active(entries))
+	ag.Restore(saved.Branch())
 	if !o.NoSave {
-		ag.Record = sess.Append
 		sess.Append(session.Entry{Type: session.TypeModel, Provider: model.ProviderName, Model: model.Model.ID})
 		sess.Append(session.Entry{Type: session.TypeEffort, Effort: ag.Effort()})
 	}
@@ -248,7 +222,6 @@ func RunPrint(o PrintOptions) error {
 		if err := goal.Save(sess.ID, g); err != nil {
 			return err
 		}
-		defer goal.Clear(sess.ID)
 	}
 
 	began := time.Now()
@@ -310,7 +283,7 @@ func RunPrint(o PrintOptions) error {
 			runErr = fmt.Errorf("goal %s: %s", g.Status, g.Note)
 		}
 	}
-	if n := jobs.KillAll(sess.ID); n > 0 { // jobs end with the run
+	if n := core.Leave(sess.ID); n > 0 { // jobs end with the run
 		fmt.Fprintf(os.Stderr, "atto: stopped %d background job(s)\n", n)
 	}
 	p.flushStep()
@@ -340,15 +313,6 @@ func RunPrint(o PrintOptions) error {
 		return ErrPrintFailed
 	}
 	return nil
-}
-
-func contains(xs []string, s string) bool {
-	for _, x := range xs {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 // printer renders agent events for one output format.
@@ -410,7 +374,7 @@ func (p *printer) event(ev any, res *printResult) {
 		p.flushStep()
 		p.emit(map[string]any{"type": "tool_use", "id": e.ID, "description": e.Args.Description, "command": e.Args.Command})
 		if p.verbose && (p.format == "" || p.format == "text") {
-			fmt.Fprintf(p.errOut, "\n● %s  $ %s\n", e.Args.Description, firstLine(e.Args.Command))
+			fmt.Fprintf(p.errOut, "\n● %s  $ %s\n", e.Args.Description, tui.FirstLine(e.Args.Command))
 		}
 	case agent.ToolEnd:
 		r := e.Result
@@ -428,7 +392,7 @@ func (p *printer) event(ev any, res *printResult) {
 			if r.TimedOut {
 				status = "timed out"
 			}
-			fmt.Fprintf(p.errOut, "  └ %s · %s\n", status, fmtDur(r.Duration))
+			fmt.Fprintf(p.errOut, "  └ %s · %s\n", status, tui.FormatDuration(r.Duration))
 		}
 	case agent.StepEnd:
 		p.flushStep()
@@ -448,21 +412,4 @@ func addUsage(res *printResult, u provider.Usage) {
 	res.Usage.InputTokens += u.PromptTokens
 	res.Usage.CachedInputTokens += u.CachedTokens
 	res.Usage.OutputTokens += u.CompletionTokens
-}
-
-func firstLine(s string) string {
-	for i, c := range s {
-		if c == '\n' {
-			return s[:i] + " …"
-		}
-	}
-	return s
-}
-
-// pickModel resolves -m (provider/id or id), else the default model.
-func pickModel(models config.ModelsFile, settings config.Settings, modelID string) (config.ModelRef, bool) {
-	if modelID != "" {
-		return models.Find("", modelID)
-	}
-	return models.Find(settings.DefaultProvider, settings.DefaultModel)
 }

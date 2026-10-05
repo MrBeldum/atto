@@ -223,7 +223,7 @@ func (a *App) cmdGoal(arg string) {
 			a.notice("Replaced the previous goal.")
 		}
 		a.saveGoal(ng)
-		a.add(&eventBlock{title: "◎ Goal set: " + firstLine(ng.Objective)})
+		a.add(&eventBlock{title: "◎ Goal set: " + tui.FirstLine(ng.Objective)})
 		a.continueGoal() // starts now if idle, else after the current turn
 	}
 }

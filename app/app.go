@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -15,11 +14,10 @@ import (
 
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/core"
 	"github.com/sebastianrcnt/atto/events"
-	"github.com/sebastianrcnt/atto/goal"
 	"github.com/sebastianrcnt/atto/hooks"
 	"github.com/sebastianrcnt/atto/images"
-	"github.com/sebastianrcnt/atto/jobs"
 	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/session"
 	"github.com/sebastianrcnt/atto/tui"
@@ -115,36 +113,19 @@ type App struct {
 }
 
 func Run(opts Options) error {
-	if err := config.Ensure(); err != nil {
+	settings, models, err := core.Load()
+	if err != nil {
 		return err
 	}
-	settings, err := config.LoadSettings()
+	model, err := core.PickModel(models, settings, opts.Model)
 	if err != nil {
-		return fmt.Errorf("%s: %w", config.SettingsPath(), err)
-	}
-	models, err := config.LoadModels()
-	if err != nil {
-		return fmt.Errorf("%s: %w", config.ModelsPath(), err)
-	}
-	all := models.List()
-	if len(all) == 0 {
-		return fmt.Errorf("no models configured; add a provider to %s", config.ModelsPath())
-	}
-	model, ok := pickModel(models, settings, opts.Model)
-	if !ok && opts.Model != "" {
-		return fmt.Errorf("unknown model %q (see: atto models)", opts.Model)
-	}
-	if !ok {
-		model = all[0]
-	}
-	effort := opts.Effort
-	if effort == "" {
-		effort = settings.DefaultEffort
-	}
-	if effort == "" {
-		effort = "medium"
+		return err
 	}
 	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	ag, hk, err := core.NewAgent(cwd, model, core.Effort(settings, opts.Effort))
 	if err != nil {
 		return err
 	}
@@ -152,7 +133,8 @@ func Run(opts Options) error {
 	a := &App{
 		ui:     tui.New(tui.NewProcessTerminal()),
 		models: models,
-		agent:  agent.New(model, effort, cwd),
+		agent:  ag,
+		hooks:  hk,
 		tools:  map[string]*toolBlock{},
 		cwd:    cwd,
 		quit:   make(chan struct{}),
@@ -161,13 +143,6 @@ func Run(opts Options) error {
 	}
 	if opts.Inline || settings.Renderer == "inline" || (settings.Renderer == "" && legacyConsole()) {
 		a.ui.Mode = tui.Inline
-	}
-	hookCfg, err := config.LoadHooks(cwd)
-	if err != nil {
-		return err
-	}
-	if a.hooks = hooks.New(hookCfg, cwd); a.hooks != nil {
-		a.agent.Hooks = a.hooks
 	}
 	a.escAction = settings.DoubleEscapeAction
 	a.build()
@@ -211,9 +186,7 @@ func Run(opts Options) error {
 	})
 	a.ui.Stop()
 	a.sess.Close()
-	_ = goal.Clear(a.sess.ID) // the session file keeps the goal's snapshot
-	// Like codex, background jobs end with the session that started them.
-	if n := jobs.KillAll(a.sess.ID); n > 0 {
+	if n := core.Leave(a.sess.ID); n > 0 {
 		fmt.Printf("atto: stopped %d background job(s)\n", n)
 	}
 	return nil
@@ -240,8 +213,7 @@ func (a *App) leaveSession() {
 	if a.sess == nil {
 		return
 	}
-	_ = goal.Clear(a.sess.ID) // the session file keeps the goal's snapshot
-	if n := jobs.KillAll(a.sess.ID); n > 0 {
+	if n := core.Leave(a.sess.ID); n > 0 {
 		a.notice("Stopped %d background job(s) of the previous conversation.", n)
 	}
 	a.jobCount, a.timerCount, a.pendingEvents = 0, 0, nil
@@ -252,10 +224,7 @@ func (a *App) newSession() {
 	a.leaveSession()
 	a.sess.Close()
 	a.sess = session.New(a.cwd)
-	a.agent.Record = a.sess.Append
-	a.agent.SetStart(time.Now())
-	a.agent.SetSession(a.sess.ID, sessionEnv(a.sess.ID))
-	a.hooks.SetSession(a.sess.ID, a.sess.Path)
+	core.Bind(a.agent, a.hooks, a.sess, time.Now(), true)
 	a.setLiveSession(a.sess.ID)
 	a.goal = goalState{}
 	a.recModel, a.recEffort, a.sessName = "", "", ""
@@ -275,16 +244,6 @@ func (a *App) sessionStartHook(source string) {
 			}
 		})
 	}()
-}
-
-// sessionEnv lets commands the agent runs find this session ("atto history")
-// and the atto binary itself.
-func sessionEnv(id string) []string {
-	env := []string{"ATTO_SESSION_ID=" + id, config.EnvAgent + "=1"}
-	if exe, err := os.Executable(); err == nil {
-		env = append(env, "PATH="+filepath.Dir(exe)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	}
-	return env
 }
 
 func (a *App) model() config.ModelRef {
@@ -623,7 +582,7 @@ func (a *App) renderActivity(width int) []string {
 	}
 	el := time.Since(a.runStart)
 	frame := spinnerFrames[int(el/(80*time.Millisecond))%len(spinnerFrames)]
-	line := tui.FG(6, frame) + " " + a.activity + "…" + tui.Dim("  "+fmtDur(el.Truncate(time.Second))+" · esc to interrupt")
+	line := tui.FG(6, frame) + " " + a.activity + "…" + tui.Dim("  "+tui.FormatDuration(el.Truncate(time.Second))+" · esc to interrupt")
 	return []string{"", tui.Truncate(line, width, "…")}
 }
 

@@ -191,7 +191,7 @@ func (a *App) cmdModel(arg string) {
 			detail += " (no key: atto auth set " + r.ProviderName + ")"
 		}
 		if r.Model.ContextWindow > 0 {
-			detail += " · " + fmtTokens(r.Model.ContextWindow) + " ctx"
+			detail += " · " + tui.FormatTokens(r.Model.ContextWindow) + " ctx"
 		}
 		p.Items = append(p.Items, tui.SelectItem{Label: r.Model.DisplayName(), Detail: detail, Value: r.ProviderName + "/" + r.Model.ID})
 		if r.ProviderName == cur.ProviderName && r.Model.ID == cur.Model.ID {

@@ -12,9 +12,9 @@ import (
 
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/core"
 	"github.com/sebastianrcnt/atto/events"
 	"github.com/sebastianrcnt/atto/hooks"
-	"github.com/sebastianrcnt/atto/jobs"
 	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/session"
 )
@@ -55,8 +55,7 @@ func (s *Server) watchInbox() {
 		}
 		s.mu.Unlock()
 		for _, t := range threads {
-			events.FireDue(t.id, time.Now())
-			evs := events.Drain(t.id)
+			evs := core.Poll(t.id)
 			if len(evs) == 0 {
 				continue
 			}
@@ -108,7 +107,7 @@ func (s *Server) Close() {
 		close(s.stop)
 	}
 	for _, t := range s.threads {
-		jobs.KillAll(t.id)
+		core.Leave(t.id)
 		t.mu.Lock()
 		if t.cancel != nil {
 			t.cancel()
@@ -266,17 +265,8 @@ func (s *Server) thread(id string) (*thread, error) {
 
 // --- threads ---
 
-func loadConfig() (config.ModelsFile, config.Settings, error) {
-	settings, err := config.LoadSettings()
-	if err != nil {
-		return config.ModelsFile{}, settings, err
-	}
-	models, err := config.LoadModels()
-	return models, settings, err
-}
-
 func (s *Server) listModels() (any, error) {
-	models, _, err := loadConfig()
+	_, models, err := core.Load()
 	if err != nil {
 		return nil, err
 	}
@@ -290,53 +280,14 @@ func (s *Server) listModels() (any, error) {
 	return map[string]any{"models": out}, nil
 }
 
-func pickModel(models config.ModelsFile, settings config.Settings, id string) (config.ModelRef, error) {
-	if id != "" {
-		if r, ok := models.Find("", id); ok {
-			return r, nil
-		}
-		return config.ModelRef{}, invalid("unknown model %q", id)
-	}
-	if r, ok := models.Find(settings.DefaultProvider, settings.DefaultModel); ok {
-		return r, nil
-	}
-	all := models.List()
-	if len(all) == 0 {
-		return config.ModelRef{}, fmt.Errorf("no models configured")
-	}
-	return all[0], nil
-}
-
-func sessionEnv(id string) []string {
-	env := []string{"ATTO_SESSION_ID=" + id, config.EnvAgent + "=1"}
-	if exe, err := os.Executable(); err == nil {
-		env = append(env, "PATH="+dirOf(exe)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	}
-	return env
-}
-
-func dirOf(p string) string {
-	if i := strings.LastIndexByte(p, os.PathSeparator); i > 0 {
-		return p[:i]
-	}
-	return "."
-}
-
-// newThread wires an agent, session writer and hooks for cwd.
-func (s *Server) newThread(cwd string, model config.ModelRef, effort string, sess *session.Writer, start time.Time) (*thread, error) {
-	ag := agent.New(model, effort, cwd)
-	ag.SetStart(start)
-	ag.SetSession(sess.ID, sessionEnv(sess.ID))
-	ag.Record = sess.Append
-	t := &thread{id: sess.ID, cwd: cwd, agent: ag, sess: sess}
-	hookCfg, err := config.LoadHooks(cwd)
+// newThread wires an agent, its hooks and a session file for cwd.
+func (s *Server) newThread(cwd string, model config.ModelRef, effort string, file *session.Writer, start time.Time) (*thread, error) {
+	ag, hk, err := core.NewAgent(cwd, model, effort)
 	if err != nil {
 		return nil, err
 	}
-	if t.hooks = hooks.New(hookCfg, cwd); t.hooks != nil {
-		t.hooks.SetSession(sess.ID, sess.Path)
-		ag.Hooks = t.hooks
-	}
+	core.Bind(ag, hk, file, start, true)
+	t := &thread{id: file.ID, cwd: cwd, agent: ag, sess: file, hooks: hk}
 	s.mu.Lock()
 	s.threads[t.id] = t
 	s.mu.Unlock()
@@ -344,18 +295,15 @@ func (s *Server) newThread(cwd string, model config.ModelRef, effort string, ses
 }
 
 func (s *Server) startThread(p threadParams) (any, error) {
-	models, settings, err := loadConfig()
+	settings, models, err := core.Load()
 	if err != nil {
 		return nil, err
 	}
-	model, err := pickModel(models, settings, p.Model)
+	model, err := core.PickModel(models, settings, p.Model)
 	if err != nil {
-		return nil, err
+		return nil, invalid("%v", err)
 	}
-	effort := p.Effort
-	if effort == "" {
-		effort = settings.DefaultEffort
-	}
+	effort := core.Effort(settings, p.Effort)
 	cwd := p.Cwd
 	if cwd == "" {
 		cwd = s.Cwd
@@ -399,39 +347,30 @@ func (s *Server) resumeThread(id string) (any, error) {
 	if err != nil {
 		return nil, invalid("%v", err)
 	}
-	h, entries, err := session.Load(path)
+	saved, file, err := core.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	models, settings, err := loadConfig()
+	settings, models, err := core.Load()
 	if err != nil {
+		file.Close()
 		return nil, err
 	}
-	model, err := pickModel(models, settings, "")
+	model, err := core.PickModel(models, settings, "")
+	if r, ok := models.Find("", saved.Model); ok {
+		model, err = r, nil
+	}
 	if err != nil {
+		file.Close()
 		return nil, err
 	}
-	effort, name := settings.DefaultEffort, ""
-	for _, e := range entries {
-		switch e.Type {
-		case session.TypeModel:
-			if r, ok := models.Find(e.Provider, e.Model); ok {
-				model = r
-			}
-		case session.TypeEffort:
-			effort = e.Effort
-		case session.TypeName:
-			name = e.Name
-		}
-	}
-	sess := session.Resume(path, h)
-	sess.SetLeaf(session.Leaf(entries))
-	t, err := s.newThread(h.Cwd, model, effort, sess, h.Time)
+	t, err := s.newThread(saved.Header.Cwd, model, core.Effort(settings, saved.Effort), file, saved.Header.Time)
 	if err != nil {
+		file.Close()
 		return nil, err
 	}
-	t.name = name
-	t.restore(entries)
+	t.name = saved.Name
+	t.restore(saved.Entries)
 	s.sessionStart(t, "resume")
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -463,13 +402,13 @@ func (s *Server) setModel(p threadParams) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	models, settings, err := loadConfig()
+	settings, models, err := core.Load()
 	if err != nil {
 		return nil, err
 	}
-	model, err := pickModel(models, settings, p.Model)
+	model, err := core.PickModel(models, settings, p.Model)
 	if err != nil {
-		return nil, err
+		return nil, invalid("%v", err)
 	}
 	t.agent.SetModel(model)
 	t.sess.Append(session.Entry{Type: session.TypeModel, Provider: model.ProviderName, Model: model.Model.ID})
@@ -484,23 +423,14 @@ func (s *Server) setEffort(p threadParams) (any, error) {
 		return nil, err
 	}
 	m, _ := t.agent.Current()
-	if lv := m.Model.Levels(); len(lv) > 0 && !contains(lv, p.Effort) {
-		return nil, invalid("effort %q not available (levels: %s)", p.Effort, strings.Join(lv, ", "))
+	if err := core.CheckEffort(m, p.Effort); err != nil {
+		return nil, invalid("%v", err)
 	}
 	t.agent.SetEffort(p.Effort)
 	t.sess.Append(session.Entry{Type: session.TypeEffort, Effort: p.Effort})
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.info(), nil
-}
-
-func contains(xs []string, s string) bool {
-	for _, x := range xs {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 // --- turns ---

@@ -178,7 +178,7 @@ func (t *thinkingBlock) Render(width int) []string {
 		}
 		return out
 	}
-	head := style(fmt.Sprintf("  ∴ Thought for %s", fmtDur(t.dur)))
+	head := style(fmt.Sprintf("  ∴ Thought for %s", tui.FormatDuration(t.dur)))
 	if !expanded {
 		if len(body) > 0 {
 			head += tui.Dim(" · click to expand")
@@ -245,17 +245,17 @@ func displayLines(raw string) []string {
 func (b *toolBlock) status() (icon, status string) {
 	switch {
 	case !b.done:
-		return tui.FG(3, "●"), fmt.Sprintf("%s / %s", fmtDur(time.Since(b.start).Truncate(100*time.Millisecond)), fmtDur(b.timeout))
+		return tui.FG(3, "●"), fmt.Sprintf("%s / %s", tui.FormatDuration(time.Since(b.start).Truncate(100*time.Millisecond)), tui.FormatDuration(b.timeout))
 	case b.res.Err != nil:
 		return tui.FG(1, "✗"), tui.FG(1, b.res.Err.Error())
 	case b.res.Canceled:
 		return tui.FG(1, "✗"), tui.FG(1, "canceled")
 	case b.res.TimedOut:
-		return tui.FG(1, "✗"), tui.FG(1, "timed out after "+fmtDur(b.timeout))
+		return tui.FG(1, "✗"), tui.FG(1, "timed out after "+tui.FormatDuration(b.timeout))
 	case b.res.ExitCode != 0:
-		return tui.FG(1, "✗"), tui.FG(1, fmt.Sprintf("exit %d", b.res.ExitCode)) + tui.Dim(" · "+fmtDur(b.res.Duration))
+		return tui.FG(1, "✗"), tui.FG(1, fmt.Sprintf("exit %d", b.res.ExitCode)) + tui.Dim(" · "+tui.FormatDuration(b.res.Duration))
 	}
-	return tui.FG(2, "✓"), fmtDur(b.res.Duration)
+	return tui.FG(2, "✓"), tui.FormatDuration(b.res.Duration)
 }
 
 func (b *toolBlock) Render(width int) []string {
@@ -343,10 +343,10 @@ func (c *compactBlock) Render(width int) []string {
 	}
 	head := tui.FG(6, "  ◇ ") + kind
 	if c.elapsed > 0 {
-		head += tui.Dim(" · " + fmtDur(c.elapsed))
+		head += tui.Dim(" · " + tui.FormatDuration(c.elapsed))
 	}
 	if c.before > 0 {
-		head += tui.Dim(fmt.Sprintf(" · %s → ~%s tokens", fmtTokens(c.before), fmtTokens(c.after)))
+		head += tui.Dim(fmt.Sprintf(" · %s → ~%s tokens", tui.FormatTokens(c.before), tui.FormatTokens(c.after)))
 	}
 	if !c.expanded() {
 		return []string{tui.Truncate(head+tui.Dim(" · click to view notes"), width, "…")}
@@ -370,30 +370,6 @@ func (n *noticeBlock) Render(width int) []string {
 		lines[i] = "  " + n.style(l)
 	}
 	return lines
-}
-
-func fmtDur(d time.Duration) string {
-	switch {
-	case d < time.Second:
-		return fmt.Sprintf("%dms", d.Milliseconds())
-	case d < time.Minute && d%time.Second == 0:
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	case d < time.Minute:
-		return fmt.Sprintf("%.1fs", d.Seconds())
-	default:
-		m := int(d.Minutes())
-		return fmt.Sprintf("%dm%02ds", m, int(d.Seconds())-60*m)
-	}
-}
-
-func fmtTokens(n int) string {
-	switch {
-	case n >= 1000000:
-		return fmt.Sprintf("%.1fM", float64(n)/1e6)
-	case n >= 1000:
-		return fmt.Sprintf("%.1fk", float64(n)/1e3)
-	}
-	return fmt.Sprint(n)
 }
 
 // startsWithMarker reports whether a rendered markdown line begins with its
