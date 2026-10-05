@@ -8,10 +8,11 @@ import (
 
 	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/core"
+	"github.com/sebastianrcnt/atto/docs"
 	"github.com/sebastianrcnt/atto/extensions"
 )
 
-const extensionsUsage = `usage: atto extensions [list [-json] | approve <name> | types]
+const extensionsUsage = `usage: atto extensions [list [-json] | approve <name> | types | docs]
 
   list            the extensions a session here loads (the default), without
                   running them: user ones from ~/.atto/extensions, project ones
@@ -19,9 +20,9 @@ const extensionsUsage = `usage: atto extensions [list [-json] | approve <name> |
   approve <name>  let the project extension <name> run, as its code is now;
                   a change to it needs approval again. Not from an agent's shell.
   types           print atto.d.ts, the API's TypeScript declarations
+  docs            print the guide to writing extensions
 
-A running session picks changes up with /reload (or atto reload). How to
-write one: docs/extensions.md.`
+A running session picks changes up with /reload (or atto reload).`
 
 // RunExtensions implements "atto extensions".
 func RunExtensions(args []string, out io.Writer) error {
@@ -80,6 +81,9 @@ func RunExtensions(args []string, out io.Writer) error {
 		return nil
 	case "types":
 		_, err := io.WriteString(out, extensions.Types)
+		return err
+	case "docs":
+		_, err := io.WriteString(out, docs.Extensions)
 		return err
 	}
 	return fmt.Errorf("%s", extensionsUsage)

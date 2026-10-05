@@ -7,6 +7,12 @@ auth/openai_codex.go, config/resolve_config_value.go, config/models.go (the
 models.json schema) and app/login.go (the /login flow). See provider/PORTING.md
 for the file mapping.
 
+The extension API (extensions/) follows the shape of pi's extension API
+(packages/coding-agent/src/core/extensions: a default-exported factory, on()
+events, registerCommand, ctx.ui); no code was ported. Extensions run on goja
+(github.com/dop251/goja, MIT) and are compiled with esbuild
+(github.com/evanw/esbuild, MIT); their licenses ship with their modules.
+
 pi is distributed under the MIT License:
 
 MIT License

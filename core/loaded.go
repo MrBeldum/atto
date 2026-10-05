@@ -554,7 +554,7 @@ func (l Loaded) Details() []Section {
 	}
 	if len(s.Rows) == 0 {
 		s.Rows = append(s.Rows, Row{"none", "put .ts or .js files in " + ShortPath(config.ExtensionsDir()) +
-			" or the project's .atto/extensions; see atto extensions types"})
+			" or the project's .atto/extensions; see atto extensions docs"})
 	}
 	out = append(out, s)
 

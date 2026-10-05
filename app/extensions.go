@@ -273,7 +273,7 @@ func (a *App) cmdExtensions(arg string) {
 				rows = s.Rows
 			}
 		}
-		lines := []string{"Extensions (docs: docs/extensions.md; types: atto extensions types):"}
+		lines := []string{"Extensions (guide: atto extensions docs; types: atto extensions types):"}
 		for _, r := range rows {
 			lines = append(lines, "  "+r.Label+"  "+r.Text)
 		}

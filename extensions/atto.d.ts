@@ -4,7 +4,7 @@
 //   /// <reference path="./atto.d.ts" />      (or "../atto.d.ts" from a folder)
 //
 // and write `export default function (atto: Atto) { ... }`.
-// `atto extensions types` prints it. Docs: docs/extensions.md.
+// `atto extensions types` prints it; `atto extensions docs` prints the guide.
 
 /** What atto passes to handlers and commands as their second argument. */
 interface AttoContext {

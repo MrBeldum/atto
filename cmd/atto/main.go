@@ -43,8 +43,8 @@ usage:
                                     hooks, settings, model
   atto reload                       from the agent's shell: reload AGENTS.md, skills,
                                     hooks, extensions and settings in the running session
-  atto extensions [list|approve <name>|types]
-                                    JavaScript/TypeScript extensions (docs/extensions.md)
+  atto extensions [list|approve <name>|types|docs]
+                                    JavaScript/TypeScript extensions (docs: atto extensions docs)
   atto update [-check]              install the latest release
   atto serve [-listen addr]         JSON-RPC over HTTP + SSE, with a web client
   atto app-server                   JSON-RPC over stdio (JSON lines)

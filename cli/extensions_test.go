@@ -100,6 +100,9 @@ func TestExtensionsCLI(t *testing.T) {
 	if out, _ := run("types"); out != extensions.Types {
 		t.Fatal("types prints atto.d.ts")
 	}
+	if out, _ := run("docs"); !strings.HasPrefix(out, "# Writing atto extensions") {
+		t.Fatal("docs prints the guide")
+	}
 	if _, err := run("nope"); err == nil {
 		t.Fatal("usage")
 	}

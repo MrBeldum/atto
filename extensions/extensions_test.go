@@ -730,6 +730,29 @@ func TestCloseStopsGoroutines(t *testing.T) {
 	eventually(t, "goroutines to end", func() bool { return runtime.NumGoroutine() <= before })
 }
 
+// The examples in the guide load.
+func TestGuideExamples(t *testing.T) {
+	dir, cwd := env(t)
+	guide, err := os.ReadFile(filepath.Join("..", "docs", "extensions.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(string(guide), "```ts\n")[1:]
+	if len(parts) < 3 {
+		t.Fatalf("%d examples", len(parts))
+	}
+	for i, p := range parts {
+		code, _, _ := strings.Cut(p, "```")
+		write(t, filepath.Join(dir, fmt.Sprintf("example%d.ts", i)), code)
+	}
+	m := load(t, cwd, newHost(true))
+	for i := range parts {
+		if in := info(t, m, fmt.Sprintf("example%d", i)); in.Status != Loaded {
+			t.Errorf("%+v", in)
+		}
+	}
+}
+
 // modelServer is a fake model that runs each command, one per step, then
 // answers "done".
 func modelServer(t *testing.T, commands []string) config.ModelRef {
