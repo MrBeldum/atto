@@ -120,7 +120,10 @@ func TestHangulStreaming(t *testing.T) {
 				var got string
 				for _, r := range text {
 					got += string(r)
-					c.l = append([]string{"user: 질문"}, Wrap(got, 16)...)
+					c.l = []string{"user: 질문"}
+					for _, l := range Wrap(got, 16) {
+						c.l = append(c.l, StripWrapMarks(l))
+					}
 					ui.RenderNow()
 					if mode == Inline {
 						assertTranscript(t, v, c.l, "stream "+got)

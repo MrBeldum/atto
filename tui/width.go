@@ -197,9 +197,30 @@ func (s *sgrState) feed(esc string) {
 	}
 }
 
+// Soft-wrap marks: Wrap and WrapHard begin every continuation line with
+// one, so a selection can copy wrapped text as the line it was. They are
+// zero-width APC sequences, kept through prefixes and truncation, and the
+// renderer strips them before writing (as it does CursorMarker). The mark
+// sits where the continued text starts, after any prefix the caller adds.
+const (
+	wrapSpace = "\x1b_atto:ws\x07" // the break replaced a space
+	wrapJoin  = "\x1b_atto:wj\x07" // the break split a word
+	wrapMark  = "\x1b_atto:w"      // common prefix of both
+)
+
+// StripWrapMarks removes soft-wrap marks, for lines that leave the
+// renderer some other way.
+func StripWrapMarks(s string) string {
+	if !strings.Contains(s, wrapMark) {
+		return s
+	}
+	return strings.NewReplacer(wrapSpace, "", wrapJoin, "").Replace(s)
+}
+
 // Wrap word-wraps text to width columns. Explicit newlines are honoured,
 // words longer than width are hard-broken, and styling active at a break is
-// carried onto the next line.
+// carried onto the next line. Continuation lines start with a soft-wrap
+// mark (see wrapSpace).
 func Wrap(text string, width int) []string {
 	if width < 1 {
 		width = 1
@@ -222,15 +243,16 @@ func wrapLine(line string, width int, st *sgrState) []string {
 	var lines []string
 	var cur strings.Builder
 	curW := 0
-	start := func() {
+	start := func(mark string) {
 		cur.Reset()
 		cur.WriteString(st.active)
+		cur.WriteString(mark)
 		curW = 0
 	}
 	flush := func() {
 		lines = append(lines, cur.String())
 	}
-	start()
+	start("")
 
 	isSpace := func(c cell) bool { return c.text == " " }
 
@@ -261,12 +283,12 @@ func wrapLine(line string, width int, st *sgrState) []string {
 
 		if curW+tokW > width && curW > 0 {
 			flush()
-			start()
+			start(wrapSpace) // tokens alternate, so a space run came before
 		}
 		for _, c := range tok {
 			if curW+c.width > width && curW > 0 {
 				flush()
-				start()
+				start(wrapJoin)
 			}
 			st.feed(c.esc)
 			cur.WriteString(c.esc)

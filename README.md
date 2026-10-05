@@ -120,12 +120,25 @@ atto -p -goal "make the tests pass" -goal-budget 200k
 | `Shift+Tab` | cycle reasoning effort |
 | `Ctrl+T` | expand all thinking and command output (or click a block) |
 | `Ctrl+B` | move the running command to the background: it keeps running as a job (`/jobs`), the agent goes on and gets an `[atto event]` when it exits |
-| `Ctrl+C` | interrupt; clears the input when idle; quits when the input is empty |
+| `Ctrl+C` | copy the selection if there is one; otherwise interrupt, clear the input when idle, or quit when the input is empty |
 | `Ctrl+V` / `Alt+V` | attach the image on the clipboard (use `Alt+V` where the terminal pastes text on `Ctrl+V`, as on Windows) |
 
 Pasting the path of an image file, or dropping the file on the terminal, attaches it too. Images show as `[image 1: 1024x768 PNG]` in the input; delete the placeholder to drop the image. Images larger than 2048 pixels are scaled down. Clipboard images need `osascript` (macOS; `pngpaste` is used if installed), `wl-paste` or `xclip` (Linux), or PowerShell (Windows, WSL).
 
 Pastes over 1000 characters show as `[Pasted Content 1234 chars]` and are sent in full.
+
+### Mouse and selection
+
+In the fullscreen renderer atto handles the mouse itself: the wheel scrolls the conversation, and a click on a block's header or its `+ N lines` line expands or collapses it.
+
+- Drag to select text anywhere in the conversation; it is copied when you let go. Dragging past the top or bottom scrolls.
+- Double-click selects a word (a file path or a URL is one word), triple-click the line.
+- With a selection showing, `Ctrl+C` copies it instead of interrupting and `Shift+arrows` extend it. `Esc`, `PageUp` and `PageDown` keep it; other keys and clicks clear it.
+- Copying uses every way that applies: the system clipboard (`pbcopy`, `wl-copy`/`xclip`/`xsel` and the PRIMARY selection, PowerShell), the tmux paste buffer inside tmux, and OSC 52, which is what reaches your clipboard over SSH. A short note says which worked.
+
+Inside tmux, atto only gets the mouse with `set -g mouse on` (it says so at startup when it is off). OSC 52 through tmux needs `set -g set-clipboard on` or `set -g allow-passthrough on`.
+
+To use the terminal's own selection instead, hold the key that bypasses mouse reporting: `Shift` in most terminals (Windows Terminal, GNOME Terminal, Konsole, kitty, WezTerm, Alacritty), `Option` in iTerm2, `Fn` in Terminal.app. Over SSH or in tmux it is the key of the terminal you are sitting at. Or turn mouse handling off with `"mouse": false` in `settings.json` or `ATTO_NO_MOUSE=1`; scrolling then works with `PageUp`/`PageDown`.
 
 ### Slash commands
 
@@ -202,7 +215,7 @@ Everything lives in `~/.atto`. Set `ATTO_DIR` to move it.
 
 | Path | Contents |
 | --- | --- |
-| `settings.json` | default model and effort, renderer, status line, hooks, `updateCheck`, `doubleEscapeAction` (`tree`, `fork` or `none`) |
+| `settings.json` | default model and effort, renderer, `mouse`, status line, hooks, `updateCheck`, `doubleEscapeAction` (`tree`, `fork` or `none`) |
 | `models.json` | your providers and models |
 | `auth.json` | keys and logins (mode 0600) |
 | `sessions/` | saved sessions |

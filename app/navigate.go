@@ -109,7 +109,7 @@ func (a *App) cmdTree(string) {
 			a.notice("Selected entry has no text to copy.")
 			return
 		}
-		a.notice("Selected entry %s.", a.copyText(text))
+		a.copyText(text, func(note string) { a.showToast("Selected entry: " + note) })
 	}
 	a.openModal(p)
 }

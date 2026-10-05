@@ -106,12 +106,14 @@ func (t *ProcessTerminal) Size() (int, int) {
 
 // OSC52 is the escape sequence that asks the terminal to put text on the
 // system clipboard. It travels with the output, so over SSH the text lands
-// on the local machine's clipboard. Inside tmux it is wrapped so tmux
-// passes it through (with set -g allow-passthrough on, or set-clipboard).
+// on the local machine's clipboard. Inside tmux it comes twice: wrapped,
+// which tmux passes through to the outer terminal with set -g
+// allow-passthrough on, and plain, which tmux itself takes with
+// set-clipboard on (and forwards when the outer terminal allows it).
 func OSC52(text string) string {
 	seq := "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte(text)) + "\x07"
 	if os.Getenv("TMUX") != "" {
-		seq = "\x1bPtmux;" + strings.ReplaceAll(seq, "\x1b", "\x1b\x1b") + "\x1b\\"
+		seq = "\x1bPtmux;" + strings.ReplaceAll(seq, "\x1b", "\x1b\x1b") + "\x1b\\" + seq
 	}
 	return seq
 }

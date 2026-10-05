@@ -57,6 +57,9 @@ type App struct {
 	login loginHooks
 	// clipboard reads an image for Ctrl+V / Alt+V.
 	clipboard func(context.Context) (provider.Image, error)
+	// copyEnv writes copied text (the zero value is the real system).
+	copyEnv copyEnv
+	toast   toast
 
 	busy     bool
 	runKind  string // "turn" or "compact" while busy
@@ -157,6 +160,7 @@ func Run(opts Options) error {
 		a.ui.Mode = tui.Inline
 	}
 	a.escAction = settings.DoubleEscapeAction
+	a.ui.NoMouse = mouseDisabled(settings.Mouse, os.Getenv)
 	a.build()
 	if noModels {
 		// First run: start anyway and say how to get a model, like pi.
@@ -199,6 +203,13 @@ func Run(opts Options) error {
 		a.ui.Do(func() { a.submit(opts.Prompt, nil) })
 	}
 	go a.watchInbox()
+	if a.ui.Mode == tui.Fullscreen && !a.ui.NoMouse {
+		go func() {
+			if tmuxMouseOff(os.Getenv, runTmux) {
+				a.ui.Do(func() { a.notice("%s", tmuxMouseHint) })
+			}
+		}()
+	}
 	if settings.UpdateCheck == nil || *settings.UpdateCheck {
 		go a.checkUpdate()
 	}
@@ -224,9 +235,10 @@ func (a *App) build() {
 
 	// The command list sits above the input, as in Claude Code, so the
 	// input and the status line keep their place as it opens and closes.
-	a.ui.Footer.Add(tui.Func(a.renderActivity), tui.Func(a.renderPending), jumpPill{a}, tui.Func(a.renderSuggestions), tui.Func(a.renderInput), tui.Func(a.renderStatus))
+	a.ui.Footer.Add(tui.Func(a.renderActivity), tui.Func(a.renderPending), jumpPill{a}, tui.Func(a.renderToast), tui.Func(a.renderSuggestions), tui.Func(a.renderInput), tui.Func(a.renderStatus))
 	a.ui.SetFocus(a.editor)
 	a.ui.OnInput = a.onInput
+	a.ui.OnCopy = a.copySelection
 	a.ui.PaddingX = 1
 	a.ui.GapY = 1
 	a.ui.Pin = a.pinnedPrompt

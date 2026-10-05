@@ -100,6 +100,22 @@ type TUI struct {
 
 	// FullRedraws counts full redraws; useful for tests and debugging.
 	FullRedraws int
+
+	// NoMouse leaves the mouse to the terminal: no wheel scrolling, clicks
+	// or in-app selection, but the terminal's own selection works without
+	// a modifier key. Set it before Start.
+	NoMouse bool
+	// OnCopy, if set, receives the text of a finished selection (on mouse
+	// release, or Ctrl+C while a selection shows). Runs under the TUI lock.
+	OnCopy func(text string)
+
+	// Selection state (fullscreen only), see selection.go and mouse.go.
+	sel      selection
+	mouse    mouseState
+	lastBody []string // body lines of the last fullscreen frame, padded
+	// now and autoScrollEvery are replaced by tests.
+	now             func() time.Time
+	autoScrollEvery time.Duration
 }
 
 func New(term Terminal) *TUI {
@@ -138,8 +154,7 @@ func (t *TUI) Start() error {
 		return err
 	}
 	if t.Mode == Fullscreen {
-		// Alternate screen + mouse reporting (SGR) for wheel scrolling.
-		t.term.Write("\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[2J")
+		t.term.Write(t.enterFullscreen())
 	}
 	t.term.Write("\x1b[?25l")
 	t.started = true
@@ -160,7 +175,7 @@ func (t *TUI) Stop() {
 	t.stopped = true
 	close(t.done)
 	if t.Mode == Fullscreen {
-		t.term.Write("\x1b[?1000l\x1b[?1006l\x1b[?1049l")
+		t.term.Write(t.leaveFullscreen())
 	} else if n := len(t.prevLines); n > 0 {
 		var b strings.Builder
 		moveRows(&b, n-1-t.hwCursorRow)
@@ -184,12 +199,13 @@ func (t *TUI) SetMode(m Mode) {
 		return
 	}
 	if m == Fullscreen {
-		t.term.Write("\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[2J")
+		t.term.Write(t.enterFullscreen())
 	} else {
 		// The main screen returns with the cursor where it was left; the
 		// first inline frame is drawn from there.
-		t.term.Write("\x1b[?1000l\x1b[?1006l\x1b[?1049l")
+		t.term.Write(t.leaveFullscreen())
 	}
+	t.sel, t.mouse = selection{}, mouseState{}
 	t.prevFrame, t.prevLines = nil, nil
 	t.prevWidth, t.prevHeight = 0, 0
 	t.hwCursorRow, t.prevViewportTop, t.maxLinesRender = 0, 0, 0
@@ -297,42 +313,9 @@ func (t *TUI) Redraw() {
 	t.maxLinesRender = 0
 }
 
-// handleScroll consumes mouse and paging input in fullscreen mode.
-func (t *TUI) handleScroll(data string) bool {
-	if t.Mode != Fullscreen {
-		return false
-	}
-	if btn, y, press, ok := parseMouse(data); ok {
-		switch {
-		case btn == 64:
-			t.ScrollBy(3)
-		case btn == 65:
-			t.ScrollBy(-3)
-		case btn == 0 && press && t.pinned && y-1 == t.viewTop:
-			// Clicking the pinned line scrolls back up to it.
-			t.ScrollBy(t.viewRows / 2)
-		case btn == 0 && press && y-1 >= t.viewTop && y-1 < t.viewTop+t.viewRows:
-			t.Body.Click(t.viewStart + y - 1 - t.viewTop)
-		case btn == 0 && press && y-1 >= t.footerTop:
-			t.Footer.Click(y - 1 - t.footerTop)
-		}
-		return true // swallow all other mouse events
-	}
-	_, h := t.term.Size()
-	switch Key(data) {
-	case "pageup":
-		t.ScrollBy(max(1, h/2))
-		return true
-	case "pagedown":
-		t.ScrollBy(-max(1, h/2))
-		return true
-	}
-	return false
-}
-
 func (t *TUI) handleInput(data string) {
 	t.mu.Lock()
-	consumed := t.handleScroll(data) || (t.OnInput != nil && t.OnInput(data))
+	consumed := t.handleScroll(data) || t.selectionKey(data) || (t.OnInput != nil && t.OnInput(data))
 	if !consumed {
 		if h, ok := t.focused.(InputHandler); ok {
 			h.HandleInput(data)
@@ -375,6 +358,7 @@ func prepareLines(raw []string, width, height int) ([]string, *cursorPos) {
 	}
 
 	for i, l := range lines {
+		l = StripWrapMarks(l)
 		if strings.IndexByte(l, '\t') >= 0 {
 			l = strings.ReplaceAll(l, "\t", "   ")
 		}
@@ -649,10 +633,15 @@ func (t *TUI) doRenderFullscreen() {
 	t.footerTop = height - len(footer)
 
 	t.viewTop, t.viewStart, t.viewRows = gap, start, end-start
+	t.lastBody = body
+	t.syncSelection(width)
 	frame := make([]string, gap, height)
 	frame = append(frame, body[start:end]...)
+	t.highlight(frame[gap:], start)
 	t.pinned = false
-	if t.Pin != nil && end > start {
+	// No pinned prompt while selecting: the row must show the text that
+	// is being selected.
+	if t.Pin != nil && end > start && !t.selecting() {
 		if p := t.Pin(start, inner); p != "" {
 			frame[gap] = t.pad([]string{p})[0]
 			t.pinned = true
@@ -696,26 +685,4 @@ func (t *TUI) doRenderFullscreen() {
 	if b.Len() > 0 {
 		t.term.Write(syncBegin + b.String() + syncEnd)
 	}
-}
-
-// parseMouse decodes a mouse report in SGR form (ESC [ < b ; x ; y M|m) or
-// the legacy X10 form (ESC [ M b x y, each byte offset by 32). It returns
-// the button code without modifier bits, the 1-based row, and whether it is
-// a press.
-func parseMouse(data string) (btn, y int, press, ok bool) {
-	switch {
-	case strings.HasPrefix(data, "\x1b[<"):
-		var x int
-		var final byte
-		if n, _ := fmt.Sscanf(data, "\x1b[<%d;%d;%d%c", &btn, &x, &y, &final); n != 4 {
-			return 0, 0, false, true // malformed but still a mouse report
-		}
-		return btn &^ 0b11100, y, final == 'M', true // drop shift/meta/ctrl bits
-	case len(data) == 6 && strings.HasPrefix(data, "\x1b[M"):
-		b := int(data[3]) - 32
-		y = int(data[5]) - 32
-		// X10 reports release as button 3 and cannot say which was released.
-		return b &^ 0b11100, y, b&3 != 3, true
-	}
-	return 0, 0, false, false
 }

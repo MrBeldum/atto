@@ -145,10 +145,12 @@ func TestWrap(t *testing.T) {
 		width int
 		want  []string
 	}{
-		{"hello world foo", 11, []string{"hello world", "foo"}},
-		{"abcdefghij", 4, []string{"abcd", "efgh", "ij"}},
+		// Continuation lines carry a soft-wrap mark: ws after a space,
+		// wj inside a word.
+		{"hello world foo", 11, []string{"hello world", wrapSpace + "foo"}},
+		{"abcdefghij", 4, []string{"abcd", wrapJoin + "efgh", wrapJoin + "ij"}},
 		{"a\n\nb", 5, []string{"a", "", "b"}},
-		{"안녕하세요 세계", 6, []string{"안녕하", "세요", "세계"}},
+		{"안녕하세요 세계", 6, []string{"안녕하", wrapJoin + "세요", wrapSpace + "세계"}},
 	}
 	for _, tc := range cases {
 		got := Wrap(tc.in, tc.width)
@@ -257,11 +259,18 @@ func TestFullscreenClick(t *testing.T) {
 	b := &clicky{lines: lines{l: []string{"b0", "b1", "b2"}}}
 	ui.Body.Add(a, b)
 	ui.Footer.Add(&lines{l: []string{"footer"}})
-	ui.RenderNow()                  // 6 lines of body, 5 rows available: shows a1..b2
-	ui.handleScroll("\x1b[<0;3;1M") // row 1 -> a1
-	ui.handleScroll("\x1b[<0;3;4M") // row 4 -> b1
-	ui.handleScroll("\x1b[<0;3;4m") // release: ignored
-	ui.handleScroll("\x1b[<0;3;6M") // footer row: ignored
+	ui.RenderNow() // 6 lines of body, 5 rows available: shows a1..b2
+	click := func(x, y int) {
+		ui.handleScroll(fmt.Sprintf("\x1b[<0;%d;%dM", x, y))
+		ui.handleScroll(fmt.Sprintf("\x1b[<0;%d;%dm", x, y))
+	}
+	click(3, 1) // row 1 -> a1
+	ui.handleScroll("\x1b[<0;3;4M")
+	if len(b.clicked) != 0 {
+		t.Fatal("a click acts on release, not on press")
+	}
+	ui.handleScroll("\x1b[<0;3;4m") // row 4 -> b1
+	click(3, 6)                     // footer row: not the body
 	if !slices.Equal(a.clicked, []int{1}) || !slices.Equal(b.clicked, []int{1}) {
 		t.Fatalf("a=%v b=%v", a.clicked, b.clicked)
 	}
@@ -269,22 +278,26 @@ func TestFullscreenClick(t *testing.T) {
 
 func TestParseMouse(t *testing.T) {
 	cases := []struct {
-		in        string
-		btn, y    int
-		press, ok bool
+		in   string
+		want mouseEvent
+		ok   bool
 	}{
-		{"\x1b[<0;5;7M", 0, 7, true, true},
-		{"\x1b[<0;5;7m", 0, 7, false, true},
-		{"\x1b[<64;5;7M", 64, 7, true, true},
-		{"\x1b[<4;5;7M", 0, 7, true, true},                      // shift held
-		{"\x1b[M" + string(rune(32)) + "%'", 0, 7, true, true},  // X10 press at (5,7)
-		{"\x1b[M" + string(rune(35)) + "%'", 3, 7, false, true}, // X10 release
-		{"\x1b[A", 0, 0, false, false},
+		{"\x1b[<0;5;7M", mouseEvent{btn: 0, x: 5, y: 7, press: true}, true},
+		{"\x1b[<0;5;7m", mouseEvent{btn: 0, x: 5, y: 7}, true},
+		{"\x1b[<64;5;7M", mouseEvent{btn: 64, x: 5, y: 7, press: true}, true},
+		{"\x1b[<4;5;7M", mouseEvent{btn: 0, x: 5, y: 7, press: true}, true},                // shift held
+		{"\x1b[<32;9;7M", mouseEvent{btn: 0, x: 9, y: 7, press: true, motion: true}, true}, // drag (1002)
+		{"\x1b[<32;9;300M", mouseEvent{btn: 0, x: 9, y: 300, press: true, motion: true}, true},
+		{"\x1b[M" + string(rune(32)) + "%'", mouseEvent{btn: 0, x: 5, y: 7, press: true}, true}, // X10 press at (5,7)
+		{"\x1b[M" + string(rune(35)) + "%'", mouseEvent{btn: 3, x: 5, y: 7}, true},              // X10 release
+		{"\x1b[M" + string(rune(64)) + "&'", mouseEvent{btn: 0, x: 6, y: 7, press: true, motion: true}, true},
+		{"\x1b[M" + string(rune(96)) + "%'", mouseEvent{btn: 64, x: 5, y: 7, press: true}, true}, // X10 wheel
+		{"\x1b[A", mouseEvent{}, false},
 	}
 	for _, c := range cases {
-		btn, y, press, ok := parseMouse(c.in)
-		if btn != c.btn || y != c.y || press != c.press || ok != c.ok {
-			t.Errorf("parseMouse(%q) = %d,%d,%v,%v want %d,%d,%v,%v", c.in, btn, y, press, ok, c.btn, c.y, c.press, c.ok)
+		got, ok := parseMouse(c.in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("parseMouse(%q) = %+v,%v want %+v,%v", c.in, got, ok, c.want, c.ok)
 		}
 	}
 	var p inputParser
@@ -318,7 +331,7 @@ func TestSetMode(t *testing.T) {
 	ui.RenderNow()
 	l.out.Reset()
 	ui.SetMode(Inline)
-	if got := l.out.String(); got != "\x1b[?1000l\x1b[?1006l\x1b[?1049l" {
+	if got := l.out.String(); got != "\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?1049l" {
 		t.Fatalf("leaving fullscreen wrote %q", got)
 	}
 	ui.RenderNow()
@@ -331,7 +344,7 @@ func TestSetMode(t *testing.T) {
 
 	l.out.Reset()
 	ui.SetMode(Fullscreen)
-	if !strings.HasPrefix(l.out.String(), "\x1b[?1049h\x1b[?1000h\x1b[?1006h") {
+	if !strings.HasPrefix(l.out.String(), "\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h") {
 		t.Fatalf("entering fullscreen wrote %q", l.out.String())
 	}
 	ui.RenderNow()
