@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -240,50 +241,156 @@ func contextBar(pct, cells int) string {
 	return tui.FG(6, strings.Repeat("━", filled)) + strings.Repeat("─", cells-filled)
 }
 
+// compactTokens is pi's footer notation: 950, 1.2k, 12k, 1.2M, 12M.
+func compactTokens(n int) string {
+	switch {
+	case n < 1000:
+		return fmt.Sprint(n)
+	case n < 10000:
+		return strings.Replace(fmt.Sprintf("%.1fk", float64(n)/1e3), ".0k", "k", 1)
+	case n < 1000000:
+		return fmt.Sprintf("%dk", (n+500)/1000)
+	case n < 10000000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	}
+	return fmt.Sprintf("%dM", (n+500000)/1000000)
+}
+
+// priced reports whether the model has prices (local models have none).
+func priced(m config.Model) bool {
+	c := m.Cost
+	return c != nil && (c.Input > 0 || c.Output > 0 || c.CacheRead > 0 || c.CacheWrite > 0)
+}
+
+// statusItem is one piece of the built-in status line. Items are dropped
+// as the terminal narrows, lowest drop level first (see the drop levels
+// below); level 0 is never dropped.
+type statusItem struct {
+	text  string
+	pre   string // separator before it; a dot by default
+	drop  int
+	right bool
+}
+
+// Drop levels, least important first, as pi's footer gives way: memory,
+// the session name, cache totals, cache hit rate, token totals, cost, the
+// directory, the context size, the effort.
+const (
+	dropMem = iota + 1
+	dropName
+	dropCacheTotals
+	dropCacheRate
+	dropTokens
+	dropCost
+	dropPath
+	dropCtxSize
+	dropEffort
+)
+
+// minPath is the room the directory needs to be worth showing.
+const minPath = 14
+
+// builtinStatus is atto's default status line, with pi's footer items:
+//
+//	◆ model · effort  ━━─── 12% 31k/262k · cache 93% · ↑12k ↓3.4k · R80k W2k · $0.123   ~/proj (main) · 18MB
+//
+// The left side is the model and the usage, the right side where we are.
 func (a *App) builtinStatus(width int) string {
 	m, effort := a.agent.Current()
 	sep := tui.Dim(" · ")
+	u := &a.usage
 
-	left := tui.FG(6, "◆ ") + m.Model.DisplayName()
+	items := []statusItem{{text: tui.FG(6, "◆ ") + m.Model.DisplayName()}}
 	if effort != "" && len(m.Model.Levels()) > 0 {
-		left += sep + effortStyle(effort)
+		items = append(items, statusItem{text: effortStyle(effort), drop: dropEffort})
 	}
 	if cw := m.Model.ContextWindow; cw > 0 {
 		pct := a.ctxTokens * 100 / cw
-		bar := contextBar(pct, 10) + fmt.Sprintf(" %d%% %s/%s", pct, tui.FormatTokens(a.ctxTokens), tui.FormatTokens(cw))
+		style := tui.Dim
 		if limit := agent.AutoCompactLimit(m.Model); limit > 0 && a.ctxTokens*100/limit >= 80 {
-			bar = tui.FG(3, bar) // nearing auto-compaction
-		} else {
-			bar = tui.Dim(bar)
+			style = func(s string) string { return tui.FG(3, s) } // nearing auto-compaction
 		}
-		left += "  " + bar
+		items = append(items,
+			statusItem{text: style(contextBar(pct, 10) + fmt.Sprintf(" %d%%", pct)), pre: "  "},
+			statusItem{text: style(fmt.Sprintf("%s/%s", tui.FormatTokens(a.ctxTokens), tui.FormatTokens(cw))), pre: " ", drop: dropCtxSize})
 	}
-	if c := a.usage.cacheLabel(); c != "" {
-		left += sep + tui.Dim(c)
+	if c := u.cacheLabel(); c != "" {
+		items = append(items, statusItem{text: tui.Dim(c), drop: dropCacheRate})
 	}
-
-	lw := tui.VisibleWidth(left) + 1
-	mem := tui.Dim(fmtBytes(rssBytes.Load()))
-	name := ""
+	var io, rw []string
+	if n := u.fresh(); n > 0 {
+		io = append(io, "↑"+compactTokens(n))
+	}
+	if u.output > 0 {
+		io = append(io, "↓"+compactTokens(u.output))
+	}
+	if u.cached > 0 {
+		rw = append(rw, "R"+compactTokens(u.cached))
+	}
+	if u.cacheWrite > 0 {
+		rw = append(rw, "W"+compactTokens(u.cacheWrite))
+	}
+	if len(io) > 0 {
+		items = append(items, statusItem{text: tui.Dim(strings.Join(io, " ")), drop: dropTokens})
+	}
+	if len(rw) > 0 {
+		items = append(items, statusItem{text: tui.Dim(strings.Join(rw, " ")), drop: dropCacheTotals})
+	}
+	// Only a model with prices has a cost; a local model's session is free.
+	if priced(m.Model) || u.cost > 0 {
+		items = append(items, statusItem{text: tui.Dim(fmt.Sprintf("$%.3f", u.cost)), drop: dropCost})
+	}
 	if a.sessName != "" {
-		name = tui.FG(5, a.sessName) + sep
+		items = append(items, statusItem{text: tui.FG(5, a.sessName), drop: dropName, right: true})
 	}
-	// The path gets whatever room is left, shortened from the front.
-	room := width - lw - 2 - tui.VisibleWidth(name) - tui.VisibleWidth(sep) - tui.VisibleWidth(mem)
+	items = append(items, statusItem{text: tui.Dim(fmtBytes(rssBytes.Load())), drop: dropMem, right: true})
+
 	branch := ""
 	if a.gitBranch != "" {
 		branch = " (" + a.gitBranch + ")"
 	}
-	where := compressPath(shortPath(a.cwd), room-tui.VisibleWidth(branch)) + branch
-	r := name + mem
-	if room >= 8 {
-		r = name + tui.Dim(where) + sep + mem
+	where := shortPath(a.cwd)
+
+	join := func(cut int, right bool) string {
+		var b strings.Builder
+		for _, it := range items {
+			if it.right != right || (it.drop != 0 && it.drop <= cut) {
+				continue
+			}
+			if b.Len() > 0 {
+				b.WriteString(cmp.Or(it.pre, sep))
+			}
+			b.WriteString(it.text)
+		}
+		return b.String()
 	}
-	gap := width - lw - tui.VisibleWidth(r)
+
+	var left, right string
+	for cut := 0; cut <= dropEffort; cut++ {
+		left, right = join(cut, false), join(cut, true)
+		if cut < dropPath {
+			// The directory takes what room remains, shortened from the front.
+			room := width - 1 - tui.VisibleWidth(left) - 2
+			if right != "" {
+				room -= tui.VisibleWidth(sep) + tui.VisibleWidth(right)
+			}
+			if room >= min(minPath, tui.VisibleWidth(where+branch)) {
+				p := tui.Dim(compressPath(where, room-tui.VisibleWidth(branch)) + branch)
+				if right != "" {
+					p += sep
+				}
+				right = p + right
+			}
+		}
+		if 1+tui.VisibleWidth(left)+2+tui.VisibleWidth(right) <= width {
+			break
+		}
+	}
+	gap := width - 1 - tui.VisibleWidth(left) - tui.VisibleWidth(right)
 	if gap < 2 {
 		return tui.Truncate(" "+left, width, "…")
 	}
-	return " " + left + strings.Repeat(" ", gap) + r
+	return " " + left + strings.Repeat(" ", gap) + right
 }
 
 // compressPath shortens p to at most w columns by dropping leading

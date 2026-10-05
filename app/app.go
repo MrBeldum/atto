@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -535,8 +536,11 @@ func (a *App) renderInput(width int) []string {
 }
 
 func shortPath(p string) string {
-	if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(p, home) {
-		return "~" + strings.TrimPrefix(p, home)
+	// Only whole path elements: /Users/bob2 is not under /Users/bob.
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if rest, ok := strings.CutPrefix(p, home); ok && (rest == "" || rest[0] == '/' || rest[0] == filepath.Separator) {
+			return "~" + rest
+		}
 	}
 	return p
 }

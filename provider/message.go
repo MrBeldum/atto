@@ -74,11 +74,16 @@ type Tool struct {
 	Function ToolFunction `json:"function"`
 }
 
-// Usage is one response's token counts. PromptTokens includes cached ones.
+// Usage is one response's token counts. PromptTokens includes the cached
+// (read) and cache-write ones.
 type Usage struct {
 	PromptTokens     int
 	CompletionTokens int
 	CachedTokens     int
+	// CacheWriteTokens and Cost (US dollars, 0 when the model has no
+	// prices) were added later; older sessions have neither.
+	CacheWriteTokens int     `json:",omitempty"`
+	Cost             float64 `json:",omitempty"`
 }
 
 type Request struct {
