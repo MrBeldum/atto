@@ -112,6 +112,16 @@ func DefaultFullRepaint() bool {
 	return fullRepaintFor(runtime.GOOS, os.Getenv("ATTO_FULL_REPAINT"))
 }
 
+// AnimationInterval is how often a busy UI should request a render to turn a
+// spinner. Full repaint rewrites the whole viewport per frame, so it ticks
+// slower (elapsed time is computed at render time and stays accurate).
+func (t *TUI) AnimationInterval() time.Duration {
+	if t.FullRepaint {
+		return 250 * time.Millisecond
+	}
+	return 80 * time.Millisecond
+}
+
 func fullRepaintFor(goos, env string) bool {
 	switch strings.TrimSpace(env) {
 	case "1":

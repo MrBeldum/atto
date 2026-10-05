@@ -5,7 +5,20 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestAnimationInterval(t *testing.T) {
+	ui := New(newVterm(10, 3))
+	ui.FullRepaint = false
+	if d := ui.AnimationInterval(); d != 80*time.Millisecond {
+		t.Fatalf("diff mode interval = %v", d)
+	}
+	ui.FullRepaint = true
+	if d := ui.AnimationInterval(); d != 250*time.Millisecond {
+		t.Fatalf("full repaint interval = %v", d)
+	}
+}
 
 func TestFullRepaintDefault(t *testing.T) {
 	cases := []struct {

@@ -448,7 +448,7 @@ func (a *App) start(activity string, fn func(context.Context, func(any)) error) 
 	}
 
 	go func() { // keep the spinner and timers moving
-		t := time.NewTicker(80 * time.Millisecond)
+		t := time.NewTicker(a.ui.AnimationInterval())
 		defer t.Stop()
 		for {
 			select {
