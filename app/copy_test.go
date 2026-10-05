@@ -20,7 +20,9 @@ func TestOSC52(t *testing.T) {
 
 func TestCopyCommand(t *testing.T) {
 	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
-	has := func(names ...string) func(string) bool { return func(n string) bool { return slices.Contains(names, n) } }
+	has := func(names ...string) func(string) bool {
+		return func(n string) bool { return slices.Contains(names, n) }
+	}
 	none := env(nil)
 	if c := copyCommand("darwin", has(), none); c[0] != "pbcopy" {
 		t.Fatal(c)
