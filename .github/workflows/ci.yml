@@ -1,9 +1,11 @@
 name: ci
+# Not on every push while development is this busy: once a night (and by
+# hand) the tests run on all three systems and, when they pass, edge is
+# built from main. Releases (tags) have their own workflow.
 on:
-  push:
-    paths-ignore:
-      - '**.md'
-      - LICENSE
+  schedule:
+    - cron: '0 18 * * *'  # 03:00 KST
+  workflow_dispatch:
   pull_request:
     paths-ignore:
       - '**.md'
@@ -31,10 +33,10 @@ jobs:
         run: go test ./...
       - run: go build ./cmd/atto
 
-  # Everything below runs only for pushes to main. The binaries build in
-  # parallel with the tests; only publishing waits for the tests.
+  # Everything below runs only for main (nightly or by hand). The binaries
+  # build in parallel with the tests; only publishing waits for the tests.
   version:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
@@ -98,7 +100,7 @@ jobs:
   # pass on all three systems. Tagged releases are release.yml's job.
   edge:
     needs: [test, build, version]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write     # update the edge release and move its tag

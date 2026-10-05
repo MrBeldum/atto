@@ -38,7 +38,7 @@ They don't need root. Three environment variables change what gets installed:
 
 Running the script again is safe. It installs the newest build of the channel over the old one.
 
-**Edge builds.** Every push to `main` that passes the tests replaces the [`edge` prerelease](https://github.com/sebastianrcnt/atto/releases/tag/edge), named like `v0.0.3-dev.14+abc1234` (the next patch version, 14 commits after the last tag, at commit `abc1234`). It's unreleased code and may break. Install it with `curl -fsSL https://raw.githubusercontent.com/sebastianrcnt/atto/main/install.sh | ATTO_CHANNEL=edge sh` (`$env:ATTO_CHANNEL = "edge"` before running `install.ps1` in PowerShell), or build from source with `go install github.com/sebastianrcnt/atto/cmd/atto@main`.
+**Edge builds.** Once a night, `main` (when its tests pass) replaces the [`edge` prerelease](https://github.com/sebastianrcnt/atto/releases/tag/edge), named like `v0.0.3-dev.14+abc1234` (the next patch version, 14 commits after the last tag, at commit `abc1234`). It's unreleased code and may break. Install it with `curl -fsSL https://raw.githubusercontent.com/sebastianrcnt/atto/main/install.sh | ATTO_CHANNEL=edge sh` (`$env:ATTO_CHANNEL = "edge"` before running `install.ps1` in PowerShell), or build from source with `go install github.com/sebastianrcnt/atto/cmd/atto@main`.
 
 ### Update
 
