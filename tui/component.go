@@ -31,6 +31,14 @@ type Clickable interface {
 	Click(line int) bool
 }
 
+// Spaced components are another component with blank lines above it. A
+// Container draws the blank lines itself and takes the rest from the inner
+// component, so the wrapper does not copy the lines on every frame.
+type Spaced interface {
+	Component
+	Spaced() (inner Component, blank int)
+}
+
 // Container stacks child components vertically.
 type Container struct {
 	Children []Component
@@ -80,10 +88,22 @@ func (c *Container) Clear() { c.Children, c.ranges = nil, nil }
 
 func (c *Container) Render(width int) []string {
 	var lines []string
+	if k := len(c.ranges); k > 0 && c.ranges[k-1].end > 0 {
+		n := c.ranges[k-1].end // the last frame's height: grow once at most
+		lines = make([]string, 0, n+n/8)
+	}
 	c.ranges = c.ranges[:0]
 	for _, ch := range c.Children {
 		start := len(lines)
-		lines = append(lines, ch.Render(width)...)
+		if s, ok := ch.(Spaced); ok {
+			inner, blank := s.Spaced()
+			for range blank {
+				lines = append(lines, "")
+			}
+			lines = append(lines, inner.Render(width)...)
+		} else {
+			lines = append(lines, ch.Render(width)...)
+		}
 		c.ranges = append(c.ranges, childRange{start, len(lines), ch})
 	}
 	return lines

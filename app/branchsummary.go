@@ -148,6 +148,14 @@ type summaryBlock struct {
 	running bool
 	text    strings.Builder
 	elapsed time.Duration
+	cache   tui.RenderCache[summaryKey]
+}
+
+// summaryKey is what a branch summary block's lines depend on.
+type summaryKey struct {
+	running, expanded bool
+	text              string
+	elapsed           time.Duration
 }
 
 func (c *summaryBlock) Click(line int) bool {
@@ -159,6 +167,11 @@ func (c *summaryBlock) Click(line int) bool {
 }
 
 func (c *summaryBlock) Render(width int) []string {
+	key := summaryKey{running: c.running, expanded: c.expanded(), text: c.text.String(), elapsed: c.elapsed}
+	return c.cache.Render(width, key, func() []string { return c.render(width) })
+}
+
+func (c *summaryBlock) render(width int) []string {
 	if c.running {
 		out := []string{tui.Dim("  ⎇ Summarizing the branch being left · esc to cancel…")}
 		lines := tui.Wrap(strings.TrimSpace(c.text.String()), max(1, width-4))

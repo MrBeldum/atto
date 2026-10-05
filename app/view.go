@@ -16,9 +16,15 @@ func (g gap) Render(width int) []string {
 	return append([]string{""}, g.Component.Render(width)...)
 }
 
+// Spaced lets a tui.Container draw the blank line, saving the copy.
+func (g gap) Spaced() (tui.Component, int) { return g.Component, 1 }
+
 // userBlock shows a submitted prompt on a shaded band, codex-style, with a
 // blank shaded row above and below.
-type userBlock struct{ text string }
+type userBlock struct {
+	text       string
+	cache, pin tui.RenderCache[string]
+}
 
 // userBG is the band color: a dark gray that reads on dark themes and
 // stays subtle on light ones.
@@ -29,6 +35,10 @@ func band(content string, width int) string {
 }
 
 func (u *userBlock) Render(width int) []string {
+	return u.cache.Render(width, u.text, func() []string { return u.render(width) })
+}
+
+func (u *userBlock) render(width int) []string {
 	lines := tui.Wrap(u.text, max(1, width-2))
 	out := []string{band("", width)}
 	for i, l := range lines {
@@ -43,8 +53,10 @@ func (u *userBlock) Render(width int) []string {
 
 // pinLine renders the one-line pinned form of a prompt.
 func (u *userBlock) pinLine(width int) string {
-	text := strings.Join(strings.Fields(u.text), " ")
-	return band(tui.Truncate(tui.FG(6, "› ")+text, width, "…"), width)
+	return u.pin.Render(width, u.text, func() []string {
+		text := strings.Join(strings.Fields(u.text), " ")
+		return []string{band(tui.Truncate(tui.FG(6, "› ")+text, width, "…"), width)}
+	})[0]
 }
 
 // textBlock shows assistant text rendered as markdown, indented under the
@@ -53,22 +65,26 @@ type textBlock struct {
 	text strings.Builder
 	// disp is what extensions changed about how the block shows (see
 	// blockdisplay.go): a status and a replacement text.
-	disp blockDisplay
-
-	cacheLen   int
-	cacheWidth int
-	cacheVer   int  // disp.key(): what a cached render also depends on
-	cacheOrig  bool //
-	cache      []string
+	disp  blockDisplay
+	cache tui.RenderCache[textKey]
 }
 
 func (t *textBlock) Click(line int) bool { return t.disp.click(line) }
 
 func (t *textBlock) Render(width int) []string {
 	ver, orig := t.disp.key()
-	if t.cache != nil && t.cacheLen == t.text.Len() && t.cacheWidth == width && t.cacheVer == ver && t.cacheOrig == orig {
-		return t.cache
-	}
+	return t.cache.Render(width, textKey{t.text.String(), ver, orig}, func() []string { return t.render(width) })
+}
+
+// textKey is what a text block's lines depend on: its text, and what
+// extensions changed (see blockDisplay.key).
+type textKey struct {
+	text string
+	ver  int
+	orig bool
+}
+
+func (t *textBlock) render(width int) []string {
 	lines := tui.Markdown(strings.TrimSpace(t.disp.shown(t.text.String())), max(1, width-2))
 	for i, l := range lines {
 		if i == 0 && !startsWithMarker(l) {
@@ -87,7 +103,6 @@ func (t *textBlock) Render(width int) []string {
 		}
 		lines = append(lines, tui.Truncate(toggle+status, width, "…"))
 	}
-	t.cache, t.cacheLen, t.cacheWidth, t.cacheVer, t.cacheOrig = lines, t.text.Len(), width, ver, orig
 	return lines
 }
 
@@ -178,6 +193,16 @@ type thinkingBlock struct {
 	start time.Time
 	dur   time.Duration
 	done  bool
+	cache tui.RenderCache[thinkingKey]
+}
+
+// thinkingKey is what a thinking block's lines depend on.
+type thinkingKey struct {
+	text           string
+	dur            time.Duration
+	done, expanded bool
+	dver           int  // blockDisplay.key: what extensions changed
+	orig           bool //
 }
 
 func (t *thinkingBlock) finish() {
@@ -199,11 +224,18 @@ func (t *thinkingBlock) Click(line int) bool {
 }
 
 func (t *thinkingBlock) Render(width int) []string {
-	out := t.render(width)
+	ver, orig := t.disp.key()
+	key := thinkingKey{text: t.text.String(), dur: t.dur, done: t.done, expanded: t.expanded(), dver: ver, orig: orig}
+	return t.cache.Render(width, key, func() []string { return t.render(width) })
+}
+
+// render adds what extensions changed to the block: statuses on the
+// header and a line under it to flip to the original.
+func (t *thinkingBlock) render(width int) []string {
+	out := t.renderText(width)
 	if h := t.disp.header(); h != "" {
 		out[0] = tui.Truncate(out[0]+h, width, "…")
 	}
-	// A replacement text has its toggle on the line under the header.
 	t.disp.metaLine = -1
 	if toggle := t.disp.toggleLine(width); toggle != "" {
 		t.disp.metaLine = 1
@@ -213,7 +245,7 @@ func (t *thinkingBlock) Render(width int) []string {
 	return out
 }
 
-func (t *thinkingBlock) render(width int) []string {
+func (t *thinkingBlock) renderText(width int) []string {
 	text := strings.TrimSpace(t.disp.shown(t.text.String()))
 	has := text != "" // Wrap("") is one empty line
 	body := tui.Wrap(text, max(1, width-4))
@@ -265,7 +297,22 @@ type toolBlock struct {
 	total   int // total output bytes seen
 	done    bool
 	res     agent.BashResult
+	cache   tui.RenderCache[toolKey]
 }
+
+// toolKey is what a tool block's lines depend on, but for the clock.
+type toolKey struct {
+	args                    agent.BashArgs
+	timeout                 time.Duration
+	output                  string
+	total                   int
+	pending, done, expanded bool
+	res                     agent.BashResult // without Err, which may not be comparable
+	err                     string
+}
+
+// running reports whether the block shows a running time.
+func (b *toolBlock) running() bool { return !b.pending && !b.done }
 
 func (b *toolBlock) append(s string) {
 	b.total += len(s)
@@ -297,10 +344,21 @@ func commandLines(cmd string, width, limit int) []string {
 	return wrapCommand(cmd, width, limit, true)
 }
 
+// commandRows is how many lines commandLines(cmd, width, 0) has, counting
+// to n at most: a huge command is not wrapped just to be counted.
+func commandRows(cmd string, width, n int) int {
+	return len(tui.WrapFirst(cmd, max(1, width-4), n))
+}
+
 // wrapCommand is commandLines for one line of a script; only the first
 // line gets the "$".
 func wrapCommand(cmd string, width, limit int, first bool) []string {
-	wrapped := tui.Wrap(cmd, max(1, width-4))
+	var wrapped []string
+	if limit > 0 { // one line more tells whether to cut
+		wrapped = tui.WrapFirst(cmd, max(1, width-4), limit+1)
+	} else {
+		wrapped = tui.Wrap(cmd, max(1, width-4))
+	}
 	cut := limit > 0 && len(wrapped) > limit
 	if cut {
 		wrapped = wrapped[:limit]
@@ -373,12 +431,24 @@ func (b *toolBlock) status() (icon, status string) {
 	return tui.FG(2, "✓"), tui.FormatDuration(b.res.Duration)
 }
 
+// Render caches the block; while the command runs, the header line, which
+// shows the time, is made again on every call.
 func (b *toolBlock) Render(width int) []string {
-	icon, status := b.status()
-	cmd := strings.TrimSpace(b.args.Command)
-	if i := strings.IndexByte(cmd, '\n'); i >= 0 {
-		cmd = cmd[:i] + " …"
+	key := toolKey{args: b.args, timeout: b.timeout, output: b.output.String(), total: b.total,
+		pending: b.pending, done: b.done, expanded: b.expanded(), res: b.res}
+	if key.res.Err != nil {
+		key.res.Err, key.err = nil, b.res.Err.Error()
 	}
+	out := b.cache.Render(width, key, func() []string { return b.render(width) })
+	if b.running() {
+		out = append([]string{b.head(width)}, out[1:]...)
+	}
+	return out
+}
+
+// head is the block's first line: description and status.
+func (b *toolBlock) head(width int) string {
+	icon, status := b.status()
 	// The command goes on its own line: next to the description it got cut
 	// off on narrow terminals.
 	desc := b.args.Description
@@ -386,12 +456,20 @@ func (b *toolBlock) Render(width int) []string {
 		desc = "Preparing command"
 	}
 	head := icon + " " + tui.Bold(desc) + tui.Dim(" · ") + tui.Dim(status)
-	out := []string{tui.Truncate(head, width, tui.Dim("…"))}
+	return tui.Truncate(head, width, tui.Dim("…"))
+}
+
+func (b *toolBlock) render(width int) []string {
+	cmd := strings.TrimSpace(b.args.Command)
+	if i := strings.IndexByte(cmd, '\n'); i >= 0 {
+		cmd = cmd[:i] + " …"
+	}
+	out := []string{b.head(width)}
 
 	full := strings.TrimSpace(b.args.Command)
 	multiLine := strings.Contains(full, "\n")
 	lines := displayLines(b.output.String())
-	long := len(commandLines(cmd, width, 0)) > commandPreviewLines
+	long := commandRows(cmd, width, commandPreviewLines+1) > commandPreviewLines
 	collapsible := len(lines) > toolPreviewLines || multiLine || long
 	expanded := collapsible && b.expanded()
 
@@ -454,6 +532,15 @@ type compactBlock struct {
 	before  int
 	after   int
 	elapsed time.Duration
+	cache   tui.RenderCache[compactKey]
+}
+
+// compactKey is what a compaction block's lines depend on.
+type compactKey struct {
+	auto, running, expanded bool
+	notes                   string
+	before, after           int
+	elapsed                 time.Duration
 }
 
 func (c *compactBlock) Click(line int) bool {
@@ -465,6 +552,12 @@ func (c *compactBlock) Click(line int) bool {
 }
 
 func (c *compactBlock) Render(width int) []string {
+	key := compactKey{auto: c.auto, running: c.running, expanded: c.expanded(), notes: c.notes.String(),
+		before: c.before, after: c.after, elapsed: c.elapsed}
+	return c.cache.Render(width, key, func() []string { return c.render(width) })
+}
+
+func (c *compactBlock) render(width int) []string {
 	kind := "Context compacted"
 	if c.auto {
 		kind = "Context auto-compacted"
@@ -501,12 +594,18 @@ func (c *compactBlock) Render(width int) []string {
 }
 
 // noticeBlock is a one-off status message from atto itself.
+// The style is set once, with the text.
 type noticeBlock struct {
 	text  string
 	style func(string) string
+	cache tui.RenderCache[string]
 }
 
 func (n *noticeBlock) Render(width int) []string {
+	return n.cache.Render(width, n.text, func() []string { return n.render(width) })
+}
+
+func (n *noticeBlock) render(width int) []string {
 	lines := tui.Wrap(n.text, max(1, width-2))
 	for i, l := range lines {
 		lines[i] = "  " + n.style(l)

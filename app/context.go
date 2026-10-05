@@ -60,15 +60,20 @@ func (u *usageStats) cacheLabel() string {
 	return fmt.Sprintf("cache %d%%", pct(u.last.CachedTokens, u.last.PromptTokens))
 }
 
-// contextBlock is the /context report.
-type contextBlock struct{ lines []string }
+// contextBlock is the /context report. Its lines are set when it is made.
+type contextBlock struct {
+	lines []string
+	cache tui.RenderCache[struct{}]
+}
 
 func (c *contextBlock) Render(width int) []string {
-	out := make([]string, len(c.lines))
-	for i, l := range c.lines {
-		out[i] = tui.Truncate("  "+l, width, "…")
-	}
-	return out
+	return c.cache.Render(width, struct{}{}, func() []string {
+		out := make([]string, len(c.lines))
+		for i, l := range c.lines {
+			out[i] = tui.Truncate("  "+l, width, "…")
+		}
+		return out
+	})
 }
 
 func (a *App) cmdContext(arg string) {

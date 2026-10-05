@@ -92,6 +92,8 @@ type TUI struct {
 	bar         scrollbar // see scrollbar.go
 
 	anchor anchorState // keeps the view put while the body changes, see anchor.go
+	// Per-line work reused from the previous frame, see lineMemo.
+	padMemo, prepMemo lineMemo
 
 	// FullRepaint rewrites every visible row, from column 1, on every frame
 	// that changes anything, instead of only the rows that differ. It trades
@@ -276,7 +278,22 @@ func (t *TUI) loop() {
 // Render returns the inline-mode content: body followed by footer.
 func (t *TUI) Render(width int) []string {
 	inner := t.innerWidth(width)
-	return append(t.pad(t.Body.Render(inner)), t.pad(t.Footer.Render(inner))...)
+	return append(t.padBody(t.Body.Render(inner)), t.pad(t.Footer.Render(inner))...)
+}
+
+// padBody is pad for the body, whose lines mostly are those of the last
+// frame.
+func (t *TUI) padBody(lines []string) []string {
+	if t.PaddingX <= 0 {
+		return lines
+	}
+	margin := strings.Repeat(" ", t.PaddingX)
+	return t.padMemo.apply(lines, t.PaddingX, func(l string) string {
+		if l == "" {
+			return l
+		}
+		return margin + l
+	})
 }
 
 func (t *TUI) innerWidth(width int) int { return max(1, width-2*t.PaddingX) }
@@ -340,7 +357,7 @@ type cursorPos struct{ row, col int }
 
 // prepareLines flattens embedded newlines, extracts the cursor marker,
 // truncates overflowing lines and appends a style reset to each line.
-func prepareLines(raw []string, width, height int) ([]string, *cursorPos) {
+func (t *TUI) prepareLines(raw []string, width, height int) ([]string, *cursorPos) {
 	lines := make([]string, 0, len(raw))
 	for _, l := range raw {
 		if strings.IndexByte(l, '\n') >= 0 {
@@ -360,7 +377,7 @@ func prepareLines(raw []string, width, height int) ([]string, *cursorPos) {
 		}
 	}
 
-	for i, l := range lines {
+	return t.prepMemo.apply(lines, width, func(l string) string {
 		l = StripWrapMarks(l)
 		if strings.IndexByte(l, '\t') >= 0 {
 			l = strings.ReplaceAll(l, "\t", "   ")
@@ -368,9 +385,8 @@ func prepareLines(raw []string, width, height int) ([]string, *cursorPos) {
 		if VisibleWidth(l) > width {
 			l = Truncate(l, width, "")
 		}
-		lines[i] = l + Reset
-	}
-	return lines, cur
+		return l + Reset
+	}), cur
 }
 
 func (t *TUI) doRender() {
@@ -396,7 +412,7 @@ func (t *TUI) doRender() {
 		return (target - viewportTop) - (hw - prevViewportTop)
 	}
 
-	newLines, cur := prepareLines(t.Render(width), width, height)
+	newLines, cur := t.prepareLines(t.Render(width), width, height)
 	prev := t.prevLines
 
 	commit := func() {
@@ -602,7 +618,7 @@ func (t *TUI) doRenderFullscreen() {
 	width, height := t.term.Size()
 	inner := t.fullscreenWidth(width)
 	anchor, anchored := t.anchorBefore()
-	body := t.pad(t.Body.Render(inner))
+	body := t.padBody(t.Body.Render(inner))
 
 	// Keep the view anchored while scrolled up and the body changes height:
 	// to the line at its top (see anchor.go), else to the bottom, for output
@@ -666,7 +682,7 @@ func (t *TUI) doRenderFullscreen() {
 	}
 	t.decorate(frame, gap, start, end-start, len(body), width)
 	frame = append(frame, footer...)
-	lines, cur := prepareLines(frame, width, height)
+	lines, cur := t.prepareLines(frame, width, height)
 
 	full := t.prevWidth != width || t.prevHeight != height || len(t.prevFrame) != len(lines)
 	changed := full
