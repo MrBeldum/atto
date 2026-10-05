@@ -214,6 +214,7 @@ func (a *App) cmdClear(string) {
 	}
 	a.reset()
 	a.newSession()
+	a.sessionStartHook("clear")
 	a.notice("Started a new conversation.")
 }
 

@@ -15,6 +15,7 @@ import (
 
 	"atto/agent"
 	"atto/config"
+	"atto/hooks"
 	"atto/provider"
 	"atto/session"
 )
@@ -160,6 +161,17 @@ func RunPrint(o PrintOptions) error {
 	ag.SetStart(start)
 	ag.SetSession(sess.ID, sessionEnv(sess.ID))
 	ag.MaxSteps = o.MaxSteps
+	hookCfg, err := config.LoadHooks(cwd)
+	if err != nil {
+		return err
+	}
+	if hr := hooks.New(hookCfg, cwd); hr != nil {
+		hr.SetSession(sess.ID, sess.Path)
+		ag.Hooks = hr
+		for _, n := range hr.SessionStart(context.Background(), "startup") {
+			fmt.Fprintln(os.Stderr, n)
+		}
+	}
 	ag.Restore(entries)
 	if !o.NoSave {
 		ag.Record = sess.Append
@@ -299,6 +311,11 @@ func (p *printer) event(ev any, res *printResult) {
 		addUsage(res, e.Usage)
 	case agent.CompactEnd:
 		p.emit(map[string]any{"type": "compaction", "tokens_before": e.Before, "tokens_after": e.After})
+	case agent.HookNotice:
+		p.emit(map[string]any{"type": "hook", "event": e.Event, "message": e.Message, "blocked": e.Blocked})
+		if p.format == "" || p.format == "text" {
+			fmt.Fprintf(p.errOut, "⚑ %s: %s\n", e.Event, e.Message)
+		}
 	}
 }
 

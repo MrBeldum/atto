@@ -19,6 +19,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -69,6 +70,51 @@ type Settings struct {
 	// StatusLine replaces the built-in status line with a command's output,
 	// like Claude Code's statusLine setting.
 	StatusLine *StatusLine `json:"statusLine,omitempty"`
+	// Hooks maps an event name (PreToolUse, PostToolUse, UserPromptSubmit,
+	// Stop, PreCompact, SessionStart) to matchers, in Claude Code's format.
+	Hooks map[string][]HookMatcher `json:"hooks,omitempty"`
+}
+
+// HookMatcher selects hooks by tool name (regexp; "" or "*" match all).
+type HookMatcher struct {
+	Matcher string     `json:"matcher,omitempty"`
+	Hooks   []HookSpec `json:"hooks"`
+}
+
+// HookSpec is one hook: a shell command, or an HTTP endpoint that receives
+// the event JSON as a POST body.
+type HookSpec struct {
+	Type    string            `json:"type"` // "command" or "http"
+	Command string            `json:"command,omitempty"`
+	URL     string            `json:"url,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Timeout int               `json:"timeout,omitempty"` // seconds, default 60
+}
+
+// ProjectSettingsPath is a project's own settings file (hooks only).
+func ProjectSettingsPath(cwd string) string { return filepath.Join(cwd, ".atto", "settings.json") }
+
+// LoadHooks merges user hooks (~/.atto/settings.json) with project hooks
+// (<cwd>/.atto/settings.json); project hooks run after user hooks.
+func LoadHooks(cwd string) (map[string][]HookMatcher, error) {
+	out := map[string][]HookMatcher{}
+	for _, path := range []string{SettingsPath(), ProjectSettingsPath(cwd)} {
+		data, err := os.ReadFile(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		var s Settings
+		if err := json.Unmarshal(data, &s); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		for ev, ms := range s.Hooks {
+			out[ev] = append(out[ev], ms...)
+		}
+	}
+	return out, nil
 }
 
 // StatusLine configures a custom status line. The command runs with a JSON

@@ -21,6 +21,51 @@ import (
 	"atto/session"
 )
 
+// HookOutcome is what hooks decided for one event.
+type HookOutcome struct {
+	Block      bool   // deny the tool call / reject the prompt / keep going (Stop)
+	Reason     string // shown to the model (and user) when blocking
+	Context    string // extra context to add for the model
+	Stop       bool   // "continue": false — end the turn now
+	StopReason string
+	Notices    []string // messages for the user (hook errors, output)
+}
+
+// Hooks lets user-configured hooks observe and steer the loop. Implemented
+// by package hooks; nil means no hooks.
+type Hooks interface {
+	UserPromptSubmit(ctx context.Context, prompt string) HookOutcome
+	PreToolUse(ctx context.Context, args BashArgs) (BashArgs, HookOutcome)
+	PostToolUse(ctx context.Context, args BashArgs, res BashResult, output string) HookOutcome
+	Stop(ctx context.Context, active bool) HookOutcome
+	PreCompact(ctx context.Context, auto bool) HookOutcome
+}
+
+// HookNotice reports something a hook did, for display.
+type HookNotice struct {
+	Event   string
+	Message string
+	Blocked bool
+}
+
+// ErrPromptBlocked is returned when a UserPromptSubmit hook rejects input.
+var ErrPromptBlocked = errors.New("prompt blocked by hook")
+
+// ErrStoppedByHook is returned when a hook asks to stop the turn.
+var ErrStoppedByHook = errors.New("stopped by hook")
+
+func emitHook(emit func(any), event string, o HookOutcome) {
+	for _, n := range o.Notices {
+		emit(HookNotice{Event: event, Message: n})
+	}
+	switch {
+	case o.Stop:
+		emit(HookNotice{Event: event, Message: "stopped the turn: " + o.StopReason, Blocked: true})
+	case o.Block:
+		emit(HookNotice{Event: event, Message: o.Reason, Blocked: true})
+	}
+}
+
 // ErrMaxSteps is returned by Run when MaxSteps model calls were made.
 var ErrMaxSteps = errors.New("stopped: reached the maximum number of steps")
 
@@ -82,6 +127,8 @@ type Agent struct {
 	messages []provider.Message
 	// MaxSteps stops a turn after this many model calls (0: unlimited).
 	MaxSteps int
+	// Hooks, if set, run around prompts, tool calls, stops and compaction.
+	Hooks Hooks
 
 	// LastUsage is the usage of the most recent model call.
 	LastUsage provider.Usage
@@ -363,12 +410,25 @@ func (a *Agent) request(extra ...provider.Message) (*provider.Client, provider.R
 // Compaction runs automatically before the turn and between tool calls
 // when the context passes AutoCompactLimit.
 func (a *Agent) Run(ctx context.Context, input string, emit func(any)) error {
+	if a.Hooks != nil {
+		o := a.Hooks.UserPromptSubmit(ctx, input)
+		emitHook(emit, "UserPromptSubmit", o)
+		switch {
+		case o.Stop:
+			return ErrStoppedByHook
+		case o.Block:
+			return ErrPromptBlocked
+		case o.Context != "":
+			input += "\n\n" + o.Context
+		}
+	}
 	if a.needsCompact() {
 		if err := a.compact(ctx, emit, true); err != nil {
 			return err
 		}
 	}
 	a.appendMessage(provider.Message{Role: "user", Content: input}, session.Entry{})
+	stopHookActive := false
 
 	for step := 1; ; step++ {
 		if a.MaxSteps > 0 && step > a.MaxSteps {
@@ -416,8 +476,20 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(any)) error {
 			if a.commitSteers(emit) {
 				continue
 			}
+			if a.Hooks != nil {
+				// A Stop hook may block stopping and give the model a reason
+				// to keep working (once per turn, as in Claude Code).
+				o := a.Hooks.Stop(ctx, stopHookActive)
+				emitHook(emit, "Stop", o)
+				if o.Block && o.Reason != "" && !stopHookActive && !o.Stop {
+					stopHookActive = true
+					a.appendMessage(provider.Message{Role: "user", Content: "[Stop hook] " + o.Reason}, session.Entry{})
+					continue
+				}
+			}
 			return nil
 		}
+		stopTurn := false
 		for _, tc := range res.Message.ToolCalls {
 			var content string
 			var meta session.Entry
@@ -425,12 +497,17 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(any)) error {
 				content = "[canceled by user]"
 				meta.Tool = &session.ToolMeta{Canceled: true, ExitCode: -1}
 			} else {
-				content, meta.Tool = a.runTool(ctx, tc, emit)
+				var stop bool
+				content, meta.Tool, stop = a.runTool(ctx, tc, emit)
+				stopTurn = stopTurn || stop
 			}
 			a.appendMessage(provider.Message{Role: "tool", ToolCallID: tc.ID, Content: content}, meta)
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if stopTurn {
+			return ErrStoppedByHook
 		}
 		a.commitSteers(emit)
 		if a.needsCompact() {
@@ -441,9 +518,9 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(any)) error {
 	}
 }
 
-func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, emit func(any)) (string, *session.ToolMeta) {
-	fail := func(msg string) (string, *session.ToolMeta) {
-		return "error: " + msg, &session.ToolMeta{ExitCode: -1}
+func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, emit func(any)) (string, *session.ToolMeta, bool) {
+	fail := func(msg string) (string, *session.ToolMeta, bool) {
+		return "error: " + msg, &session.ToolMeta{ExitCode: -1}, false
 	}
 	if tc.Function.Name != "bash" {
 		return fail(fmt.Sprintf("unknown tool %q; the only tool is bash", tc.Function.Name))
@@ -458,19 +535,43 @@ func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, emit func(any
 	if args.Description == "" {
 		args.Description = firstLine(args.Command)
 	}
+	if a.Hooks != nil {
+		updated, o := a.Hooks.PreToolUse(ctx, args)
+		emitHook(emit, "PreToolUse", o)
+		if o.Stop {
+			return "[stopped by hook: " + o.StopReason + "]", &session.ToolMeta{Description: args.Description, ExitCode: -1}, true
+		}
+		if o.Block {
+			return "Blocked by a PreToolUse hook: " + o.Reason, &session.ToolMeta{Description: args.Description, ExitCode: -1}, false
+		}
+		args = updated
+	}
 	emit(ToolStart{ID: tc.ID, Args: args, Timeout: args.timeout()})
 	a.cfgMu.Lock()
 	env := a.env
 	a.cfgMu.Unlock()
 	res := RunBash(ctx, a.Cwd, env, args, func(s string) { emit(ToolOutput{ID: tc.ID, Chunk: s}) })
 	emit(ToolEnd{ID: tc.ID, Result: res})
-	return res.ForModel(args), &session.ToolMeta{
+	out := res.ForModel(args)
+	stop := false
+	if a.Hooks != nil {
+		o := a.Hooks.PostToolUse(ctx, args, res, out)
+		emitHook(emit, "PostToolUse", o)
+		if o.Block && o.Reason != "" {
+			out += "\n[PostToolUse hook] " + o.Reason
+		}
+		if o.Context != "" {
+			out += "\n[PostToolUse hook] " + o.Context
+		}
+		stop = o.Stop
+	}
+	return out, &session.ToolMeta{
 		Description: args.Description,
 		ExitCode:    res.ExitCode,
 		DurationMs:  res.Duration.Milliseconds(),
 		TimedOut:    res.TimedOut,
 		Canceled:    res.Canceled,
-	}
+	}, stop
 }
 
 func firstLine(s string) string {
@@ -516,6 +617,9 @@ func (a *Agent) Compact(ctx context.Context, emit func(any)) error {
 func (a *Agent) compact(ctx context.Context, emit func(any), auto bool) error {
 	if len(a.messages) == 0 {
 		return fmt.Errorf("nothing to compact")
+	}
+	if a.Hooks != nil {
+		emitHook(emit, "PreCompact", a.Hooks.PreCompact(ctx, auto))
 	}
 	start := time.Now()
 	before := a.ContextTokens()

@@ -14,6 +14,7 @@ import (
 
 	"atto/agent"
 	"atto/config"
+	"atto/hooks"
 	"atto/session"
 	"atto/tui"
 )
@@ -40,6 +41,7 @@ type App struct {
 	models config.ModelsFile
 	agent  *agent.Agent
 	sess   *session.Writer
+	hooks  *hooks.Runner // nil when no hooks are configured
 
 	editor *tui.Editor
 	modal  modal
@@ -132,8 +134,16 @@ func Run(opts Options) error {
 	if opts.Inline || settings.Renderer == "inline" {
 		a.ui.Mode = tui.Inline
 	}
+	hookCfg, err := config.LoadHooks(cwd)
+	if err != nil {
+		return err
+	}
+	if a.hooks = hooks.New(hookCfg, cwd); a.hooks != nil {
+		a.agent.Hooks = a.hooks
+	}
 	a.build()
 	a.newSession()
+	a.sessionStartHook("startup")
 	a.statusCmd = settings.StatusLine != nil && settings.StatusLine.Command != ""
 	a.startStatusLine(settings.StatusLine)
 	if config.CatalogStale() {
@@ -192,8 +202,24 @@ func (a *App) newSession() {
 	a.agent.Record = a.sess.Append
 	a.agent.SetStart(time.Now())
 	a.agent.SetSession(a.sess.ID, sessionEnv(a.sess.ID))
+	a.hooks.SetSession(a.sess.ID, a.sess.Path)
 	a.recModel, a.recEffort, a.sessName = "", "", ""
 	a.statusTrigger()
+}
+
+// sessionStartHook runs SessionStart hooks in the background.
+func (a *App) sessionStartHook(source string) {
+	if a.hooks == nil {
+		return
+	}
+	go func() {
+		notices := a.hooks.SessionStart(context.Background(), source)
+		a.ui.Do(func() {
+			for _, n := range notices {
+				a.notice("%s", n)
+			}
+		})
+	}()
 }
 
 // sessionEnv lets commands the agent runs find this session ("atto history")
@@ -372,6 +398,8 @@ func (a *App) start(activity string, fn func(context.Context, func(any)) error) 
 			switch {
 			case errors.Is(err, context.Canceled):
 				a.notice("Interrupted.")
+			case errors.Is(err, agent.ErrPromptBlocked), errors.Is(err, agent.ErrStoppedByHook):
+				// The hook's reason was already shown.
 			case err != nil:
 				a.errorNotice(err)
 			}
@@ -436,6 +464,12 @@ func (a *App) onEvent(ev any) {
 		a.pendingSteers = a.pendingSteers[min(len(e.Texts), len(a.pendingSteers)):]
 		a.endStream()
 		a.add(&userBlock{text: strings.Join(e.Texts, "\n\n")})
+	case agent.HookNotice:
+		style := tui.Dim
+		if e.Blocked {
+			style = func(s string) string { return tui.FG(3, s) }
+		}
+		a.add(&noticeBlock{text: "⚑ " + e.Event + ": " + e.Message, style: style})
 	case agent.CompactStart:
 		a.endStream()
 		a.compact = &compactBlock{auto: e.Auto, running: true, expander: expander{d: &a.details}}

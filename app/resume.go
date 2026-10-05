@@ -244,6 +244,8 @@ func (a *App) resume(path string) {
 	a.agent.Record = a.sess.Append
 	a.agent.SetStart(h.Time) // same system prompt as before: keeps the prefix cache
 	a.agent.SetSession(h.ID, sessionEnv(h.ID))
+	a.hooks.SetSession(h.ID, path)
+	a.sessionStartHook("resume")
 	a.agent.Restore(entries)
 	a.ctxTokens = a.agent.ContextTokens()
 	a.usage.fromEntries(entries)
