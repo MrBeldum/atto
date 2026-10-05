@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -786,10 +785,6 @@ Environment:
 - Session started: %s
 `, cwd, runtime.GOOS, runtime.GOARCH, sh.Path, start.Format("2006-01-02"))
 
-	for _, p := range []string{filepath.Join(config.Dir(), "AGENTS.md"), filepath.Join(cwd, "AGENTS.md")} {
-		if data, err := os.ReadFile(p); err == nil && len(strings.TrimSpace(string(data))) > 0 {
-			fmt.Fprintf(&b, "\n# Instructions from %s\n\n%s\n", p, strings.TrimSpace(string(data)))
-		}
-	}
+	writeInstructions(&b, loadInstructions(cwd))
 	return b.String()
 }
