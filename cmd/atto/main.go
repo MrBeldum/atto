@@ -12,6 +12,7 @@ import (
 	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/server"
+	"github.com/sebastianrcnt/atto/update"
 )
 
 const usage = `atto — a terminal coding harness
@@ -27,6 +28,7 @@ usage:
   atto history grep|show ...        search a session transcript
   atto job|monitor|timer|sleep ...  background jobs and wake-ups (atto job for details)
   atto goal [complete|blocked|set]  the session goal (set one with /goal or -goal)
+  atto update [-check]              install the latest release
   atto serve [-listen addr]         JSON-RPC over HTTP + SSE, with a web client
   atto app-server                   JSON-RPC over stdio (JSON lines)
 
@@ -36,21 +38,25 @@ flags:
 // nestedRefused are the commands an atto agent may not run from its shell:
 // starting another agent (which would recurse and spend tokens unseen) or
 // changing credentials. "" is atto itself (interactive or -p).
-var nestedRefused = map[string]bool{"": true, "serve": true, "app-server": true, "login": true, "logout": true, "auth": true}
+var nestedRefused = map[string]bool{"": true, "serve": true, "app-server": true, "login": true, "logout": true, "auth": true, "update": true}
 
 func refuseNested(cmd string) {
 	if !config.InAgent() || !nestedRefused[cmd] {
 		return
 	}
 	what := "start another atto agent"
-	if cmd == "login" || cmd == "logout" || cmd == "auth" {
+	switch cmd {
+	case "login", "logout", "auth":
 		what = "change atto's credentials"
+	case "update":
+		what = "replace the atto binary"
 	}
 	fmt.Fprintf(os.Stderr, "atto: commands run by an atto agent can't %s (%s is set). Do the work in this session instead; for background work use atto job.\n", what, config.EnvAgent)
 	os.Exit(2)
 }
 
 func main() {
+	update.Cleanup()
 	if len(os.Args) > 1 {
 		refuseNested(os.Args[1])
 		sub := map[string]func([]string, io.Writer) error{
@@ -62,6 +68,7 @@ func main() {
 			"timer":      app.RunTimer,
 			"sleep":      app.RunSleep,
 			"goal":       app.RunGoal,
+			"update":     app.RunUpdate,
 			"_supervise": app.RunSupervise,
 			"login":      app.RunLogin,
 			"logout":     app.RunLogout,

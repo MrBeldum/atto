@@ -82,6 +82,9 @@ type Settings struct {
 	// Hooks maps an event name (PreToolUse, PostToolUse, UserPromptSubmit,
 	// Stop, PreCompact, SessionStart) to matchers, in Claude Code's format.
 	Hooks map[string][]HookMatcher `json:"hooks,omitempty"`
+	// UpdateCheck: false stops the once-a-day release check (a GET to the
+	// GitHub API). atto never installs updates by itself either way.
+	UpdateCheck *bool `json:"updateCheck,omitempty"`
 }
 
 // HookMatcher selects hooks by tool name (regexp; "" or "*" match all).

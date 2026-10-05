@@ -21,9 +21,11 @@ import (
 	"github.com/sebastianrcnt/atto/jobs"
 	"github.com/sebastianrcnt/atto/session"
 	"github.com/sebastianrcnt/atto/tui"
+	"github.com/sebastianrcnt/atto/update"
 )
 
-const Version = "0.0.3-dev"
+// Version is the release this binary was built from (see update.Current).
+var Version = update.Current()
 
 type Options struct {
 	Inline   bool   // render inline instead of fullscreen
@@ -181,6 +183,9 @@ func Run(opts Options) error {
 		return err
 	}
 	go a.watchInbox()
+	if settings.UpdateCheck == nil || *settings.UpdateCheck {
+		go a.checkUpdate()
+	}
 	<-a.quit
 	a.ui.Do(func() {
 		if a.cancel != nil {
