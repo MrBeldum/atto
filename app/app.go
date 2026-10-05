@@ -530,7 +530,7 @@ func (a *App) renderActivity(width int) []string {
 	}
 	el := time.Since(a.runStart)
 	frame := spinnerFrames[int(el/(80*time.Millisecond))%len(spinnerFrames)]
-	line := tui.FG(6, frame) + " " + a.activity + "…" + tui.Dim("  "+tui.FormatDuration(el.Truncate(time.Second))+" · esc to interrupt")
+	line := tui.FG(6, frame) + " " + a.activity + "…" + tui.Dim("  "+tui.FormatDuration(el.Truncate(100*time.Millisecond))+" · esc to interrupt")
 	return []string{"", tui.Truncate(line, width, "…")}
 }
 

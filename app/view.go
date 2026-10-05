@@ -279,7 +279,9 @@ func (b *toolBlock) Render(width int) []string {
 	if i := strings.IndexByte(cmd, '\n'); i >= 0 {
 		cmd = cmd[:i] + " …"
 	}
-	head := icon + " " + tui.Bold(b.args.Description) + tui.Dim(" · ") + tui.Dim(status) + "  " + tui.Dim("$ "+cmd)
+	// The command goes on its own line: next to the description it got cut
+	// off on narrow terminals.
+	head := icon + " " + tui.Bold(b.args.Description) + tui.Dim(" · ") + tui.Dim(status)
 	out := []string{tui.Truncate(head, width, tui.Dim("…"))}
 
 	multiLine := strings.Contains(strings.TrimSpace(b.args.Command), "\n")
@@ -288,9 +290,15 @@ func (b *toolBlock) Render(width int) []string {
 	expanded := collapsible && b.expanded()
 
 	if expanded && multiLine {
-		for _, l := range strings.Split(strings.TrimSpace(b.args.Command), "\n") {
-			out = append(out, tui.Truncate(tui.Dim("    $ "+l), width, tui.Dim("…")))
+		for i, l := range strings.Split(strings.TrimSpace(b.args.Command), "\n") {
+			prefix := "    "
+			if i == 0 {
+				prefix = "  $ "
+			}
+			out = append(out, tui.Truncate(tui.Dim(prefix+l), width, tui.Dim("…")))
 		}
+	} else {
+		out = append(out, tui.Truncate(tui.Dim("  $ "+cmd), width, tui.Dim("…")))
 	}
 	hidden := 0
 	if !expanded && len(lines) > toolPreviewLines {

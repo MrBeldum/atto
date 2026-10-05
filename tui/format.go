@@ -6,19 +6,19 @@ import (
 	"time"
 )
 
-// FormatDuration is a short duration: 850ms, 12s, 3.4s, 2m05s.
+// FormatDuration is a short duration that keeps its width while it
+// counts: 0.8s, 12.0s, 39.9s under a minute (always one decimal, so the
+// number doesn't jump between "2.9s" and "3s"), then 2m05s. Below 0.1s,
+// where one decimal would read 0.0s, it's milliseconds: 5ms.
 func FormatDuration(d time.Duration) string {
-	switch {
-	case d < time.Second:
+	if d < 100*time.Millisecond {
 		return fmt.Sprintf("%dms", d.Milliseconds())
-	case d < time.Minute && d%time.Second == 0:
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	case d < time.Minute:
-		return fmt.Sprintf("%.1fs", d.Seconds())
-	default:
-		m := int(d.Minutes())
-		return fmt.Sprintf("%dm%02ds", m, int(d.Seconds())-60*m)
 	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	m := int(d.Minutes())
+	return fmt.Sprintf("%dm%02ds", m, int(d.Seconds())-60*m)
 }
 
 // FormatTokens is a token count: 950, 12.5k, 1.2M.
