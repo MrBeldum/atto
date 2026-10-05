@@ -1,0 +1,149 @@
+package server
+
+import (
+	"strings"
+
+	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/core/transcript"
+	"github.com/sebastianrcnt/atto/images"
+	"github.com/sebastianrcnt/atto/provider"
+)
+
+// Live is a conversation another front end runs, such as the TUI's own
+// session under /remote. A server made with NewLive serves it as its only
+// thread, with the same protocol and web client as its own threads: the
+// thread ID is the session ID, and when the front end switches sessions
+// (/clear, /resume) the server says so with thread/switched.
+//
+// The methods are called from HTTP handlers, concurrently: an
+// implementation runs them on its own goroutine or under its own lock.
+type Live interface {
+	// Thread describes the conversation; with items, its transcript so
+	// far, items still streaming included as they stand. at, when not nil,
+	// is called while the snapshot is taken, with no notification of the
+	// live thread published in between, so a client knows from which event
+	// on to follow it.
+	Thread(items bool, at func()) (ThreadInfo, error)
+	// Model is the model in use, which decides whether images are taken.
+	Model() config.ModelRef
+	// Send delivers input as if typed in the front end: a new turn when
+	// idle; while a turn runs, a steer or a queued turn. It reports which
+	// ("started", "steered" or "queued") and the turn it started.
+	Send(input string, images []provider.Image) (status, turnID string, err error)
+	// Interrupt stops what runs, as Esc does; false when nothing runs.
+	Interrupt() bool
+	// Background moves the running command to the background, as Ctrl+B
+	// does; false when no command runs.
+	Background() bool
+	SetModel(id string) (ThreadInfo, error)
+	SetEffort(level string) (ThreadInfo, error)
+}
+
+// NewLive makes a server for one live conversation. Its notifications
+// come from the front end through Publish.
+func NewLive(version string, live Live) *Server {
+	return &Server{Version: version, live: live, threads: map[string]*thread{}, Notify: func(string, map[string]any) {}, stop: make(chan struct{})}
+}
+
+// Publish sends a notification of the live thread to clients. The front
+// end calls it in the order things happen, from one goroutine at a time.
+func (s *Server) Publish(method string, params map[string]any) { s.Notify(method, params) }
+
+// WireItem is the protocol form of a transcript item.
+func WireItem(it *transcript.Item) Item { return wireItem(it) }
+
+// liveCall serves the protocol for a live conversation.
+func (s *Server) liveCall(method string, p threadParams) (any, error) {
+	l := s.live
+	cur := func() (ThreadInfo, error) {
+		info, err := l.Thread(false, nil)
+		if err != nil {
+			return info, err
+		}
+		if p.ThreadID != "" && p.ThreadID != info.ID {
+			return info, invalid("thread %q is no longer the live session (now %q): thread/read it", p.ThreadID, info.ID)
+		}
+		return info, nil
+	}
+	switch method {
+	case "initialize":
+		info, err := l.Thread(false, nil)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"name": "atto", "version": s.Version, "protocolVersion": ProtocolVersion, "live": true, "threadId": info.ID, "eventId": s.eventSeq()}, nil
+	case "models/list":
+		return s.listModels()
+	case "thread/list":
+		info, err := l.Thread(false, nil)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"threads": []map[string]any{{
+			"threadId": info.ID, "name": info.Name, "cwd": info.Cwd, "loaded": true, "live": true,
+		}}}, nil
+	case "thread/start":
+		return nil, &rpcError{codeServer, "this is atto's live session: send /clear to start a new conversation"}
+	case "thread/read", "thread/resume":
+		var seq int64
+		info, err := l.Thread(true, func() { seq = s.eventSeq() })
+		if err != nil {
+			return nil, err
+		}
+		if p.ThreadID != "" && p.ThreadID != info.ID {
+			return nil, invalid("thread %q is no longer the live session (now %q)", p.ThreadID, info.ID)
+		}
+		info.EventID = seq
+		info.Live = true
+		return info, nil
+	case "thread/setModel":
+		if _, err := cur(); err != nil {
+			return nil, err
+		}
+		return l.SetModel(p.Model)
+	case "thread/setEffort":
+		if _, err := cur(); err != nil {
+			return nil, err
+		}
+		return l.SetEffort(p.Effort)
+	case "thread/compact":
+		if _, err := cur(); err != nil {
+			return nil, err
+		}
+		_, turnID, err := l.Send("/compact", nil)
+		return map[string]any{"turnId": turnID}, err
+	case "turn/start", "turn/steer":
+		if _, err := cur(); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(p.Input) == "" && len(p.Images) == 0 {
+			return nil, invalid("input is required")
+		}
+		imgs, err := turnImages(p.Images, l.Model())
+		if err != nil {
+			return nil, err
+		}
+		status, turnID, err := l.Send(images.WithPlaceholders(p.Input, imgs), imgs)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"status": status, "turnId": turnID}, nil
+	case "turn/interrupt":
+		if _, err := cur(); err != nil {
+			return nil, err
+		}
+		l.Interrupt()
+		return nil, nil
+	case "turn/background":
+		if _, err := cur(); err != nil {
+			return nil, err
+		}
+		if !l.Background() {
+			return nil, &rpcError{codeServer, "no command is running that can move to the background"}
+		}
+		return nil, nil
+	case "thread/rollback":
+		return nil, &rpcError{codeServer, "not available for the live session: use /tree in the terminal"}
+	}
+	return nil, &rpcError{codeMethodNotFound, "unknown method " + method}
+}

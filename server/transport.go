@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
-	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -20,6 +19,7 @@ import (
 	"time"
 
 	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/server/web"
 )
 
 // ServeStdio speaks JSON-RPC as JSON lines on r/w (codex app-server style):
@@ -109,22 +109,41 @@ func (b *broker) unsubscribe(ch chan sseEvent) {
 	b.mu.Unlock()
 }
 
-//go:embed web/index.html
-var webFS embed.FS
+// last is the ID of the latest event.
+func (b *broker) last() int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.seq
+}
+
+// clients counts the subscribers.
+func (b *broker) clients() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.subs)
+}
 
 // TokenPath stores the HTTP server's bearer token.
 func TokenPath() string { return filepath.Join(config.Dir(), "server-token") }
+
+// NewToken returns a random token of n bytes, hex encoded.
+func NewToken(n int) (string, error) {
+	raw := make([]byte, n)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(raw), nil
+}
 
 // LoadOrCreateToken returns the persistent server token.
 func LoadOrCreateToken() (string, error) {
 	if b, err := os.ReadFile(TokenPath()); err == nil && len(strings.TrimSpace(string(b))) >= 16 {
 		return strings.TrimSpace(string(b)), nil
 	}
-	raw := make([]byte, 24)
-	if _, err := rand.Read(raw); err != nil {
+	tok, err := NewToken(24)
+	if err != nil {
 		return "", err
 	}
-	tok := hex.EncodeToString(raw)
 	if err := os.MkdirAll(config.Dir(), 0o755); err != nil {
 		return "", err
 	}
@@ -135,14 +154,20 @@ func LoadOrCreateToken() (string, error) {
 //
 //	POST /rpc      one JSON-RPC request in the body, response in the reply
 //	GET  /events   notifications as Server-Sent Events (resumable)
-//	GET  /         a minimal web client
+//	GET  /         the web client (server/web), and its assets
 //
-// Every request except "/" needs the token, as "Authorization: Bearer"
-// or ?token= (EventSource cannot set headers).
+// Every request except the web client's files needs the token, as
+// "Authorization: Bearer" or ?token= (EventSource cannot set headers).
 func (s *Server) HTTPHandler(token string) http.Handler {
 	b := newBroker(10000)
+	s.events = b
 	s.Notify = func(method string, params map[string]any) {
 		b.publish(rpcNotification{JSONRPC: "2.0", Method: method, Params: params})
+	}
+	clients := func() {
+		if s.OnClients != nil {
+			s.OnClients(b.clients()) // outside the broker's lock: the hook may wait for a UI
+		}
 	}
 	authed := func(r *http.Request) bool {
 		got := r.URL.Query().Get("token")
@@ -152,10 +177,12 @@ func (s *Server) HTTPHandler(token string) http.Handler {
 		return subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		page, _ := webFS.ReadFile("web/index.html")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(page)
+	files := http.FileServerFS(web.FS())
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		// Revalidate: the files change with the binary, and the asset URLs
+		// carry their hash anyway.
+		w.Header().Set("Cache-Control", "no-cache")
+		files.ServeHTTP(w, r)
 	})
 	mux.HandleFunc("POST /rpc", func(w http.ResponseWriter, r *http.Request) {
 		if !authed(r) {
@@ -190,6 +217,8 @@ func (s *Server) HTTPHandler(token string) http.Handler {
 			last, _ = strconv.ParseInt(q, 10, 64)
 		}
 		backlog, ch := b.subscribe(last)
+		clients()
+		defer clients()
 		defer b.unsubscribe(ch)
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")

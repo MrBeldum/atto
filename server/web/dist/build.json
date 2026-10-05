@@ -1,0 +1,9 @@
+{
+  "source": "9b551d6ebd1476f60b430ad7f47a8075b4d3d6cd0c6eb9bef8533b163a826fdd",
+  "preact": "11.0.0",
+  "tailwind": "v4.3.3",
+  "assets": {
+    "app.css": "ab1a8d1e5018",
+    "app.js": "cd439b553346"
+  }
+}

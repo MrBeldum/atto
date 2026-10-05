@@ -9,7 +9,7 @@
 //
 // Requests:
 //
-//	initialize                                     → {name, version, protocolVersion}
+//	initialize                                     → {name, version, protocolVersion, eventId}
 //	models/list                                    → {models: [{id, name, contextWindow, efforts, hasKey, images}]}
 //	thread/start   {cwd?, model?, effort?}         → thread + context
 //	thread/resume  {threadId}                      → thread + items + context
@@ -42,6 +42,15 @@
 //	thread/reloaded {context, changes, promptChanged, error?}  (atto reload run by the agent)
 //	extension/notify {extension, message, level}  (ctx.ui.notify; extensions have no other UI here)
 //	turn/completed {turnId, status, error?, usage, contextTokens}
+//
+// Live session (atto's /remote, see Live): the server has one thread, the
+// TUI's session. initialize says {live: true, threadId}; thread/start and
+// thread/rollback are refused; turn/start and turn/steer both send the
+// input as if typed in the terminal (a turn, a steer or a queued turn:
+// {status, turnId}). More notifications:
+//
+//	thread/switched {threadId, previousThreadId}  (/clear, /resume or /tree in the terminal: thread/read again)
+//	thread/updated  {thread}  (model, effort, name or busy changed)
 package server
 
 import (
@@ -154,4 +163,10 @@ type ThreadInfo struct {
 	Items         []Item   `json:"items,omitempty"`
 	// Context is set in thread/start and thread/resume results.
 	Context *core.Loaded `json:"context,omitempty"`
+	// EventID, in thread/read and thread/resume results over HTTP, is the
+	// latest event published when the items were read: follow the thread
+	// from there (GET /events?lastEventId=).
+	EventID int64 `json:"eventId,omitempty"`
+	// Live marks the TUI's own session served by /remote.
+	Live bool `json:"live,omitempty"`
 }

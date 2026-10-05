@@ -30,9 +30,15 @@ type Server struct {
 	Cwd     string // default working directory for new threads
 	Notify  func(method string, params map[string]any)
 
+	// OnClients, when set, hears how many clients follow the event stream
+	// as it changes (set before HTTPHandler).
+	OnClients func(n int)
+
 	mu      sync.Mutex
 	threads map[string]*thread
 	stop    chan struct{}
+	live    Live    // set by NewLive: the one conversation served
+	events  *broker // the HTTP transport's, for eventSeq
 }
 
 func New(version, cwd string) *Server {
@@ -164,6 +170,15 @@ func (t *thread) info() ThreadInfo {
 	}
 }
 
+// eventSeq is the ID of the latest event the HTTP transport published (0
+// without one): a client that reads a thread follows its events from there.
+func (s *Server) eventSeq() int64 {
+	if s.events == nil {
+		return 0
+	}
+	return s.events.last()
+}
+
 // --- dispatch ---
 
 // Handle processes one JSON-RPC message and returns the response (nil for
@@ -226,9 +241,12 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 	if err != nil {
 		return nil, err
 	}
+	if s.live != nil {
+		return s.liveCall(method, p)
+	}
 	switch method {
 	case "initialize":
-		return map[string]any{"name": "atto", "version": s.Version, "protocolVersion": ProtocolVersion}, nil
+		return map[string]any{"name": "atto", "version": s.Version, "protocolVersion": ProtocolVersion, "eventId": s.eventSeq()}, nil
 	case "models/list":
 		return s.listModels()
 	case "thread/start":
@@ -244,6 +262,7 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 		defer t.mu.Unlock()
 		info := t.info()
 		info.Items = append([]Item(nil), t.items...)
+		info.EventID = s.eventSeq()
 		return info, nil
 	case "thread/list":
 		return s.listThreads(p)
@@ -403,6 +422,7 @@ func (s *Server) resumeThread(id string) (any, error) {
 		defer existing.mu.Unlock()
 		info := existing.info()
 		info.Items = append([]Item(nil), existing.items...)
+		info.EventID = s.eventSeq()
 		return info, nil
 	}
 	path, err := session.Find(id)
@@ -439,6 +459,7 @@ func (s *Server) resumeThread(id string) (any, error) {
 	defer t.mu.Unlock()
 	info := t.info()
 	info.Items = append([]Item(nil), t.items...)
+	info.EventID = s.eventSeq()
 	loaded := t.loaded
 	info.Context = &loaded
 	return info, nil

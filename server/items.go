@@ -68,7 +68,7 @@ func wireItem(it *transcript.Item) Item {
 	case transcript.Assistant:
 		w.Type = ItemAgent
 	case transcript.Reasoning:
-		w.Type = ItemReasoning
+		w.Type, w.DurationMs = ItemReasoning, it.Duration.Milliseconds()
 	case transcript.Event:
 		w.Type = ItemEvent
 	case transcript.Goal:

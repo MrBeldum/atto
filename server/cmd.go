@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/sebastianrcnt/atto/config"
@@ -26,6 +27,23 @@ func RunStdio(version string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	return New(version, cwd).ServeStdio(ctx, os.Stdin, os.Stdout)
+}
+
+// TLSWarning is said when the web client is served beyond this machine.
+const TLSWarning = "warning: listening beyond this machine without TLS; prefer a private network such as Tailscale."
+
+// WebLinks are the web client's links, token included, for a server
+// listening on addr: one per host it can be reached at (see URLHosts).
+func WebLinks(addr, token string) []string {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, h := range URLHosts(addr) {
+		out = append(out, "http://"+net.JoinHostPort(strings.Trim(h, "[]"), port)+"/#token="+token)
+	}
+	return out
 }
 
 // RunHTTP implements "atto serve": the protocol over HTTP + SSE plus the
@@ -54,13 +72,7 @@ func RunHTTP(version string, args []string, out io.Writer) error {
 	srv := &http.Server{Handler: New(version, cwd).HTTPHandler(token), ReadHeaderTimeout: 10 * time.Second}
 
 	addr := ln.Addr().String()
-	fmt.Fprintf(out, "atto %s serving %s\n", version, cwd)
-	fmt.Fprintf(out, "  web:    http://%s/#token=%s\n", addr, token)
-	fmt.Fprintf(out, "  rpc:    POST http://%s/rpc   events: GET http://%s/events  (Authorization: Bearer <token>)\n", addr, addr)
-	fmt.Fprintf(out, "  token:  %s\n", TokenPath())
-	if !IsLoopback(addr) {
-		fmt.Fprintln(out, "  warning: listening beyond this machine without TLS; prefer a private network such as Tailscale.")
-	}
+	banner(out, version, cwd, addr, token)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -74,4 +86,32 @@ func RunHTTP(version string, args []string, out io.Writer) error {
 		return err
 	}
 	return nil
+}
+
+// banner says where atto serve listens: the web client's links, and
+// beyond this machine the TLS warning and a QR code of the first link.
+func banner(out io.Writer, version, cwd, addr, token string) {
+	fmt.Fprintf(out, "atto %s serving %s\n", version, cwd)
+	links := WebLinks(addr, token)
+	if len(links) == 0 {
+		links = []string{"http://" + addr + "/#token=" + token}
+	}
+	for i, l := range links {
+		label := "  web:    "
+		if i > 0 {
+			label = "          "
+		}
+		fmt.Fprintln(out, label+l)
+	}
+	fmt.Fprintf(out, "  rpc:    POST http://%s/rpc   events: GET http://%s/events  (Authorization: Bearer <token>)\n", addr, addr)
+	fmt.Fprintf(out, "  token:  %s\n", TokenPath())
+	if !IsLoopback(addr) {
+		fmt.Fprintln(out, "  "+TLSWarning)
+		if lines, err := QR(links[0]); err == nil {
+			fmt.Fprintln(out)
+			for _, l := range lines {
+				fmt.Fprintln(out, "  "+l)
+			}
+		}
+	}
 }
