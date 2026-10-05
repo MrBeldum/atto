@@ -261,8 +261,6 @@ func (b *toolBlock) status() (icon, status string) {
 		return tui.FG(6, "◐"), tui.FG(6, fmt.Sprintf("running in background (job %d)", b.res.Job))
 	case b.res.Job > 0:
 		return tui.FG(6, "◐"), tui.FG(6, fmt.Sprintf("moved to background (job %d)", b.res.Job)) + tui.Dim(" · after "+tui.FormatDuration(b.res.Duration))
-	case b.res.Err != nil:
-		return tui.FG(1, "✗"), tui.FG(1, b.res.Err.Error())
 	case b.res.Canceled:
 		return tui.FG(1, "✗"), tui.FG(1, "canceled")
 	case b.res.TimedOut:
