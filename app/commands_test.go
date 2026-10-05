@@ -61,8 +61,8 @@ func TestSuggestionList(t *testing.T) {
 		t.Fatalf("tab completes the selection: %q", got)
 	}
 
-	a.editor.SetText("/go")
-	if !a.suggestionKey("enter") || a.editor.Text() != "/goal " {
+	a.editor.SetText("/na")
+	if !a.suggestionKey("enter") || a.editor.Text() != "/name " {
 		t.Fatalf("enter on a command with a required argument only completes it: %q", a.editor.Text())
 	}
 	a.editor.SetText("/cle")

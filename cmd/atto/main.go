@@ -38,7 +38,7 @@ usage:
                                     manage saved sessions (atto sessions -h)
   atto history grep|show ...        search a session transcript
   atto job|monitor|timer|sleep ...  background jobs and wake-ups (atto job for details)
-  atto goal [complete|blocked|set]  the session goal (set one with /goal or -goal)
+  atto goal [complete|blocked|pause]  the session goal (set one with /goal or -goal)
   atto context [-json]              what a session here loads: AGENTS.md, skills,
                                     hooks, settings, model
   atto reload                       from the agent's shell: reload AGENTS.md, skills,

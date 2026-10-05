@@ -327,7 +327,7 @@ func RunPrint(o PrintOptions) error {
 			sess.Append(session.Entry{Type: session.TypeGoal, Goal: raw})
 		}
 		if g.Status != goal.Complete && runErr == nil {
-			runErr = fmt.Errorf("goal %s: %s", g.Status, g.Note)
+			runErr = fmt.Errorf("goal %s: %s", g.Status.Label(), g.Note)
 		}
 	}
 	if n := core.Leave(sess.ID); n > 0 { // jobs end with the run

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/goal"
@@ -54,10 +55,9 @@ func TestGoalDriverStops(t *testing.T) {
 		t.Fatalf("an interrupt pauses: %s %q", g.Status, g.Note)
 	}
 	g.Status = goal.Active
-	for i := 0; i < 3; i++ {
-		d.BeginTurn()
-		d.EndTurn(errors.New("boom"))
-	}
+	d.Set(g)
+	d.BeginTurn()
+	d.EndTurn(errors.New("boom"))
 	if g.Status != goal.Blocked || !strings.Contains(g.Note, "boom") {
 		t.Fatalf("failures block: %s %q", g.Status, g.Note)
 	}
@@ -108,5 +108,42 @@ func TestGoalDriverRun(t *testing.T) {
 	}
 	if g.Status != goal.Complete || g.Turns != 3 || g.TokensUsed != 33 || seen != 8 {
 		t.Fatalf("goal %+v, %d events", g, seen)
+	}
+}
+
+func TestGoalDriverElapsedCountsTheRunningTurn(t *testing.T) {
+	t.Setenv("ATTO_DIR", t.TempDir())
+	g, _ := goal.New("ship it", 0)
+	g.Seconds = 60
+	d := GoalDriver{Session: "s", Goal: g}
+	if d.Elapsed() != 60 {
+		t.Fatalf("idle: %d", d.Elapsed())
+	}
+	d.BeginTurn()
+	d.turnStart = d.turnStart.Add(-120 * time.Second) // two minutes into the turn
+	if n := d.Elapsed(); n < 180 || n > 182 {
+		t.Fatalf("running: %d", n)
+	}
+	g.Status = goal.Paused
+	if d.Elapsed() != 60 {
+		t.Fatalf("only an active goal counts the turn: %d", d.Elapsed())
+	}
+	g.Status = goal.Active
+	d.EndTurn(nil)
+	if n := d.Elapsed(); n < 180 || n > 182 { // the turn is now in Seconds, once
+		t.Fatalf("after the turn: %d", n)
+	}
+}
+
+func TestGoalDriverModelPause(t *testing.T) {
+	t.Setenv("ATTO_DIR", t.TempDir())
+	g, _ := goal.New("ship it", 0)
+	d := GoalDriver{Session: "s", Goal: g}
+	d.Set(g)
+	f, _ := goal.Load("s")
+	f.Status, f.Note = goal.Paused, "the user asked"
+	_ = goal.Save("s", f)
+	if _, ok := d.Next(); ok || g.Status != goal.Paused || g.Note != "the user asked" {
+		t.Fatalf("the model's pause is taken: %+v", g)
 	}
 }
