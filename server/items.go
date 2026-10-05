@@ -3,6 +3,7 @@ package server
 import (
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/core/transcript"
+	"github.com/sebastianrcnt/atto/extensions"
 	"github.com/sebastianrcnt/atto/session"
 )
 
@@ -20,20 +21,34 @@ type itemMapper struct {
 func (m *itemMapper) handler() transcript.Handler {
 	return transcript.Handler{
 		Started: func(it *transcript.Item) {
-			m.s.notify(m.t, "item/started", map[string]any{"turnId": m.turnID, "item": wireItem(it)})
+			m.s.notify(m.t, "item/started", map[string]any{"turnId": m.turnID, "item": wireItem(m.t.id, it)})
 		},
 		Delta: func(it *transcript.Item, d string) {
 			m.s.notify(m.t, "item/delta", map[string]any{"turnId": m.turnID, "itemId": it.ID, "delta": d})
 		},
 		Updated: func(it *transcript.Item) {
-			m.s.notify(m.t, "item/updated", map[string]any{"turnId": m.turnID, "item": wireItem(it)})
+			m.s.notify(m.t, "item/updated", map[string]any{"turnId": m.turnID, "item": wireItem(m.t.id, it)})
 		},
 		Completed: func(it *transcript.Item) {
-			w := wireItem(it)
+			w := wireItem(m.t.id, it)
 			m.t.mu.Lock()
+			w = m.t.withDisplay(w)
 			m.t.items = append(m.t.items, w)
 			m.t.mu.Unlock()
 			m.s.notify(m.t, "item/completed", map[string]any{"turnId": m.turnID, "item": w})
+		},
+		Saved: func(it *transcript.Item) {
+			m.t.mu.Lock()
+			defer m.t.mu.Unlock()
+			m.t.blocks.saved(m.t.id, it)
+			// Reasoning completes when the text starts, before the response
+			// is saved: the kept item learns its block ID now.
+			for i := len(m.t.items) - 1; i >= 0; i-- {
+				if m.t.items[i].ID == it.ID {
+					m.t.items[i].BlockID = blockID(m.t.id, it)
+					break
+				}
+			}
 		},
 	}
 }
@@ -65,16 +80,16 @@ func (m *itemMapper) closeOpen() {
 	m.t.tr.End()
 }
 
-// wireItem is the protocol form of a transcript item.
-func wireItem(it *transcript.Item) Item {
+// wireItem is the protocol form of a transcript item of session sid.
+func wireItem(sid string, it *transcript.Item) Item {
 	w := Item{ID: it.ID, Text: it.Text, Status: string(it.Status)}
 	switch it.Kind {
 	case transcript.User:
 		w.Type = ItemUser
 	case transcript.Assistant:
-		w.Type = ItemAgent
+		w.Type, w.BlockID = ItemAgent, blockID(sid, it)
 	case transcript.Reasoning:
-		w.Type, w.DurationMs = ItemReasoning, it.Duration.Milliseconds()
+		w.Type, w.DurationMs, w.BlockID = ItemReasoning, it.Duration.Milliseconds(), blockID(sid, it)
 	case transcript.Event:
 		w.Type = ItemEvent
 	case transcript.Goal:
@@ -105,7 +120,7 @@ func wireItem(it *transcript.Item) Item {
 			w.ExitCode, w.DurationMs = &code, it.Duration.Milliseconds()
 		}
 	case transcript.ExtText:
-		w.Type, w.Text = ItemNotice, it.Title+"\n"+it.Text
+		w.Type, w.Title, w.Ext, w.Lang, w.Preview = ItemExtText, it.Title, it.Ext, it.Lang, it.Preview
 	case transcript.BranchSummary:
 		w.Type, w.DurationMs = ItemBranchSummary, it.Duration.Milliseconds()
 	case transcript.Compaction:
@@ -114,15 +129,75 @@ func wireItem(it *transcript.Item) Item {
 	return w
 }
 
-// ItemsFromEntries rebuilds a thread's items from its session file: pass
-// the active branch.
-func ItemsFromEntries(threadID string, entries []session.Entry) []Item {
-	items := transcript.FromEntries(itemPrefix(threadID), entries)
-	out := make([]Item, len(items))
-	for i := range items {
-		out[i] = wireItem(&items[i])
+// blockID is the ID extensions name a reasoning or assistant item's block
+// by: "" until its response is saved.
+func blockID(sid string, it *transcript.Item) string {
+	if it.EntryID == "" {
+		return ""
 	}
-	return out
+	kind := session.BlockText
+	if it.Kind == transcript.Reasoning {
+		kind = session.BlockReasoning
+	}
+	return session.BlockID(sid, it.EntryID, kind)
+}
+
+// WireDisplay is the protocol form of what extensions show on a block:
+// nil when nothing.
+func WireDisplay(d *transcript.BlockDisplay) *BlockDisplay {
+	if d == nil || d.IsZero() {
+		return nil
+	}
+	w := &BlockDisplay{Ext: d.Owner, Text: d.Text}
+	for _, s := range d.Statuses {
+		w.Statuses = append(w.Statuses, BlockStatus{Ext: s.Ext, Text: s.Text})
+	}
+	return w
+}
+
+// WireExtensionUI is the protocol form of the extensions' status items and
+// widgets (empty lists when none).
+func WireExtensionUI(u *extensions.UIState) *ExtensionUI {
+	w := &ExtensionUI{Status: []ExtensionStatus{}, Widgets: []ExtensionWidget{}}
+	for _, s := range u.Status() {
+		w.Status = append(w.Status, ExtensionStatus{Key: s.Key, Text: s.Text})
+	}
+	for _, x := range u.Widgets() {
+		w.Widgets = append(w.Widgets, ExtensionWidget{Key: x.Key, Lines: x.Lines})
+	}
+	return w
+}
+
+// ItemsFromEntries rebuilds a thread's items from its session file, with
+// what extensions showed on them: pass the active branch.
+func ItemsFromEntries(threadID string, entries []session.Entry) []Item {
+	b := transcript.Builder{IDPrefix: itemPrefix(threadID)}
+	items, _ := replayItems(&b, threadID, entries)
+	return items
+}
+
+// replayItems replays the active branch of a session into b (reset first)
+// and returns the items, with what extensions showed on them, and the
+// blocks extensions can name.
+func replayItems(b *transcript.Builder, sid string, branch []session.Entry) ([]Item, blocks) {
+	bl := blocks{}
+	b.Handler = transcript.Handler{ // no notifications for the replay
+		Saved: func(it *transcript.Item) { bl.saved(sid, it) },
+		Display: func(d transcript.Display) {
+			if x := bl[session.BlockID(sid, d.EntryID, d.Block)]; x != nil {
+				x.disp.Apply(d)
+			}
+		},
+	}
+	b.Reset()
+	b.Replay(branch)
+	b.Handler = transcript.Handler{}
+	all := b.Items()
+	items := make([]Item, 0, len(all))
+	for i := range all {
+		items = append(items, bl.attach(wireItem(sid, &all[i])))
+	}
+	return items, bl
 }
 
 func itemPrefix(threadID string) string { return threadID + "-i" }

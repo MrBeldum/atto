@@ -118,3 +118,44 @@ var i = scroll.firstBelow(1000, function (i) { reads++; return (i + 1) * 30; }, 
 		t.Fatalf("firstBelow: %v", got)
 	}
 }
+
+// What extensions show: item/display updates an item in place (one not
+// known is skipped), and an extText item's lines, diff tones and fold.
+func TestExtensionDisplay(t *testing.T) {
+	vm := jsModule(t, "src/transcript.ts", "tr")
+	v, err := vm.RunString(`
+var s = new tr.Transcript();
+s.reset([{id: "r", type: "reasoning", text: "plan", blockId: "b"}]);
+var b1 = s.blocks().slice();
+s.display("r", {statuses: [{ext: "x", text: "translating"}], ext: "x", text: "PLAN"});
+s.display("nope", {text: "x"});
+var shown = s.get("r").display.text + "|" + s.get("r").text + "|" + (s.blocks()[0] !== b1[0]) + "|" + s.length;
+s.display("r", null);
+shown + "|" + s.get("r").display
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := v.Export(); got != "PLAN|plan|true|1|null" {
+		t.Fatalf("display: %v", got)
+	}
+
+	vm = jsModule(t, "src/exttext.ts", "et")
+	for expr, want := range map[string]any{
+		`et.lines("a\tb\r\n\u001b[31mred\u001b[0m\n x\n\n  \n").join("|")`: "a   b|red| x",
+		`et.lines("").length`: int64(0),
+		`["diff --git a/f b/f", "--- a/f", "+++ b/f", "@@ -1 +1 @@", "+new", "-old", " same", "== Staged =="].map(function (l) { return et.tone(l, "diff"); }).join(",")`: "meta,meta,meta,hunk,add,del,,",
+		`et.tone("+not a diff", "")`:            "",
+		`JSON.stringify(et.fold(30, 0, false))`: `{"shown":10,"hidden":20,"foldable":true}`,
+		`JSON.stringify(et.fold(30, 5, true))`:  `{"shown":30,"hidden":0,"foldable":true}`,
+		`JSON.stringify(et.fold(4, 5, false))`:  `{"shown":4,"hidden":0,"foldable":false}`,
+	} {
+		v, err := vm.RunString(expr)
+		if err != nil {
+			t.Fatalf("%s: %v", expr, err)
+		}
+		if got := v.Export(); got != want {
+			t.Errorf("%s = %v, want %v", expr, got, want)
+		}
+	}
+}

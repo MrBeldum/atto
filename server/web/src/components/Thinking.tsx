@@ -43,12 +43,18 @@ export default function Thinking({
   active = "Thinking",
   done,
   icon,
+  status,
+  meta,
   children,
 }: {
   working: boolean;
   active?: string;
   done: string;
   icon?: ReactNode;
+  // status follows the label (extensions' statuses); meta is a line under
+  // the header (the toggle to the original text).
+  status?: ReactNode;
+  meta?: ReactNode;
   children?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -73,6 +79,7 @@ export default function Thinking({
               {done}
             </span>
           )}
+          {status}
         </span>
         {hasBody && (
           <Chevron
@@ -82,6 +89,7 @@ export default function Thinking({
           />
         )}
       </button>
+      {meta}
       <Expand open={open}>
         <div className="relative mt-1 ml-[7px] border-l border-line py-1 pl-4">
           <div className="text-[13.5px] leading-relaxed whitespace-pre-wrap text-ink-2" style={{ overflowWrap: "anywhere" }}>

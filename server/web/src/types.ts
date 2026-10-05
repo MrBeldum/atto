@@ -12,7 +12,22 @@ export type ItemType =
   | "notice"
   | "goalStatus"
   | "branchSummary"
+  | "extText"
   | "note"; // made by this client: errors and status lines
+
+// What extensions show on a reasoning or agentMessage item: statuses for
+// its header and a text shown in place of its own (by extension ext).
+export type BlockDisplay = {
+  statuses?: { ext: string; text: string }[];
+  ext?: string;
+  text?: string;
+};
+
+// What extensions show around the input: status items and widgets.
+export type ExtensionUI = {
+  status: { key: string; text: string }[];
+  widgets: { key: string; lines: string[] }[];
+};
 
 export type Item = {
   id: string;
@@ -34,6 +49,13 @@ export type Item = {
   hookEvent?: string;
   blocked?: boolean;
   goalStatus?: string;
+  blockId?: string;
+  display?: BlockDisplay | null;
+  // extText
+  title?: string;
+  ext?: string;
+  lang?: string;
+  preview?: number;
   tone?: "error" | "info"; // notes
 };
 
@@ -53,6 +75,7 @@ export type ThreadInfo = {
   live?: boolean;
   prompt?: Prompt;
   goal?: GoalInfo;
+  extensionUi?: ExtensionUI;
 };
 
 // A picker or input open in the live session's terminal.

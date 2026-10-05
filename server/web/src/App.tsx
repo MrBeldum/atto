@@ -2,6 +2,9 @@
 // own live session. See server/protocol.go for the protocol.
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { OriginalToggle, Statuses, useDisplay } from "./components/BlockMeta";
+import ExtensionBar from "./components/ExtensionBar";
+import ExtText from "./components/ExtText";
 import GoalBar, { type GoalAction } from "./components/GoalBar";
 import { ArrowDown, Bolt, Branch, Flag, Info, Layers, Menu, Plus, Radio, Target } from "./components/icons";
 import Loading from "./components/Loading";
@@ -14,7 +17,7 @@ import { Client, initialToken, saveToken, Unauthorized } from "./rpc";
 import { loadThreadId, saveThreadId } from "./storage";
 import { anchorShift, atBottom, firstBelow, nextFollow } from "./scroll";
 import { Transcript } from "./transcript";
-import type { GoalInfo, Item, Model, Notification, Prompt, ThreadInfo, ThreadSummary } from "./types";
+import type { ExtensionUI, GoalInfo, Item, Model, Notification, Prompt, ThreadInfo, ThreadSummary } from "./types";
 
 // --- items ---
 
@@ -39,6 +42,43 @@ const Caret = () => (
   <span className="ml-0.5 inline-block h-[1em] w-0.5 translate-y-[3px] rounded-full bg-ink" style={{ animation: "caret-blink 1s step-end infinite" }} />
 );
 
+// Answers and reasoning show what extensions put on them (BlockMeta.tsx).
+function Answer({ it, working }: { it: Item; working: boolean }) {
+  const d = it.display;
+  const shown = useDisplay(it.text, d);
+  const meta = (!!d?.statuses?.length || shown.replaced) && (
+    <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1 text-[12px]">
+      <Statuses d={d} lead={false} />
+      {!!d?.statuses?.length && shown.replaced && <span className="text-ink-3">·</span>}
+      <OriginalToggle d={d} original={shown.original} onToggle={shown.toggle} />
+    </div>
+  );
+  return (
+    <div className="flex flex-col">
+      <div className="prose-atto text-ink">
+        <Markdown text={shown.text} />
+        {working && <Caret />}
+      </div>
+      {meta}
+    </div>
+  );
+}
+
+function Reasoning({ it, working }: { it: Item; working: boolean }) {
+  const d = it.display;
+  const shown = useDisplay(it.text, d);
+  return (
+    <Thinking
+      working={working}
+      done={it.durationMs ? `Thought for ${secs(it.durationMs)}` : "Thought"}
+      status={<Statuses d={d} />}
+      meta={<OriginalToggle d={d} original={shown.original} onToggle={shown.toggle} />}
+    >
+      {shown.text}
+    </Thinking>
+  );
+}
+
 export const ItemView = memo(function ItemView({ it }: { it: Item }) {
   const working = it.status === "inProgress";
   switch (it.type) {
@@ -51,18 +91,11 @@ export const ItemView = memo(function ItemView({ it }: { it: Item }) {
         </div>
       );
     case "agentMessage":
-      return (
-        <div className="prose-atto text-ink">
-          <Markdown text={it.text || ""} />
-          {working && <Caret />}
-        </div>
-      );
+      return <Answer it={it} working={working} />;
     case "reasoning":
-      return (
-        <Thinking working={working} done={it.durationMs ? `Thought for ${secs(it.durationMs)}` : "Thought"}>
-          {it.text}
-        </Thinking>
-      );
+      return <Reasoning it={it} working={working} />;
+    case "extText":
+      return <ExtText it={it} />;
     case "commandExecution":
       return <ToolRow it={it} />;
     case "compaction":
@@ -141,6 +174,8 @@ export default function App() {
   // The live session's open prompt and goal.
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [goal, setGoal] = useState<GoalInfo | null>(null);
+  // What the thread's extensions show around the input.
+  const [extUi, setExtUi] = useState<ExtensionUI | null>(null);
   const [connected, setConnected] = useState(true);
   const [drawer, setDrawer] = useState(false);
   const [busySince, setBusySince] = useState(Date.now());
@@ -234,6 +269,13 @@ export default function App() {
           store.delta(p.itemId, p.delta);
           redraw();
           break;
+        case "item/display":
+          store.display(p.itemId, p.display || null);
+          redraw();
+          break;
+        case "extension/ui":
+          setExtUi(p.ui || null);
+          break;
         case "turn/completed":
           setInfo((i) => (i ? { ...i, busy: false, turnId: "", contextTokens: p.contextTokens ?? i.contextTokens } : i));
           // The terminal says so itself in a live session (as notices).
@@ -278,9 +320,10 @@ export default function App() {
   const show = useCallback(
     (t: ThreadInfo) => {
       store.reset(t.items || []);
-      setInfo({ ...t, items: undefined, prompt: undefined, goal: undefined });
+      setInfo({ ...t, items: undefined, prompt: undefined, goal: undefined, extensionUi: undefined });
       setPrompt(t.prompt || null);
       setGoal(t.goal || null);
+      setExtUi(t.extensionUi || null);
       if (t.busy) setBusySince(Date.now());
       if (!t.live) saveThreadId(t.threadId);
       followRef.current = true;
@@ -671,6 +714,7 @@ export default function App() {
               <ArrowDown size={14} /> Jump to latest
             </button>
           )}
+          <ExtensionBar ui={extUi} />
           <PromptBar
             busy={busy}
             canBackground={busy && store.running()}

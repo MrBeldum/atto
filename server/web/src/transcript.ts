@@ -5,7 +5,7 @@
 // array: a delta makes a new array for its own block only, so a frame
 // re-renders one block, not thousands of items.
 
-import type { Item } from "./types";
+import type { BlockDisplay, Item } from "./types";
 
 export const CHUNK = 50;
 
@@ -66,6 +66,14 @@ export class Transcript {
       if (out.length > 2 * KEEP_OUTPUT) out = out.slice(out.length - KEEP_OUTPUT);
       this.upsert({ ...it, output: out });
     } else this.upsert({ ...it, text: (it.text || "") + d });
+  }
+
+  // display sets what extensions show on an item (item/display; null:
+  // nothing). The server sends it in order with the item's own
+  // notifications, so a later item/completed carries it too.
+  display(id: string, d: BlockDisplay | null) {
+    const it = this.get(id);
+    if (it) this.upsert({ ...it, display: d });
   }
 
   note(text: string, tone: "error" | "info" = "info") {

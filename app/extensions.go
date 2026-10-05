@@ -10,59 +10,6 @@ import (
 	"github.com/sebastianrcnt/atto/tui"
 )
 
-// extUI is what extensions show: status line items and widgets (bands of
-// lines above the input), each under "<extension>/<key>" in the order
-// they were first set. Touched on the UI goroutine only.
-type extUI struct {
-	statusKeys []string
-	status     map[string]string
-	widgetKeys []string
-	widgets    map[string][]string
-}
-
-func (u *extUI) setStatus(key, text string) {
-	if u.status == nil {
-		u.status = map[string]string{}
-	}
-	if text == "" {
-		delete(u.status, key)
-		u.statusKeys = slices.DeleteFunc(u.statusKeys, func(k string) bool { return k == key })
-		return
-	}
-	if _, ok := u.status[key]; !ok {
-		u.statusKeys = append(u.statusKeys, key)
-	}
-	u.status[key] = text
-}
-
-func (u *extUI) setWidget(key string, lines []string) {
-	if u.widgets == nil {
-		u.widgets = map[string][]string{}
-	}
-	if lines == nil {
-		delete(u.widgets, key)
-		u.widgetKeys = slices.DeleteFunc(u.widgetKeys, func(k string) bool { return k == key })
-		return
-	}
-	if _, ok := u.widgets[key]; !ok {
-		u.widgetKeys = append(u.widgetKeys, key)
-	}
-	u.widgets[key] = lines
-}
-
-func (u *extUI) clear(ext string) {
-	for _, k := range slices.Clone(u.statusKeys) {
-		if strings.HasPrefix(k, ext+"/") {
-			u.setStatus(k, "")
-		}
-	}
-	for _, k := range slices.Clone(u.widgetKeys) {
-		if strings.HasPrefix(k, ext+"/") {
-			u.setWidget(k, nil)
-		}
-	}
-}
-
 // tuiHost is the TUI as extensions see it. Extensions call it from their
 // own goroutines while the UI goroutine may be waiting for them (a
 // reload, session_end), so it never waits for the UI: each call is queued
@@ -124,15 +71,22 @@ func (h *tuiHost) Notify(ext, text, level string) {
 			style = func(s string) string { return tui.FG(1, s) }
 		}
 		h.a.add(&noticeBlock{text: "[" + ext + "] " + text, style: style})
+		h.a.remotePublish("extension/notify", map[string]any{"extension": ext, "message": text, "level": level})
 	})
 }
 
 func (h *tuiHost) SetStatus(ext, key, text string) {
-	h.do(func() { h.a.extUI.setStatus(ext+"/"+key, text) })
+	h.do(func() {
+		h.a.extUI.SetStatus(ext+"/"+key, text)
+		h.a.remoteExtUI()
+	})
 }
 
 func (h *tuiHost) SetWidget(ext, key string, lines []string) {
-	h.do(func() { h.a.extUI.setWidget(ext+"/"+key, lines) })
+	h.do(func() {
+		h.a.extUI.SetWidget(ext+"/"+key, lines)
+		h.a.remoteExtUI()
+	})
 }
 
 func (h *tuiHost) SetBlockStatus(ext, id, text string) {
@@ -148,7 +102,10 @@ func (h *tuiHost) ShowText(ext, title, text string, o extensions.TextOptions) {
 }
 
 func (h *tuiHost) ClearUI(ext string) {
-	h.do(func() { h.a.extUI.clear(ext) })
+	h.do(func() {
+		h.a.extUI.Clear(ext)
+		h.a.remoteExtUI()
+	})
 }
 
 func (h *tuiHost) SendMessage(text string) {
@@ -226,12 +183,12 @@ func (a *App) sendExtensionMessage(text string) {
 
 // renderWidgets draws the extensions' widgets above the input.
 func (a *App) renderWidgets(width int) []string {
-	if a.modal != nil || len(a.extUI.widgetKeys) == 0 {
+	if a.modal != nil {
 		return nil
 	}
 	var out []string
-	for _, k := range a.extUI.widgetKeys {
-		for _, l := range a.extUI.widgets[k] {
+	for _, w := range a.extUI.Widgets() {
+		for _, l := range w.Lines {
 			out = append(out, tui.Truncate(" "+l, width, "…"))
 		}
 	}
@@ -241,8 +198,8 @@ func (a *App) renderWidgets(width int) []string {
 // extensionStatus is the status line items extensions set.
 func (a *App) extensionStatus() []string {
 	var out []string
-	for _, k := range a.extUI.statusKeys {
-		out = append(out, a.extUI.status[k])
+	for _, s := range a.extUI.Status() {
+		out = append(out, s.Text)
 	}
 	return out
 }

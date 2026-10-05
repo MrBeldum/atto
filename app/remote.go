@@ -254,7 +254,32 @@ func (a *App) remoteItem(method string, it *transcript.Item) {
 	if a.remote == nil || a.replaying {
 		return
 	}
-	a.remotePublish(method, map[string]any{"turnId": a.remote.turnID, "item": server.WireItem(it)})
+	a.remotePublish(method, map[string]any{"turnId": a.remote.turnID, "item": a.wireItem(it)})
+}
+
+// wireItem is the protocol form of a transcript item, with what extensions
+// show on its block.
+func (a *App) wireItem(it *transcript.Item) server.Item {
+	w := server.WireItem(a.sess.ID, it)
+	w.Display = server.WireDisplay(a.blockState(w.BlockID))
+	return w
+}
+
+// remoteDisplay tells clients what extensions show on a block changed.
+func (a *App) remoteDisplay(d *blockDisplay) {
+	if a.remote == nil || d.item == "" {
+		return
+	}
+	a.remotePublish("item/display", map[string]any{"itemId": d.item, "blockId": d.id, "display": server.WireDisplay(&d.state)})
+}
+
+// remoteExtUI tells clients the extensions' status items or widgets
+// changed.
+func (a *App) remoteExtUI() {
+	if a.remote == nil {
+		return
+	}
+	a.remotePublish("extension/ui", map[string]any{"ui": server.WireExtensionUI(&a.extUI)})
 }
 
 func (a *App) remoteDelta(it *transcript.Item, d string) {
@@ -401,6 +426,9 @@ func (l remoteSession) Thread(items bool, at func()) (server.ThreadInfo, error) 
 	err := l.do(func() error {
 		info = l.a.remoteInfo(l.r)
 		info.Goal = l.a.remoteGoalInfo()
+		if !l.a.extUI.Empty() {
+			info.ExtensionUI = server.WireExtensionUI(&l.a.extUI)
+		}
 		if p := l.a.prompt; p != nil {
 			w := p.wire
 			info.Prompt = &w
@@ -411,7 +439,7 @@ func (l remoteSession) Thread(items bool, at func()) (server.ThreadInfo, error) 
 				for len(notes) > 0 && notes[0].at <= i {
 					info.Items, notes = append(info.Items, notes[0].item), notes[1:]
 				}
-				info.Items = append(info.Items, server.WireItem(&it))
+				info.Items = append(info.Items, l.a.wireItem(&it))
 			}
 			for _, n := range notes {
 				info.Items = append(info.Items, n.item)
