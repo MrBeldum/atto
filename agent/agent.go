@@ -368,6 +368,10 @@ func (a *Agent) Restore(entries []session.Entry) {
 			} else {
 				a.sinceUsage += messageChars(*e.Message)
 			}
+		case session.TypeBranchSummary:
+			m := BranchSummaryMessage(e.Summary)
+			a.messages = append(a.messages, m)
+			a.sinceUsage += messageChars(m)
 		case session.TypeCompaction:
 			a.messages = nil
 			for _, m := range e.Replacement {

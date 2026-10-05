@@ -8,6 +8,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/goal"
 	"github.com/sebastianrcnt/atto/images"
 	"github.com/sebastianrcnt/atto/session"
@@ -99,7 +100,7 @@ func (a *App) cmdTree(string) {
 	p.onCancel = a.closeModal
 	p.onSelect = func(id string) {
 		a.closeModal()
-		a.navigateTree(id)
+		a.selectTreeEntry(id)
 	}
 	p.onLabel = func(id, label string) {
 		a.sess.Append(session.Entry{Type: session.TypeLabel, TargetID: id, Label: label})
@@ -116,11 +117,15 @@ func (a *App) cmdTree(string) {
 
 // navigateTree moves the active leaf to entry id: before it for a user
 // message (whose text goes to the editor), onto it otherwise.
-func (a *App) navigateTree(id string) {
+func (a *App) navigateTree(id string) { a.moveTo(id, nil) }
+
+// moveTo is navigateTree, first summarizing the branch being left when
+// sum is set (see branchsummary.go).
+func (a *App) moveTo(id string, sum *summaryRequest) {
 	if a.busy {
 		// Queued and pending input belonged to the old branch: back to the
 		// editor, as pi does before aborting.
-		a.pendingTree, a.pendingResume = id, ""
+		a.pendingTree, a.pendingSummary, a.pendingResume = id, sum, ""
 		a.stashPending()
 		a.cancel()
 		return
@@ -135,8 +140,25 @@ func (a *App) navigateTree(id string) {
 		a.notice("That entry is no longer in the session.")
 		return
 	}
+	if sum != nil {
+		if left := session.Abandoned(entries, session.Leaf(entries), leaf); agent.HasBranchContent(left) {
+			a.summarizeBranch(id, leaf, text, left, sum.instructions)
+			return
+		}
+	}
+	a.finishMove(entries, id, leaf, text, nil)
+}
+
+// finishMove moves the leaf to leaf, recording summary (if any) there,
+// and shows the branch. id is the entry picked in the tree and text the
+// message to edit.
+func (a *App) finishMove(entries []session.Entry, id, leaf, text string, summary *session.Entry) {
 	a.stashPending()
-	a.sess.Branch(leaf)
+	if summary != nil {
+		a.sess.BranchSummary(leaf, *summary)
+	} else {
+		a.sess.Branch(leaf)
+	}
 	if err := a.sess.Err(); err != nil {
 		a.errorNotice(err)
 		return

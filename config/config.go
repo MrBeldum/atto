@@ -94,6 +94,16 @@ type Settings struct {
 	// its own selection works without a modifier key; atto then scrolls
 	// with PageUp/PageDown only. ATTO_NO_MOUSE=1 does the same.
 	Mouse *bool `json:"mouse,omitempty"`
+	// BranchSummary configures what going back in the session tree (/tree)
+	// does with the branch being left, as pi's setting of the same name.
+	BranchSummary *BranchSummary `json:"branchSummary,omitempty"`
+}
+
+// BranchSummary is settings.json's "branchSummary".
+type BranchSummary struct {
+	// SkipPrompt: true never asks "Summarize branch?" and goes back
+	// without a summary.
+	SkipPrompt bool `json:"skipPrompt,omitempty"`
 }
 
 // HookMatcher selects hooks by tool name (regexp; "" or "*" match all).

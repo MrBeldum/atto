@@ -146,6 +146,9 @@ function update(el, it) {
     case "compaction":
       el.innerHTML = `<details><summary>◇ Context compacted${it.tokensBefore ? ` · ${it.tokensBefore} → ~${it.tokensAfter} tokens` : ""}</summary><pre></pre></details>`;
       el.querySelector("pre").textContent = it.text || ""; break;
+    case "branchSummary":
+      el.innerHTML = `<details><summary>⎇ Branch summary</summary><pre></pre></details>`;
+      el.querySelector("pre").textContent = it.text || ""; break;
   }
 }
 

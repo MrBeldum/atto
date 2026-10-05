@@ -163,6 +163,24 @@ func BranchPoint(entries []Entry, id string) (leaf, editorText string, ok bool) 
 	return id, "", true
 }
 
+// Abandoned returns the entries a move of the leaf from one entry to
+// another leaves behind: those on the path to from that are not on the
+// path to to, in order (pi's collectEntriesForBranchSummary). It is empty
+// when to is on from's own path, or further along it.
+func Abandoned(entries []Entry, from, to string) []Entry {
+	keep := map[int]bool{}
+	for _, i := range pathIndexes(entries, to) {
+		keep[i] = true
+	}
+	var out []Entry
+	for _, i := range pathIndexes(entries, from) {
+		if !keep[i] {
+			out = append(out, entries[i])
+		}
+	}
+	return out
+}
+
 // Fork starts a new session in cwd holding the path from the root to leaf
 // of a session (pi's /fork). The entries keep their content but get new
 // IDs, chained in order; branch markers are dropped and labels on the

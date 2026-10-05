@@ -84,6 +84,10 @@ const (
 	ItemHook       = "hook"  // a hook's message, or what it blocked
 	ItemNotice     = "notice"
 	ItemGoalStatus = "goalStatus"
+
+	// ItemBranchSummary is a summary of a branch the session went back
+	// from in atto's /tree; threads show it when they resume such a session.
+	ItemBranchSummary = "branchSummary"
 )
 
 // Item is one unit of a turn's output: the protocol form of a

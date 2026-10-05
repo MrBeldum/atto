@@ -46,6 +46,10 @@ const (
 	TypeGoal       = "goal"
 	TypeLabel      = "label"  // a bookmark on another entry (/tree shift+l)
 	TypeBranch     = "branch" // moves the active leaf to its parent (/tree)
+	// TypeBranchSummary moves the active leaf like "branch" and carries a
+	// summary of the branch left behind (pi's branch_summary), which the
+	// model sees on the new branch.
+	TypeBranchSummary = "branch_summary"
 )
 
 // Entry is one line of a session file. Fields are used according to Type.
@@ -93,8 +97,12 @@ type Entry struct {
 	TargetID string `json:"targetId,omitempty"`
 	Label    string `json:"label,omitempty"`
 
-	// branch: the leaf the user navigated away from
+	// branch, branch_summary: the leaf the user navigated away from
 	FromID string `json:"fromId,omitempty"`
+
+	// branch_summary: the summary of the branch from FromID back to where
+	// it meets the new one (ElapsedMs is how long writing it took)
+	Summary string `json:"summary,omitempty"`
 }
 
 // ToolMeta records how a tool call went, for redisplay on resume.
@@ -234,6 +242,19 @@ func (w *Writer) Branch(to string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.appendLocked(Entry{Type: TypeBranch}, &to)
+}
+
+// BranchSummary is Branch with a summary of the branch being left: e (of
+// type TypeBranchSummary, with Summary set) is written as a child of to
+// and becomes the leaf, as in pi.
+func (w *Writer) BranchSummary(to string, e Entry) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	e.Type = TypeBranchSummary
+	w.appendLocked(e, &to)
 }
 
 // appendLocked writes e as a child of parent, or of the leaf if nil.

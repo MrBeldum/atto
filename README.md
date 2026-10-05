@@ -176,7 +176,7 @@ To use the terminal's own selection instead, hold the key that bypasses mouse re
 - The system prompt and the tool schema don't change during a session.
 - Compaction keeps the latest user messages plus a summary, the way codex does it. Run `/context` to see the cache hit rate.
 
-**Sessions** are JSONL files under `~/.atto/sessions/`. As in pi, entries form a tree: going back with `/tree` starts a new branch in the same file and keeps the old one. `atto history grep` searches every branch and marks entries on other branches; `-active` limits it to the current one.
+**Sessions** are JSONL files under `~/.atto/sessions/`. As in pi, entries form a tree: going back with `/tree` starts a new branch in the same file and keeps the old one. When that leaves work behind, atto asks whether to summarize the branch being left (optionally with your own instructions); the current model writes the summary, `Esc` cancels it, and the model sees it on the new branch. `"branchSummary": {"skipPrompt": true}` in `settings.json` never asks. `atto history grep` searches every branch and marks entries on other branches; `-active` limits it to the current one.
 
 Manage sessions from the shell, without the TUI:
 
@@ -215,7 +215,7 @@ Everything lives in `~/.atto`. Set `ATTO_DIR` to move it.
 
 | Path | Contents |
 | --- | --- |
-| `settings.json` | default model and effort, renderer, `mouse`, status line, hooks, `updateCheck`, `doubleEscapeAction` (`tree`, `fork` or `none`) |
+| `settings.json` | default model and effort, renderer, `mouse`, status line, hooks, `updateCheck`, `doubleEscapeAction` (`tree`, `fork` or `none`), `branchSummary.skipPrompt` |
 | `models.json` | your providers and models |
 | `auth.json` | keys and logins (mode 0600) |
 | `sessions/` | saved sessions |

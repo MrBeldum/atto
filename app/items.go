@@ -37,7 +37,7 @@ func (a *App) replay(entries []session.Entry) {
 // resetItems forgets the items of a cleared transcript.
 func (a *App) resetItems() {
 	a.tr().Reset()
-	a.thinking, a.text, a.compact = nil, nil, nil
+	a.thinking, a.text, a.compact, a.summaryBlk = nil, nil, nil, nil
 	clear(a.tools)
 }
 
@@ -91,6 +91,8 @@ func (a *App) itemStarted(it *transcript.Item) {
 	case transcript.Compaction:
 		a.compact = &compactBlock{auto: it.Auto, running: true, expander: expander{d: &a.details}}
 		a.add(a.compact)
+	case transcript.BranchSummary:
+		a.summaryItem(it, true, "")
 	}
 }
 
@@ -112,6 +114,8 @@ func (a *App) itemDelta(it *transcript.Item, d string) {
 		if a.compact != nil {
 			a.compact.notes.WriteString(d)
 		}
+	case transcript.BranchSummary:
+		a.summaryItem(it, false, d)
 	}
 }
 
@@ -150,6 +154,8 @@ func (a *App) itemCompleted(it *transcript.Item) {
 		c.notes.Reset()
 		c.notes.WriteString(it.Text)
 		c.before, c.after, c.elapsed = it.TokensBefore, it.TokensAfter, it.Duration
+	case transcript.BranchSummary:
+		a.summaryItem(it, false, "")
 	}
 }
 

@@ -540,6 +540,8 @@ func (p *treePicker) searchText(n *session.Node) string {
 		}
 	case session.TypeCompaction:
 		parts = append(parts, "compaction")
+	case session.TypeBranchSummary:
+		parts = append(parts, "branch summary", e.Summary)
 	case session.TypeModel:
 		parts = append(parts, "model", e.Model)
 	case session.TypeEffort:
@@ -569,6 +571,8 @@ func (p *treePicker) copyText(n *session.Node) string {
 		}
 	case session.TypeCompaction:
 		return e.Notes
+	case session.TypeBranchSummary:
+		return e.Summary
 	}
 	return ""
 }
@@ -607,6 +611,8 @@ func (p *treePicker) entryText(n *session.Node) string {
 		return tui.Dim("[" + m.Role + "]")
 	case session.TypeCompaction:
 		return tui.FG(6, fmt.Sprintf("[compaction: %dk tokens]", (e.TokensBefore+500)/1000))
+	case session.TypeBranchSummary:
+		return tui.FG(5, "[branch summary]: ") + clip(oneLine(e.Summary), 200)
 	case session.TypeModel:
 		return tui.Dim("[model: " + e.Model + "]")
 	case session.TypeEffort:
@@ -773,10 +779,12 @@ func (p *treePicker) row(f *flatNode, selected bool, width int) string {
 }
 
 // labelInput edits a label on one line (enter saves, esc cancels; empty
-// removes the label).
+// removes the label). title and hint replace the label's wording when it
+// asks for something else.
 type labelInput struct {
-	text   string
-	onDone func(save bool, text string)
+	text        string
+	title, hint string
+	onDone      func(save bool, text string)
 }
 
 func (l *labelInput) HandleInput(data string) {
@@ -799,9 +807,13 @@ func (l *labelInput) HandleInput(data string) {
 }
 
 func (l *labelInput) Render(width int) []string {
+	title, hint := l.title, l.hint
+	if title == "" {
+		title, hint = "Label (empty to remove):", "enter save  esc cancel"
+	}
 	return []string{
-		tui.Dim("  Label (empty to remove):"),
+		tui.Dim("  " + title),
 		tui.Truncate("  "+tui.FG(6, "› ")+l.text+tui.CursorMarker, width, "…"),
-		tui.Dim("  enter save  esc cancel"),
+		tui.Dim("  " + hint),
 	}
 }

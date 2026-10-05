@@ -88,6 +88,8 @@ func wireItem(it *transcript.Item) Item {
 				w.ExitCode, w.Job, w.Background = nil, r.Job, r.Background
 			}
 		}
+	case transcript.BranchSummary:
+		w.Type, w.DurationMs = ItemBranchSummary, it.Duration.Milliseconds()
 	case transcript.Compaction:
 		w.Type, w.Auto, w.TokensBefore, w.TokensAfter = ItemCompaction, it.Auto, it.TokensBefore, it.TokensAfter
 	}

@@ -73,6 +73,12 @@ func (a *App) restoreToEditor(texts []string, att ...tui.Attachment) {
 
 // afterRun settles pending input once a turn or compaction finishes.
 func (a *App) afterRun(err error) {
+	if a.runKind == "branchSummary" {
+		a.runKind = ""
+		if a.afterBranchSummary(err) {
+			return
+		}
+	}
 	if a.runKind == "turn" {
 		a.goal.EndTurn(err)
 	}
@@ -85,8 +91,9 @@ func (a *App) afterRun(err error) {
 	}
 	a.runKind = ""
 	if id := a.pendingTree; id != "" {
-		a.pendingTree = ""
-		a.navigateTree(id)
+		sum := a.pendingSummary
+		a.pendingTree, a.pendingSummary = "", nil
+		a.moveTo(id, sum)
 		return
 	}
 	if p := a.pendingResume; p != "" {

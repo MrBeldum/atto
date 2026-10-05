@@ -100,6 +100,8 @@ func Items(entries []Entry) []Item {
 		switch e.Type {
 		case TypeCompaction:
 			out = append(out, Item{N: n, Label: "compaction notes", Text: e.Notes})
+		case TypeBranchSummary:
+			out = append(out, Item{N: n, Label: "branch summary", Text: e.Summary})
 		case TypeMessage:
 			m := e.Message
 			if m == nil {

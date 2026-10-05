@@ -56,6 +56,7 @@ type Builder struct {
 	// before them: an item only starts with something visible, so a step
 	// that streams only whitespace leaves no item, as on replay.
 	reasoning, text, compact *Item
+	summary                  *Item // a branch summary being written
 	pendReasoning, pendText  string
 	thinkStart               time.Time
 	tools                    map[string]*Item // by call ID, while running
@@ -93,7 +94,8 @@ func (b *Builder) Add(it Item) {
 }
 
 // End finishes what a run left open: text and reasoning complete, a
-// command or compaction still running failed (it was interrupted).
+// command, compaction or branch summary still running failed (it was
+// interrupted).
 func (b *Builder) End() { b.end(time.Now()) }
 
 func (b *Builder) end(at time.Time) {
@@ -103,10 +105,13 @@ func (b *Builder) end(at time.Time) {
 			b.endTool(it.CallID, ToolResult{Canceled: true, ExitCode: -1}, 0)
 		}
 	}
-	if c := b.compact; c != nil {
-		b.compact = nil
-		c.Status = Failed
-		b.completed(c)
+	for _, c := range []**Item{&b.compact, &b.summary} {
+		if *c != nil {
+			it := *c
+			*c = nil
+			it.Status = Failed
+			b.completed(it)
+		}
 	}
 }
 
@@ -152,6 +157,20 @@ func (b *Builder) apply(ev any, at time.Time) {
 		if c := b.compact; c != nil {
 			c.Text += e.Text
 			b.delta(c, e.Text)
+		}
+	case agent.BranchSummaryStart:
+		b.closeText(at)
+		b.summary = b.start(Item{Kind: BranchSummary, Status: InProgress})
+	case agent.BranchSummaryDelta:
+		if c := b.summary; c != nil {
+			c.Text += e.Text
+			b.delta(c, e.Text)
+		}
+	case agent.BranchSummaryEnd:
+		if c := b.summary; c != nil {
+			b.summary = nil
+			c.Text, c.Duration, c.Status = e.Summary, e.Elapsed.Truncate(time.Millisecond), Completed
+			b.completed(c)
 		}
 	case agent.CompactEnd:
 		if c := b.compact; c != nil {
@@ -325,6 +344,10 @@ func (b *Builder) Replay(entries []session.Entry) {
 			b.apply(agent.CompactStart{Auto: e.Auto}, e.Time)
 			b.apply(agent.CompactEnd{Notes: e.Notes, Before: e.TokensBefore, After: e.TokensAfter,
 				Elapsed: time.Duration(e.ElapsedMs) * time.Millisecond}, e.Time)
+		case session.TypeBranchSummary:
+			b.interruptCalls()
+			b.apply(agent.BranchSummaryStart{}, e.Time)
+			b.apply(agent.BranchSummaryEnd{Summary: e.Summary, Elapsed: time.Duration(e.ElapsedMs) * time.Millisecond}, e.Time)
 		case session.TypeMessage:
 			if m == nil {
 				continue

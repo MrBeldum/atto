@@ -29,6 +29,10 @@ const (
 	Hook       Kind = "hook"       // something a hook said, or what it blocked
 	Notice     Kind = "notice"     // a message from atto itself (live only: not in the session)
 	GoalStatus Kind = "goalStatus" // the goal changed status (live only)
+
+	// BranchSummary is the summary of a branch the user went back from
+	// (/tree), which the model sees on the new branch.
+	BranchSummary Kind = "branchSummary"
 )
 
 // Status is where an item stands. Messages are complete when they start;
@@ -48,12 +52,14 @@ type Item struct {
 	Kind   Kind
 	Status Status
 	// Text is the message (user, assistant, reasoning, event, goal), the
-	// handoff notes (compaction) or the message of a hook or notice.
+	// handoff notes (compaction), the summary (branchSummary) or the
+	// message of a hook or notice.
 	Text string
 	// Images are a user message's images, without their bytes.
 	Images []provider.Image
 	// Duration is the thinking time (reasoning), the run time (tool) or
-	// how long a compaction took, to the millisecond. Zero when unknown.
+	// how long a compaction or branch summary took, to the millisecond.
+	// Zero when unknown.
 	Duration time.Duration
 
 	// Tool. Output is the command's output as shown: streamed, tidied when

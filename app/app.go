@@ -62,7 +62,7 @@ type App struct {
 	toast   toast
 
 	busy     bool
-	runKind  string // "turn" or "compact" while busy
+	runKind  string // "turn", "compact" or "branchSummary" while busy
 	cancel   context.CancelFunc
 	runStart time.Time
 	activity string
@@ -86,6 +86,8 @@ type App struct {
 	text     *textBlock
 	tools    map[string]*toolBlock
 	compact  *compactBlock
+	// summaryBlk is the branch summary block being streamed.
+	summaryBlk *summaryBlock
 	// steered collects the user messages of a committed steer, shown as
 	// one block; replaying is set while blocks come from saved entries.
 	steered   []string
@@ -98,8 +100,14 @@ type App struct {
 	sessName            string
 	// pendingResume is a session to switch to once the running turn stops.
 	pendingResume string
-	// pendingTree is a /tree entry to move to once the running turn stops.
-	pendingTree string
+	// pendingTree is a /tree entry to move to once the running turn stops,
+	// and pendingSummary how to summarize the branch left (nil: no summary).
+	pendingTree    string
+	pendingSummary *summaryRequest
+	// summary is the branch summary being written (runKind "branchSummary"),
+	// and skipSummary settings.json's branchSummary.skipPrompt.
+	summary     *summaryRun
+	skipSummary bool
 	// esc detects Esc twice on an empty prompt; escAction is what it opens.
 	esc       doubleEsc
 	escAction string
@@ -160,6 +168,7 @@ func Run(opts Options) error {
 		a.ui.Mode = tui.Inline
 	}
 	a.escAction = settings.DoubleEscapeAction
+	a.skipSummary = settings.BranchSummary != nil && settings.BranchSummary.SkipPrompt
 	a.ui.NoMouse = mouseDisabled(settings.Mouse, os.Getenv)
 	a.build()
 	if noModels {
@@ -487,6 +496,8 @@ func (a *App) start(activity string, fn func(context.Context, func(any)) error) 
 			cancel()
 			a.cancel = nil
 			switch {
+			case errors.Is(err, context.Canceled) && a.runKind == "branchSummary":
+				a.notice("Branch summary canceled.")
 			case errors.Is(err, context.Canceled):
 				a.notice("Interrupted.")
 			case errors.Is(err, agent.ErrPromptBlocked), errors.Is(err, agent.ErrStoppedByHook):
