@@ -659,7 +659,9 @@ func (a *App) renderActivity(width int) []string {
 		return nil
 	}
 	el := time.Since(a.runStart)
-	frame := spinnerFrames[int(el/(80*time.Millisecond))%len(spinnerFrames)]
+	// One frame per animation tick: stepping by a fixed 80ms while full
+	// repaint renders every 250ms skipped frames, and the spinner jerked.
+	frame := spinnerFrames[int(el/a.ui.AnimationInterval())%len(spinnerFrames)]
 	line := tui.FG(6, frame) + " " + a.activity + "…" + tui.Dim("  "+tui.FormatDuration(el.Truncate(100*time.Millisecond))+" · esc to interrupt")
 	return []string{"", tui.Truncate(line, width, "…")}
 }
