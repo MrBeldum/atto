@@ -38,6 +38,9 @@ type GoalDriver struct {
 	// the model reported, the budget ran out, a stop condition tripped or
 	// an interrupt paused it.
 	Changed func(*goal.Goal)
+	// Adopted, if set, is told about a goal the model set with atto goal
+	// set (at the user's request, as codex's create_goal).
+	Adopted func(*goal.Goal)
 	// Error, if set, receives failures to read or write the goal file.
 	Error func(error)
 
@@ -73,15 +76,22 @@ func (d *GoalDriver) Set(g *goal.Goal) {
 	}
 }
 
-// Poll takes a report the model wrote with atto goal complete|blocked.
+// Poll takes a report the model wrote with atto goal complete|blocked, or
+// a goal it set with atto goal set when none was unfinished.
 func (d *GoalDriver) Poll() {
 	g := d.Goal
-	if g == nil {
-		return
-	}
 	file, err := goal.Load(d.Session)
 	if err != nil {
 		d.fail(err)
+		return
+	}
+	if g == nil || g.Status == goal.Complete {
+		if file != nil && file.Status == goal.Active && (g == nil || !file.Created.Equal(g.Created)) {
+			d.Set(file)
+			if d.Adopted != nil {
+				d.Adopted(file)
+			}
+		}
 		return
 	}
 	if g.Adopt(file) {

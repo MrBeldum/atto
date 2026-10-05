@@ -21,8 +21,16 @@ func TestGoalCommandInsideAgent(t *testing.T) {
 	t.Setenv("ATTO_SESSION_ID", "s1")
 	t.Setenv(config.EnvAgent, "1")
 
-	if err := RunGoal([]string{"set", "rewrite everything"}, io.Discard); err == nil || !strings.Contains(err.Error(), "only the user") {
+	// As codex's create_goal: a model sets a goal (when the user asks)
+	// but never replaces an unfinished one.
+	if err := RunGoal([]string{"set", "-budget", "50k", "port the parser"}, io.Discard); err != nil {
 		t.Fatalf("set inside an agent: %v", err)
+	}
+	if got, _ := goal.Load("s1"); got == nil || got.Objective != "port the parser" || got.Budget != 50_000 || got.Status != goal.Active {
+		t.Fatalf("set: %+v", got)
+	}
+	if err := RunGoal([]string{"set", "rewrite everything"}, io.Discard); err == nil || !strings.Contains(err.Error(), "only the user can replace") {
+		t.Fatalf("replace inside an agent: %v", err)
 	}
 	g, _ := goal.New("ship it", 0)
 	_ = goal.Save("s2", g)

@@ -25,6 +25,7 @@ func (a *App) resetGoal() {
 		Steer:    func(text string) { a.agent.Steer(text) },
 		Snapshot: a.snapshotGoal,
 		Changed:  a.announceGoal,
+		Adopted:  a.goalInfo,
 		Error:    a.errorNotice,
 	}
 }

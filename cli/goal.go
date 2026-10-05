@@ -15,7 +15,9 @@ const goalUsage = `usage:
   atto goal complete "<evidence>"   the goal is achieved (after verifying it)
   atto goal blocked "<reason>"      stalled: the same blocker for three goal turns in a row, needs the user
   atto goal pause "<why>"           only when the user explicitly asked to pause the goal
-  atto goal set [-budget 50k] "<objective>"   set a goal (users only; refused inside atto)`
+  atto goal set [-budget 50k] "<objective>"   set a goal: only when the user explicitly asks for one;
+                                    never infer goals from ordinary tasks. -budget only if the user gave one.
+                                    Fails if an unfinished goal exists.`
 
 // RunGoal implements "atto goal". The model uses complete/blocked from its
 // shell; the front end notices the change and stops continuing the goal.
@@ -34,11 +36,9 @@ func RunGoal(args []string, out io.Writer) error {
 		return err
 	}
 	if config.InAgent() {
-		// A model reports on its own goal only: it cannot set goals or
-		// touch another session's.
-		if sub == "set" {
-			return fmt.Errorf("only the user sets goals (/goal in atto); report on the current goal with: atto goal complete|blocked \"...\"")
-		}
+		// A model works on its own session's goal only. As codex's
+		// create_goal, it may set one when the user asks, but never
+		// replaces an unfinished goal.
 		if *session != os.Getenv("ATTO_SESSION_ID") {
 			return fmt.Errorf("-session can't be changed inside atto: a goal is reported from its own session")
 		}
@@ -75,6 +75,9 @@ func RunGoal(args []string, out io.Writer) error {
 		}
 		fmt.Fprintf(out, "goal marked %s. End your turn with a short summary for the user.\n", g.Status.Label())
 	case "set":
+		if g != nil && g.Status != goal.Complete && config.InAgent() {
+			return fmt.Errorf("the session already has a goal (%s); only the user can replace it (/goal)", g.Status.Label())
+		}
 		b := 0
 		if *budget != "" {
 			if b, err = goal.ParseBudget(*budget); err != nil {

@@ -71,6 +71,17 @@ func TestGoalDriverStops(t *testing.T) {
 	if _, ok := d.Next(); ok || g.Status != goal.Complete || g.Note != "tests pass" || g.Objective != "ship it" {
 		t.Fatalf("adopt: %s %q %q", g.Status, g.Note, g.Objective)
 	}
+
+	// Once it is complete, a goal the model sets (atto goal set) is taken
+	// as a new goal and continued.
+	var adopted *goal.Goal
+	d.Adopted = func(g *goal.Goal) { adopted = g }
+	ng, _ := goal.New("next thing", 0)
+	ng.Created = g.Created.Add(time.Second)
+	_ = goal.Save("s", ng)
+	if text, ok := d.Next(); !ok || adopted == nil || d.Goal.Objective != "next thing" || !strings.Contains(text, "next thing") {
+		t.Fatalf("new goal: %v %+v %+v", ok, adopted, d.Goal)
+	}
 }
 
 func TestGoalDriverRun(t *testing.T) {
