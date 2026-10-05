@@ -57,15 +57,21 @@ type printResult struct {
 var ErrPrintFailed = errors.New("run failed")
 
 // ReadPromptInput combines the prompt arguments with piped stdin, as
-// `cat file | atto -p "explain this"` does.
+// `cat file | atto -p "explain this"` does. With a prompt argument, stdin
+// is only read if data shows up promptly: scripts and agents often leave
+// an idle pipe open, which would otherwise block forever.
 func ReadPromptInput(args []string) (string, error) {
 	prompt := strings.TrimSpace(strings.Join(args, " "))
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		data, err := io.ReadAll(io.LimitReader(os.Stdin, 16<<20))
+		wait := time.Duration(0) // no prompt: stdin is the prompt, wait for it
+		if prompt != "" {
+			wait = time.Second
+		}
+		in, err := readStdin(os.Stdin, wait)
 		if err != nil {
 			return "", err
 		}
-		if in := strings.TrimSpace(string(data)); in != "" {
+		if in = strings.TrimSpace(in); in != "" {
 			if prompt == "" {
 				prompt = in
 			} else {
@@ -77,6 +83,39 @@ func ReadPromptInput(args []string) (string, error) {
 		return "", fmt.Errorf("no prompt: pass it as an argument or on stdin")
 	}
 	return prompt, nil
+}
+
+// readStdin reads r to EOF. If wait > 0 and no data arrives within it,
+// it gives up and returns "".
+func readStdin(r io.Reader, wait time.Duration) (string, error) {
+	type chunk struct {
+		b   []byte
+		err error
+	}
+	first := make(chan chunk, 1)
+	go func() {
+		buf := make([]byte, 64*1024)
+		n, err := r.Read(buf)
+		first <- chunk{buf[:n], err}
+	}()
+	var c chunk
+	if wait > 0 {
+		select {
+		case c = <-first:
+		case <-time.After(wait):
+			return "", nil
+		}
+	} else {
+		c = <-first
+	}
+	if c.err != nil {
+		if c.err == io.EOF {
+			return string(c.b), nil
+		}
+		return "", c.err
+	}
+	rest, err := io.ReadAll(io.LimitReader(r, 16<<20))
+	return string(c.b) + string(rest), err
 }
 
 // RunPrint runs one prompt without the TUI. Assistant text goes to stdout;

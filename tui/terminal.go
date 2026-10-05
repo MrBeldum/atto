@@ -3,9 +3,7 @@ package tui
 import (
 	"io"
 	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 
 	"golang.org/x/term"
 )
@@ -25,7 +23,7 @@ type Terminal interface {
 type ProcessTerminal struct {
 	in, out  *os.File
 	oldState *term.State
-	sigs     chan os.Signal
+	console  consoleState // platform console modes to restore (Windows)
 	done     chan struct{}
 	wg       sync.WaitGroup
 	mu       sync.Mutex // serializes writes
@@ -41,23 +39,15 @@ func (t *ProcessTerminal) Start(onInput func(string), onResize func()) error {
 		return err
 	}
 	t.oldState = st
+	t.console = enableVT(t.in, t.out)
 	t.done = make(chan struct{})
 
 	t.Write("\x1b[?2004h") // bracketed paste
 
-	t.sigs = make(chan os.Signal, 1)
-	signal.Notify(t.sigs, syscall.SIGWINCH)
 	t.wg.Add(1)
 	go func() {
 		defer t.wg.Done()
-		for {
-			select {
-			case <-t.sigs:
-				onResize()
-			case <-t.done:
-				return
-			}
-		}
+		watchResize(t, t.done, onResize)
 	}()
 
 	// The read loop is not joined on Stop: a blocking read on stdin cannot be
@@ -89,11 +79,11 @@ func (t *ProcessTerminal) Stop() {
 	if t.oldState == nil {
 		return
 	}
-	signal.Stop(t.sigs)
 	close(t.done)
 	t.wg.Wait()
 	t.Write("\x1b[?2004l\x1b[?25h")
 	_ = term.Restore(int(t.in.Fd()), t.oldState)
+	restoreVT(t.console)
 	t.oldState = nil
 }
 

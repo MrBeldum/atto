@@ -32,6 +32,7 @@ import (
 
 	"atto/agent"
 	"atto/config"
+	"atto/shell"
 )
 
 const (
@@ -164,7 +165,7 @@ func (r *Runner) exec(ctx context.Context, h config.HookSpec, input []byte) resu
 		}
 		res.stdout = string(body)
 	default: // "command"
-		cmd := exec.CommandContext(ctx, "sh", "-c", h.Command)
+		cmd := shell.Command(ctx, h.Command) // same shell as the agent: bash, or PowerShell on Windows
 		cmd.Dir = r.cwd
 		cmd.Stdin = bytes.NewReader(input)
 		var stdout, stderr bytes.Buffer

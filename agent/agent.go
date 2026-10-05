@@ -19,6 +19,7 @@ import (
 	"atto/config"
 	"atto/provider"
 	"atto/session"
+	"atto/shell"
 )
 
 // HookOutcome is what hooks decided for one event.
@@ -108,6 +109,8 @@ type (
 
 type Agent struct {
 	Cwd string
+	// Shell runs the model's one tool: bash on Unix, PowerShell on Windows.
+	Shell shell.Shell
 
 	// Model settings may change from the UI while a turn runs; they are
 	// read once per request.
@@ -174,7 +177,7 @@ func New(model config.ModelRef, effort, cwd string) *Agent {
 	// session (e.g. atto -p); SetSession replaces it.
 	id := make([]byte, 8)
 	_, _ = rand.Read(id)
-	a := &Agent{Cwd: cwd, effort: effort, sessID: hex.EncodeToString(id)}
+	a := &Agent{Cwd: cwd, Shell: shell.Default(), effort: effort, sessID: hex.EncodeToString(id)}
 	a.SetModel(model)
 	a.SetStart(time.Now())
 	return a
@@ -185,7 +188,7 @@ func New(model config.ModelRef, effort, cwd string) *Agent {
 // stays byte-identical for the whole session (and across resumes) and the
 // prefix cache survives midnight. Call only while no turn is running.
 func (a *Agent) SetStart(t time.Time) {
-	a.system = systemPrompt(a.Cwd, t)
+	a.system = systemPrompt(a.Cwd, a.Shell, t)
 }
 
 // SetSession sets the session ID (for provider routing headers) and extra
@@ -394,8 +397,8 @@ func (a *Agent) tools() []provider.Tool {
 	return []provider.Tool{{
 		Type: "function",
 		Function: provider.ToolFunction{
-			Name:        "bash",
-			Description: bashDescription,
+			Name:        a.Shell.ToolName(),
+			Description: toolDescription(a.Shell),
 			Parameters:  bashSchema,
 		},
 	}}
@@ -537,8 +540,8 @@ func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, emit func(any
 	fail := func(msg string) (string, *session.ToolMeta, bool) {
 		return "error: " + msg, &session.ToolMeta{ExitCode: -1}, false
 	}
-	if tc.Function.Name != "bash" {
-		return fail(fmt.Sprintf("unknown tool %q; the only tool is bash", tc.Function.Name))
+	if name := a.Shell.ToolName(); tc.Function.Name != name {
+		return fail(fmt.Sprintf("unknown tool %q; the only tool is %s", tc.Function.Name, name))
 	}
 	var args BashArgs
 	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
@@ -565,7 +568,7 @@ func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, emit func(any
 	a.cfgMu.Lock()
 	env := a.env
 	a.cfgMu.Unlock()
-	res := RunBash(ctx, a.Cwd, env, args, func(s string) { emit(ToolOutput{ID: tc.ID, Chunk: s}) })
+	res := RunShell(ctx, a.Shell, a.Cwd, env, args, func(s string) { emit(ToolOutput{ID: tc.ID, Chunk: s}) })
 	emit(ToolEnd{ID: tc.ID, Result: res})
 	out := res.ForModel(args)
 	stop := false
@@ -684,13 +687,30 @@ func (a *Agent) compact(ctx context.Context, emit func(any), auto bool) error {
 	return nil
 }
 
-func systemPrompt(cwd string, start time.Time) string {
+// shellGuide tells the model how to use its one tool on this shell.
+func shellGuide(sh shell.Shell) string {
+	switch sh.Kind {
+	case shell.PowerShell:
+		g := "You have one tool, powershell. Use it for everything: exploring (Get-ChildItem, Get-Content, Select-String, rg), editing files (Set-Content with here-strings, small scripts), building, and testing."
+		if strings.EqualFold(strings.TrimSuffix(filepath.Base(sh.Path), ".exe"), "powershell") {
+			g += "\nThis is Windows PowerShell 5.1: `&&` and `||` are not available; chain with `;` and check `$?` or `$LASTEXITCODE`."
+		}
+		return g
+	case shell.Cmd:
+		return "You have one tool, cmd (cmd.exe). Use it for everything: exploring (dir, type, findstr), editing files, building, and testing."
+	}
+	return "You have one tool, bash. Use it for everything: exploring (ls, rg, cat, sed -n), editing files (heredocs, sed, python scripts, patch), building, and testing."
+}
+
+func systemPrompt(cwd string, sh shell.Shell, start time.Time) string {
 	var b strings.Builder
+	name := sh.ToolName()
 	fmt.Fprintf(&b, `You are atto, a coding agent running in the user's terminal.
 
-You have one tool, bash. Use it for everything: exploring (ls, rg, cat, sed -n), editing files (heredocs, sed, python scripts, patch), building, and testing.
-Every bash call needs a short description of what it does, shown to the user, e.g. "JIT compile atto.py", "Run unit tests", "Read main.go".
-Commands time out after 60 seconds by default; set timeout for longer builds or tests.
+%s
+Every %s call needs a short description of what it does, shown to the user, e.g. "JIT compile atto.py", "Run unit tests", "Read main.go".
+Commands time out after 60 seconds by default; set timeout for longer builds or tests.`, shellGuide(sh), name)
+	fmt.Fprintf(&b, `
 The full transcript of this session, including anything removed by compaction, can be searched with "atto history grep <regexp>" and read with "atto history show <n>".
 
 Work autonomously: investigate, make the change, verify it. Keep replies concise and plain; the user sees your tool calls.
@@ -698,8 +718,9 @@ Work autonomously: investigate, make the change, verify it. Keep replies concise
 Environment:
 - Working directory: %s
 - Platform: %s/%s
+- Shell: %s
 - Session started: %s
-`, cwd, runtime.GOOS, runtime.GOARCH, start.Format("2006-01-02"))
+`, cwd, runtime.GOOS, runtime.GOARCH, sh.Path, start.Format("2006-01-02"))
 
 	for _, p := range []string{filepath.Join(config.Dir(), "AGENTS.md"), filepath.Join(cwd, "AGENTS.md")} {
 		if data, err := os.ReadFile(p); err == nil && len(strings.TrimSpace(string(data))) > 0 {

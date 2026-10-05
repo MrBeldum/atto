@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"atto/agent"
 	"atto/config"
+	"atto/shell"
 	"atto/tui"
 )
 
@@ -185,7 +185,7 @@ func (a *App) statusLoop(cfg *config.StatusLine) {
 func runStatusCommand(command string, input []byte, cwd string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd := shell.Command(ctx, command)
 	cmd.Dir = cwd
 	cmd.Stdin = bytes.NewReader(input)
 	out, err := cmd.Output()

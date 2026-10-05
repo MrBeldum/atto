@@ -13,9 +13,13 @@ import (
 // rssBytes is the process's resident set size, sampled in the background.
 var rssBytes atomic.Int64
 
-// sampleRSS reads the current resident set size. Linux reads /proc; other
-// platforms ask ps (macOS has no cheap equivalent without cgo).
+// sampleRSS reads the current resident set size (working set on Windows):
+// /proc on Linux, ps on macOS (no cheap equivalent without cgo), and
+// GetProcessMemoryInfo on Windows (memory_windows.go).
 func sampleRSS() int64 {
+	if n, ok := platformRSS(); ok {
+		return n
+	}
 	if runtime.GOOS == "linux" {
 		if b, err := os.ReadFile("/proc/self/statm"); err == nil {
 			if f := strings.Fields(string(b)); len(f) > 1 {

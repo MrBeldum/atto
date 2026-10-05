@@ -10,8 +10,9 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"atto/shell"
 )
 
 const (
@@ -44,10 +45,23 @@ var bashSchema = json.RawMessage(`{
   "required": ["description", "command"]
 }`)
 
-const bashDescription = "Run a bash command in the working directory and return its combined stdout/stderr. " +
-	"Each call runs in a fresh shell (use absolute paths or `cd dir && ...`). " +
-	"Stdin is not connected; do not start interactive programs. " +
-	"Output beyond 2000 lines or 50KB is truncated to the tail, and the full output is saved to a file whose path is reported."
+// toolDescription describes the shell tool for the model.
+func toolDescription(sh shell.Shell) string {
+	var lead string
+	switch sh.Kind {
+	case shell.PowerShell:
+		lead = "Run a PowerShell command in the working directory and return its combined output. " +
+			"Each call runs in a fresh PowerShell session (use absolute paths or `Set-Location dir; ...`). "
+	case shell.Cmd:
+		lead = "Run a cmd.exe command in the working directory and return its combined output. " +
+			"Each call runs in a fresh shell (use absolute paths or `cd /d dir && ...`). "
+	default:
+		lead = "Run a bash command in the working directory and return its combined stdout/stderr. " +
+			"Each call runs in a fresh shell (use absolute paths or `cd dir && ...`). "
+	}
+	return lead + "Stdin is not connected; do not start interactive programs. " +
+		"Output beyond 2000 lines or 50KB is truncated to the tail, and the full output is saved to a file whose path is reported."
+}
 
 type BashArgs struct {
 	Description string `json:"description"`
@@ -94,23 +108,34 @@ func (w *streamWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// RunBash executes args.Command with bash in cwd. The whole process group is
-// killed on timeout or when ctx is canceled.
+// RunBash runs args.Command with the default shell (bash on Unix,
+// PowerShell on Windows).
 func RunBash(ctx context.Context, cwd string, env []string, args BashArgs, onOutput func(string)) BashResult {
+	return RunShell(ctx, shell.Default(), cwd, env, args, onOutput)
+}
+
+// RunShell executes args.Command with sh in cwd. The whole process tree
+// (process group on Unix, job object on Windows) is killed on timeout or
+// when ctx is canceled.
+func RunShell(ctx context.Context, sh shell.Shell, cwd string, env []string, args BashArgs, onOutput func(string)) BashResult {
 	start := time.Now()
 	tctx, cancel := context.WithTimeout(ctx, args.timeout())
 	defer cancel()
 
-	cmd := exec.CommandContext(tctx, "bash", "-c", args.Command)
+	cmd := sh.Command(tctx, args.Command)
 	cmd.Dir = cwd
-	cmd.Env = append(append(os.Environ(), "TERM=dumb", "PAGER=cat", "GIT_PAGER=cat"), env...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.Env = append(append(os.Environ(), "TERM=dumb", "PAGER=cat", "GIT_PAGER=cat", "NO_COLOR=1"), env...)
+	tree := newProcTree(cmd)
+	defer tree.close()
 	cmd.WaitDelay = 2 * time.Second // don't hang on pipes held by orphaned children
 	w := &streamWriter{onOutput: onOutput}
 	cmd.Stdout, cmd.Stderr = w, w
 
-	err := cmd.Run()
+	err := cmd.Start()
+	if err == nil {
+		tree.started()
+		err = cmd.Wait()
+	}
 	res := BashResult{Duration: time.Since(start)}
 	w.mu.Lock()
 	res.Output = w.buf.String()

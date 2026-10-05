@@ -2,8 +2,10 @@ package app
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"atto/provider"
 	"atto/session"
@@ -44,5 +46,20 @@ func TestHistoryGrepShow(t *testing.T) {
 	}
 	if err := RunHistory([]string{"show", "99"}, &out); err == nil {
 		t.Error("expected error for missing entry")
+	}
+}
+
+func TestReadStdinIdlePipe(t *testing.T) {
+	r, w := io.Pipe()
+	defer w.Close()
+	start := time.Now()
+	got, err := readStdin(r, 100*time.Millisecond)
+	if err != nil || got != "" || time.Since(start) > time.Second {
+		t.Fatalf("idle pipe should give up quickly: %q %v", got, err)
+	}
+	r2, w2 := io.Pipe()
+	go func() { w2.Write([]byte("hello ")); w2.Write([]byte("world")); w2.Close() }()
+	if got, _ := readStdin(r2, time.Second); got != "hello world" {
+		t.Fatalf("got %q", got)
 	}
 }

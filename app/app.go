@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -131,7 +132,7 @@ func Run(opts Options) error {
 		cwd:    cwd,
 		quit:   make(chan struct{}),
 	}
-	if opts.Inline || settings.Renderer == "inline" {
+	if opts.Inline || settings.Renderer == "inline" || (settings.Renderer == "" && legacyConsole()) {
 		a.ui.Mode = tui.Inline
 	}
 	hookCfg, err := config.LoadHooks(cwd)
@@ -602,4 +603,12 @@ func (a *App) pinnedPrompt(firstVisible, width int) string {
 		return ""
 	}
 	return last.pinLine(width)
+}
+
+// legacyConsole reports a classic Windows console (conhost), where the
+// alternate screen and mouse reporting are unreliable; Windows Terminal
+// and VS Code set WT_SESSION or TERM_PROGRAM. Set "renderer" in
+// settings.json to override.
+func legacyConsole() bool {
+	return runtime.GOOS == "windows" && os.Getenv("WT_SESSION") == "" && os.Getenv("TERM_PROGRAM") == ""
 }
