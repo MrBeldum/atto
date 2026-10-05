@@ -184,6 +184,7 @@ type threadParams struct {
 	Effort   string `json:"effort"`
 	Input    string `json:"input"`
 	Archived bool   `json:"archived"`
+	NumTurns int    `json:"numTurns"`
 }
 
 func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (any, error) {
@@ -218,6 +219,8 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 		return s.setEffort(p)
 	case "thread/compact":
 		return s.startCompact(p.ThreadID)
+	case "thread/rollback":
+		return s.rollback(p)
 	case "turn/start":
 		return s.startTurn(p)
 	case "turn/steer":
@@ -421,15 +424,14 @@ func (s *Server) resumeThread(id string) (any, error) {
 			name = e.Name
 		}
 	}
-	t, err := s.newThread(h.Cwd, model, effort, session.Resume(path, h), h.Time)
+	sess := session.Resume(path, h)
+	sess.SetLeaf(session.Leaf(entries))
+	t, err := s.newThread(h.Cwd, model, effort, sess, h.Time)
 	if err != nil {
 		return nil, err
 	}
-	t.agent.Restore(entries)
 	t.name = name
-	t.ctxTokens = t.agent.ContextTokens()
-	t.items = ItemsFromEntries(t.id, entries)
-	t.itemSeq = len(t.items)
+	t.restore(entries)
 	s.sessionStart(t, "resume")
 	t.mu.Lock()
 	defer t.mu.Unlock()

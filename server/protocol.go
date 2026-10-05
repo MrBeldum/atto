@@ -17,6 +17,7 @@
 //	thread/setModel {threadId, model}              → thread
 //	thread/setEffort {threadId, effort}            → thread
 //	thread/compact {threadId}                      → {turnId}
+//	thread/rollback {threadId, numTurns?}          → thread + items + {input}
 //	turn/start     {threadId, input}               → {turnId}
 //	turn/steer     {threadId, input}               → {}
 //	turn/interrupt {threadId}                      → {}

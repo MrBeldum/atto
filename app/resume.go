@@ -242,18 +242,21 @@ func (a *App) resume(path string) {
 	a.reset()
 	a.sess.Close()
 	a.sess = session.Resume(path, h)
+	a.sess.SetLeaf(session.Leaf(entries))
 	a.agent.Record = a.sess.Append
 	a.agent.SetStart(h.Time) // same system prompt as before: keeps the prefix cache
 	a.agent.SetSession(h.ID, sessionEnv(h.ID))
 	a.hooks.SetSession(h.ID, path)
 	a.setLiveSession(h.ID)
 	a.sessionStartHook("resume")
-	a.agent.Restore(entries)
+	branch := session.Active(entries)
+	a.agent.Restore(branch)
 	a.ctxTokens = a.agent.ContextTokens()
 	a.usage.fromEntries(entries)
 	a.recModel, a.recEffort, a.sessName = "", "", ""
 
-	// Restore the name, model and effort last used in the session.
+	// Restore the name, model and effort last used in the session. They
+	// are session-wide: the latest choice wins whichever branch it was on.
 	for _, e := range entries {
 		switch e.Type {
 		case session.TypeName:
@@ -268,7 +271,7 @@ func (a *App) resume(path string) {
 			a.recEffort = e.Effort
 		}
 	}
-	a.replay(entries)
+	a.replay(branch)
 	a.restoreGoal(entries)
 	if h.Cwd != a.cwd {
 		a.notice("Resumed a session from %s; commands run in %s.", shortPath(h.Cwd), shortPath(a.cwd))
@@ -281,7 +284,8 @@ func (a *App) resume(path string) {
 	a.statusTrigger()
 }
 
-// replay rebuilds transcript blocks from session entries.
+// replay rebuilds transcript blocks from session entries: pass the active
+// branch (session.Active), not the whole file.
 func (a *App) replay(entries []session.Entry) {
 	tools := map[string]*toolBlock{}
 	for _, e := range entries {

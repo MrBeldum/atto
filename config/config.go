@@ -85,6 +85,10 @@ type Settings struct {
 	// UpdateCheck: false stops the once-a-day release check (a GET to the
 	// GitHub API). atto never installs updates by itself either way.
 	UpdateCheck *bool `json:"updateCheck,omitempty"`
+	// DoubleEscapeAction is what Esc twice on an empty prompt opens, as in
+	// pi: "tree" (default, the session tree), "fork" (pick a message to
+	// fork a new session from) or "none".
+	DoubleEscapeAction string `json:"doubleEscapeAction,omitempty"`
 }
 
 // HookMatcher selects hooks by tool name (regexp; "" or "*" match all).

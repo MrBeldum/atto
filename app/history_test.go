@@ -49,6 +49,38 @@ func TestHistoryGrepShow(t *testing.T) {
 	}
 }
 
+func TestHistoryMarksOtherBranches(t *testing.T) {
+	t.Setenv("ATTO_DIR", t.TempDir())
+	w := session.New("/w")
+	w.Append(session.Entry{Type: session.TypeMessage, Message: &provider.Message{Role: "user", Content: "try plan A"}})
+	w.Append(session.Entry{Type: session.TypeMessage, Message: &provider.Message{Role: "assistant", Content: "plan A failed"}})
+	w.Branch("") // back to before the first message
+	w.Append(session.Entry{Type: session.TypeMessage, Message: &provider.Message{Role: "user", Content: "try plan B"}})
+	w.Close()
+	t.Setenv("ATTO_SESSION_ID", w.ID)
+
+	var out bytes.Buffer
+	if err := RunHistory([]string{"grep", "plan"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"#1 user (other branch): try plan A", "#2 assistant (other branch): plan A failed", "#4 user: try plan B"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("grep missing %q:\n%s", want, out.String())
+		}
+	}
+	out.Reset()
+	if err := RunHistory([]string{"grep", "-active", "plan"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "plan A") || !strings.Contains(out.String(), "#4 user: try plan B") {
+		t.Errorf("-active:\n%s", out.String())
+	}
+	out.Reset()
+	if err := RunHistory([]string{"show", "2"}, &out); err != nil || !strings.Contains(out.String(), "── #2 assistant (other branch) ──") {
+		t.Errorf("show: %v\n%s", err, out.String())
+	}
+}
+
 func TestReadStdinIdlePipe(t *testing.T) {
 	r, w := io.Pipe()
 	defer w.Close()
