@@ -292,8 +292,8 @@ func TestGoalIndicatorPlacement(t *testing.T) {
 		g.Objective = "x"
 		a.goal.Goal = &g
 		// The status takes two rows beside the indicator; it ends the first.
-		r := row(120)
-		if len(r) != 2 || !strings.HasSuffix(r[0], c.want) || tui.VisibleWidth(r[0]) != 119 || strings.Contains(r[1], "oal") {
+		r := row(110)
+		if len(r) != 2 || !strings.HasSuffix(r[0], c.want) || tui.VisibleWidth(r[0]) != 109 || strings.Contains(r[1], "oal") {
 			t.Errorf("%s: %q", c.want, r)
 			continue
 		}

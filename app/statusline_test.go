@@ -39,7 +39,7 @@ func TestBuiltinStatusWidths(t *testing.T) {
 		}
 		return out
 	}
-	all := []string{"Orca", "11%", "31.0k/262.0k", "cache 85%", "↑12k", "↓3.4k", "R80k", "W2k", "$0.123", "/work/proj (main)", "fix"}
+	all := []string{"Orca", "11%", "31.0k/262.0k", "cache 85%", "↑12k", "↓3.4k", "W2k", "$0.123", "/work/proj (main)", "fix"}
 	hasAll := func(width int) {
 		t.Helper()
 		s := strings.Join(rows(width), "\n")
@@ -63,14 +63,18 @@ func TestBuiltinStatusWidths(t *testing.T) {
 	hasAll(100)
 	// The left items that do not fit the first row start the second.
 	r = rows(70)
-	if len(r) != 2 || !strings.HasPrefix(r[1], " R80k W2k · $0.123 ") || strings.Contains(r[0], "R80k") {
+	if len(r) != 2 || !strings.HasPrefix(r[1], " $0.123 ") || strings.Contains(r[0], "$0.123") {
 		t.Fatalf("width 70: %q", r)
 	}
 	hasAll(70)
+	// The session's cache reads are not shown (the hit rate is).
+	if s := strings.Join(rows(160), "\n"); strings.Contains(s, "R80k") {
+		t.Errorf("cache read total shown: %q", s)
+	}
 
 	// Only when two rows cannot hold them are items dropped, least
 	// important first.
-	order := []string{"fix", "R80k", "cache 85%", "↑12k", "$0.123", "proj (main)"}
+	order := []string{"fix", "W2k", "cache 85%", "↑12k", "$0.123", "proj (main)"}
 	prev := len(order)
 	for width := 160; width >= 20; width -= 2 {
 		r := rows(width)
@@ -99,8 +103,8 @@ func TestBuiltinStatusWidths(t *testing.T) {
 		}
 		prev = n
 	}
-	if s := strings.Join(rows(50), "\n"); strings.Contains(s, "fix") || !strings.Contains(s, "R80k") || !strings.Contains(s, "proj") {
-		t.Errorf("width 50 drops the name before cache totals and the directory: %q", s)
+	if s := strings.Join(rows(46), "\n"); strings.Contains(s, "fix") || !strings.Contains(s, "proj") {
+		t.Errorf("width 46 drops the name before the directory: %q", s)
 	}
 	if s := strings.Join(rows(24), "\n"); strings.Contains(s, "proj") || !strings.Contains(s, "11%") {
 		t.Errorf("width 24 keeps the bar over the directory: %q", s)

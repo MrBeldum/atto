@@ -380,9 +380,8 @@ func (a *App) builtinStatus(first, width int) []string {
 	if u.output > 0 {
 		io = append(io, "↓"+compactTokens(u.output))
 	}
-	if u.cached > 0 {
-		rw = append(rw, "R"+compactTokens(u.cached))
-	}
+	// Cache reads are left out: a long conversation reads its whole prefix
+	// back on every request, so their total says little (the hit rate does).
 	if u.cacheWrite > 0 {
 		rw = append(rw, "W"+compactTokens(u.cacheWrite))
 	}
