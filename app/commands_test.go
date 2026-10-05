@@ -103,3 +103,25 @@ func TestTuiCommand(t *testing.T) {
 	a.cmdTui("bogus")
 	a.cmdTui("")
 }
+
+func TestSuggestionsAboveInput(t *testing.T) {
+	a := &App{ui: tui.New(nil), agent: agent.New(config.ModelRef{}, "", t.TempDir())}
+	a.build()
+	a.editor.SetText("/co")
+	var rows []string
+	for _, l := range a.ui.Footer.Render(80) {
+		rows = append(rows, tui.StripEscapes(l))
+	}
+	sug, in := -1, -1
+	for i, l := range rows {
+		if strings.Contains(l, "/compact") && sug < 0 {
+			sug = i
+		}
+		if strings.Contains(l, "/co") && strings.Contains(l, "›") {
+			in = i
+		}
+	}
+	if sug < 0 || in < 0 || sug >= in {
+		t.Fatalf("the list (row %d) belongs above the input (row %d): %q", sug, in, rows)
+	}
+}

@@ -221,7 +221,9 @@ func (a *App) build() {
 	a.editor.OnSubmit = a.submit
 	a.editor.OnPaste = a.pasteImagePath
 
-	a.ui.Footer.Add(tui.Func(a.renderActivity), tui.Func(a.renderPending), tui.Func(a.renderInput), tui.Func(a.renderSuggestions), tui.Func(a.renderStatus))
+	// The command list sits above the input, as in Claude Code, so the
+	// input and the status line keep their place as it opens and closes.
+	a.ui.Footer.Add(tui.Func(a.renderActivity), tui.Func(a.renderPending), tui.Func(a.renderSuggestions), tui.Func(a.renderInput), tui.Func(a.renderStatus))
 	a.ui.SetFocus(a.editor)
 	a.ui.OnInput = a.onInput
 	a.ui.PaddingX = 1
