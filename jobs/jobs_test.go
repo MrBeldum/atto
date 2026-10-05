@@ -30,7 +30,7 @@ func setup(t *testing.T) string {
 
 func TestJobRunsAndPostsExitEvent(t *testing.T) {
 	s := setup(t)
-	j, err := Start(s, t.TempDir(), "", "echo one; sleep 0.3; echo two; exit 3", nil)
+	j, err := Start(s, t.TempDir(), "", "echo one; sleep 0.3; echo two; exit 3", nil, nil)
 	if err != nil || j.Status != Running || j.PID == 0 {
 		t.Fatalf("start: %+v %v", j, err)
 	}
@@ -52,7 +52,7 @@ func TestJobRunsAndPostsExitEvent(t *testing.T) {
 
 func TestKillStopsTreeWithoutEvent(t *testing.T) {
 	s := setup(t)
-	j, err := Start(s, t.TempDir(), "srv", "sleep 30 & sleep 30", nil)
+	j, err := Start(s, t.TempDir(), "srv", "sleep 30 & sleep 30", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestMonitorUntil(t *testing.T) {
 	dir := t.TempDir()
 	// Becomes READY on the third check.
 	cmd := `n=$(cat count 2>/dev/null || echo 0); n=$((n+1)); echo $n > count; [ $n -ge 3 ] && echo READY || echo waiting`
-	j, err := Start(s, dir, "health", cmd, &Monitor{Every: time.Second, Until: "READY", Timeout: time.Minute})
+	j, err := Start(s, dir, "health", cmd, &Monitor{Every: time.Second, Until: "READY", Timeout: time.Minute}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,15 +82,59 @@ func TestMonitorUntil(t *testing.T) {
 	if j.Status != Exited || *j.ExitCode != 0 {
 		t.Fatalf("monitor: %+v", j)
 	}
-	evs := events.Drain(s)
+	// The supervisor saves the final state, then posts the event.
+	var evs []events.Event
+	for deadline := time.Now().Add(2 * time.Second); len(evs) == 0 && time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		evs = events.Drain(s)
+	}
 	if len(evs) != 1 || evs[0].Source != "monitor" || !strings.Contains(evs[0].Text, "condition met") {
 		t.Fatalf("event %+v", evs)
 	}
 }
 
+func TestNotifyPostsWhileRunningThenExit(t *testing.T) {
+	s := setup(t)
+	cmd := `echo ERROR a; echo ok; echo ERROR b; sleep 1.6; echo panic c; echo done`
+	j, err := Start(s, t.TempDir(), "logs", cmd, nil, &Notify{Pattern: "ERROR|panic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.KindLabel() != "job+notify" {
+		t.Fatalf("kind %q", j.KindLabel())
+	}
+	// The first batch must arrive while the job is still running.
+	var first []events.Event
+	for deadline := time.Now().Add(1500 * time.Millisecond); len(first) == 0 && time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		first = events.Drain(s)
+	}
+	cur, _ := Get(s, j.ID)
+	if len(first) != 1 || !cur.Active() ||
+		!strings.Contains(first[0].Text, "ERROR a") || !strings.Contains(first[0].Text, "ERROR b") || strings.Contains(first[0].Text, "ok") {
+		t.Fatalf("first batch %+v (active %v)", first, cur.Active())
+	}
+	if _, why, _ := Wait(s, j.ID, 10*time.Second); why != "done" {
+		t.Fatal(why)
+	}
+	var rest []events.Event
+	for deadline := time.Now().Add(2 * time.Second); len(rest) < 2 && time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		rest = append(rest, events.Drain(s)...)
+	}
+	if len(rest) != 2 || !strings.Contains(rest[0].Text, "panic c") || strings.Contains(rest[0].Text, "done") ||
+		!strings.Contains(rest[1].Text, "exited with code 0") {
+		t.Fatalf("rest %+v", rest)
+	}
+}
+
+func TestNotifyRejectsBadPattern(t *testing.T) {
+	s := setup(t)
+	if _, err := Start(s, t.TempDir(), "", "true", nil, &Notify{Pattern: "("}); err == nil {
+		t.Fatal("want regexp error")
+	}
+}
+
 func TestWaitWokenByUserInput(t *testing.T) {
 	s := setup(t)
-	j, _ := Start(s, t.TempDir(), "", "sleep 5", nil)
+	j, _ := Start(s, t.TempDir(), "", "sleep 5", nil, nil)
 	defer Kill(s, j.ID)
 	go func() { time.Sleep(200 * time.Millisecond); events.Wake(s) }()
 	if _, why, _ := Wait(s, j.ID, 10*time.Second); why != "woken" {

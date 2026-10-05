@@ -15,7 +15,8 @@ import (
 )
 
 const jobUsage = `usage:
-  atto job start [-name text] -- '<command>'   run a command in the background (quote it so
+  atto job start [-name text] [-notify REGEXP [-notify-limit N]] -- '<command>'
+                                                run a command in the background (quote it so
                                                 your shell passes ; && | through)
   atto job list                                 jobs of this session
   atto job output <id> [-tail N | -head N]      print captured output (default: last 50 lines)
@@ -24,8 +25,20 @@ const jobUsage = `usage:
   atto monitor [-every 30s] [-until REGEXP | -on-change | -until-exit N] [-timeout 1h] [-name text] -- <command>
   atto timer in <duration> <message>            e.g. atto timer in 10m "check CI"
   atto timer at <HH:MM> <message>
-  atto timer list | atto timer cancel <id>
+  atto timer every <duration> [-count N] [-until HH:MM|duration] <message>
+                                                recurring, minimum 1m; e.g. atto timer every 30m "check CI"
+  atto timer list | atto timer cancel <id>      cancel also stops a recurring timer
   atto sleep <duration>                         wait; wakes early when an event or user input arrives
+
+-notify makes a job post an [atto event] for each output line matching REGEXP
+while it keeps running (e.g. tail -f app.log with -notify 'ERROR|panic').
+Matches within about a second are batched into one event, and after
+-notify-limit events (default 50) notifications stop; the full output stays
+available through atto job output. The exit event still fires.
+
+Recurring timers fire at fixed intervals from their schedule, so they do not
+drift. If atto was not running for several intervals, the timer fires once and
+reports how many it skipped. Skipped intervals count against -count.
 
 When a job or monitor finishes, or a timer fires, atto tells the agent with
 an [atto event] message. The session comes from $ATTO_SESSION_ID (set for
@@ -69,6 +82,8 @@ func RunJob(args []string, out io.Writer) error {
 	tail := fs.Int("tail", 50, "last N lines")
 	head := fs.Int("head", 0, "first N lines")
 	timeout := fs.Duration("timeout", 0, "give up after this long")
+	notify := fs.String("notify", "", "post an event for each output line matching this regexp")
+	notifyLimit := fs.Int("notify-limit", jobs.DefaultNotifyLimit, "stop notifying after this many events")
 	if err := fs.Parse(rest); err != nil {
 		return fmt.Errorf("%v\n%s", err, jobUsage)
 	}
@@ -80,11 +95,18 @@ func RunJob(args []string, out io.Writer) error {
 	switch sub {
 	case "start":
 		cmd := strings.Join(fs.Args(), " ")
-		j, err := jobs.Start(*session, cwd, *name, cmd, nil)
+		var n *jobs.Notify
+		if *notify != "" {
+			n = &jobs.Notify{Pattern: *notify, Limit: *notifyLimit}
+		}
+		j, err := jobs.Start(*session, cwd, *name, cmd, nil, n)
 		if err != nil {
 			return err
 		}
 		fmt.Fprintf(out, "job %d %s (pid %d): %s\n", j.ID, j.Status, j.PID, j.Label())
+		if n != nil {
+			fmt.Fprintf(out, "Each output line matching /%s/ will arrive as an [atto event] (batched, at most %d events).\n", n.Pattern, max(n.Limit, 1))
+		}
 		fmt.Fprintf(out, "You will get an [atto event] when it exits. Output: atto job output %d · wait: atto job wait %d · stop: atto job kill %d\n", j.ID, j.ID, j.ID)
 	case "list", "ls":
 		list := jobs.List(*session)
@@ -99,7 +121,7 @@ func RunJob(args []string, out io.Writer) error {
 			if j.ExitCode != nil {
 				st += fmt.Sprintf(" (%d)", *j.ExitCode)
 			}
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", j.ID, j.Kind(), st, j.Runtime(), j.Label())
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", j.ID, j.KindLabel(), st, j.Runtime(), j.Label())
 		}
 		return tw.Flush()
 	case "output", "log":
@@ -186,7 +208,7 @@ func RunMonitor(args []string, out io.Writer) error {
 		return fmt.Errorf("monitor needs a condition: -until REGEXP, -on-change or -until-exit N")
 	}
 	cwd, _ := os.Getwd()
-	j, err := jobs.Start(*session, cwd, *name, strings.Join(fs.Args(), " "), m)
+	j, err := jobs.Start(*session, cwd, *name, strings.Join(fs.Args(), " "), m, nil)
 	if err != nil {
 		return err
 	}
@@ -201,6 +223,8 @@ func RunTimer(args []string, out io.Writer) error {
 	}
 	fs := newFlags("timer")
 	session := sessionFlag(fs)
+	count := fs.Int("count", 0, "stop after this many firings (every)")
+	until := fs.String("until", "", "stop after HH:MM or this long from now (every)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -208,6 +232,37 @@ func RunTimer(args []string, out io.Writer) error {
 		return err
 	}
 	switch args[0] {
+	case "every":
+		// Flags usually come after the duration, which the first parse
+		// stops at; parse the rest again into the same variables.
+		if fs.NArg() < 1 {
+			return fmt.Errorf("usage: atto timer every <duration> [-count N] [-until HH:MM|duration] <message>")
+		}
+		every, err := time.ParseDuration(fs.Arg(0))
+		if err != nil {
+			return fmt.Errorf("bad interval %q: use a duration like 30m", fs.Arg(0))
+		}
+		fs2 := newFlags("timer every")
+		fs2.IntVar(count, "count", *count, "")
+		fs2.StringVar(until, "until", *until, "")
+		if err := fs2.Parse(fs.Args()[1:]); err != nil {
+			return err
+		}
+		if fs2.NArg() < 1 {
+			return fmt.Errorf("usage: atto timer every <duration> [-count N] [-until HH:MM|duration] <message>")
+		}
+		now := time.Now()
+		var stop time.Time
+		if *until != "" {
+			if stop, err = events.ParseWhen(*until, now); err != nil {
+				return fmt.Errorf("-until: %w", err)
+			}
+		}
+		t, err := events.AddRecurringTimer(*session, now, every, *count, stop, strings.Join(fs2.Args(), " "))
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "timer %s set: first at %s, %s\n", t.ID, t.Due.Format("15:04:05"), t.Schedule())
 	case "in", "at":
 		if fs.NArg() < 2 {
 			return fmt.Errorf("usage: atto timer %s <when> <message>", args[0])
@@ -227,7 +282,11 @@ func RunTimer(args []string, out io.Writer) error {
 			fmt.Fprintln(out, "no timers")
 		}
 		for _, t := range ts {
-			fmt.Fprintf(out, "%s  %s (in %s)  %s\n", t.ID, t.Due.Format("15:04:05"), time.Until(t.Due).Round(time.Second), t.Message)
+			sched := ""
+			if t.Recurring() {
+				sched = " [" + t.Schedule() + "]"
+			}
+			fmt.Fprintf(out, "%s  %s (in %s)%s  %s\n", t.ID, t.Due.Format("15:04:05"), time.Until(t.Due).Round(time.Second), sched, t.Message)
 		}
 	case "cancel", "rm":
 		if err := events.CancelTimer(*session, fs.Arg(0)); err != nil {

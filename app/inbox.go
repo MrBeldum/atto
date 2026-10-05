@@ -102,7 +102,7 @@ func (a *App) cmdJobs(arg string) {
 		if j.ExitCode != nil {
 			st += fmt.Sprintf(" (%d)", *j.ExitCode)
 		}
-		lines = append(lines, fmt.Sprintf("%-4d %-8s %-12s %-8s %s", j.ID, j.Kind(), st, j.Runtime(), j.Label()))
+		lines = append(lines, fmt.Sprintf("%-4d %-10s %-12s %-8s %s", j.ID, j.KindLabel(), st, j.Runtime(), j.Label()))
 	}
 	a.add(&contextBlock{lines: append([]string{tui.Bold("Background jobs") + tui.Dim("  · /stop stops all · output: atto job output <id>")}, lines...)})
 }
@@ -121,12 +121,18 @@ func (a *App) cmdTimers(string) {
 	}
 	var lines []string
 	for _, t := range ts {
-		lines = append(lines, fmt.Sprintf("%s  %s (in %s)  %s", t.ID, t.Due.Format("15:04"), time.Until(t.Due).Round(time.Second), t.Message))
+		sched := ""
+		if t.Recurring() {
+			sched = " [" + t.Schedule() + "]"
+		}
+		lines = append(lines, fmt.Sprintf("%s  %s (in %s)%s  %s", t.ID, t.Due.Format("15:04"), time.Until(t.Due).Round(time.Second), sched, t.Message))
 	}
 	a.add(&contextBlock{lines: append([]string{tui.Bold("Timers") + tui.Dim("  · cancel: /timer cancel <id>")}, lines...)})
 }
 
 // cmdTimer: /timer 10m <message>, /timer 15:30 <message>, /timer cancel <id>.
+// Recurring timers are set by the model with `atto timer every`; here they
+// are listed and can be canceled.
 func (a *App) cmdTimer(arg string) {
 	when, msg, _ := strings.Cut(strings.TrimSpace(arg), " ")
 	if when == "cancel" {

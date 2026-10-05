@@ -79,6 +79,7 @@ type Job struct {
 	Started       time.Time  `json:"started"`
 	Ended         *time.Time `json:"ended,omitempty"`
 	Monitor       *Monitor   `json:"monitor,omitempty"`
+	Notify        *Notify    `json:"notify,omitempty"`
 }
 
 func (j Job) Kind() string {
@@ -86,6 +87,14 @@ func (j Job) Kind() string {
 		return "monitor"
 	}
 	return "job"
+}
+
+// KindLabel is Kind for listings: it also shows that a job notifies.
+func (j Job) KindLabel() string {
+	if j.Notify != nil {
+		return j.Kind() + "+notify"
+	}
+	return j.Kind()
 }
 
 func (j Job) Active() bool { return j.Status == Starting || j.Status == Running }
@@ -205,7 +214,8 @@ func newDir(session string) (int, string, error) {
 }
 
 // Start launches command in the background and returns once it runs.
-func Start(session, cwd, name, command string, mon *Monitor) (Job, error) {
+// mon and notify are optional; they are mutually exclusive.
+func Start(session, cwd, name, command string, mon *Monitor, notify *Notify) (Job, error) {
 	if session == "" {
 		return Job{}, fmt.Errorf("no session: run inside atto (ATTO_SESSION_ID) or pass --session")
 	}
@@ -220,11 +230,22 @@ func Start(session, cwd, name, command string, mon *Monitor) (Job, error) {
 			return Job{}, fmt.Errorf("--until: %w", err)
 		}
 	}
+	if notify != nil {
+		if mon != nil {
+			return Job{}, fmt.Errorf("--notify does not apply to monitors")
+		}
+		if _, err := regexp.Compile(notify.Pattern); err != nil {
+			return Job{}, fmt.Errorf("--notify: %w", err)
+		}
+		if notify.Limit < 0 {
+			return Job{}, fmt.Errorf("--notify-limit must be positive")
+		}
+	}
 	id, dir, err := newDir(session)
 	if err != nil {
 		return Job{}, err
 	}
-	j := Job{ID: id, Session: session, Name: name, Command: command, Cwd: cwd, Status: Starting, Started: time.Now(), Monitor: mon}
+	j := Job{ID: id, Session: session, Name: name, Command: command, Cwd: cwd, Status: Starting, Started: time.Now(), Monitor: mon, Notify: notify}
 	if err := save(dir, j); err != nil {
 		return j, err
 	}
@@ -421,6 +442,10 @@ func Supervise(dir string) error {
 	var detail string
 	if j.Monitor != nil {
 		code, detail = superviseMonitor(ctx, dir, &j, out)
+	} else if j.Notify != nil {
+		nt := newNotifier(out, j, func(e events.Event) { _ = events.Push(j.Session, e) })
+		code, detail = run(ctx, dir, &j, j.Command, nt, true)
+		nt.Close()
 	} else {
 		code, detail = run(ctx, dir, &j, j.Command, out, true)
 	}

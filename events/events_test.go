@@ -1,6 +1,7 @@
 package events
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +37,130 @@ func TestInboxAndTimers(t *testing.T) {
 	}
 	if CancelTimer("s", soon.ID) == nil {
 		t.Fatal("fired timer should be gone")
+	}
+}
+
+func TestRecurringTimerNoDrift(t *testing.T) {
+	t.Setenv("ATTO_DIR", t.TempDir())
+	t0 := time.Date(2026, 10, 5, 12, 0, 0, 0, time.Local)
+	tm, err := AddRecurringTimer("s", t0, 10*time.Minute, 0, time.Time{}, "poll")
+	if err != nil || !tm.Due.Equal(t0.Add(10*time.Minute)) {
+		t.Fatalf("add: %+v %v", tm, err)
+	}
+	if n := FireDue("s", t0.Add(9*time.Minute)); n != 0 {
+		t.Fatal("fired early")
+	}
+	// Checked 3 minutes late: the next firing is still on the original grid.
+	if n := FireDue("s", t0.Add(13*time.Minute)); n != 1 {
+		t.Fatalf("fired %d", n)
+	}
+	ts := Timers("s")
+	if len(ts) != 1 || !ts[0].Due.Equal(t0.Add(20*time.Minute)) {
+		t.Fatalf("rescheduled %+v", ts)
+	}
+	evs := Drain("s")
+	if len(evs) != 1 || strings.Contains(evs[0].Text, "skipped") || !strings.Contains(evs[0].Text, "poll") {
+		t.Fatalf("event %+v", evs)
+	}
+}
+
+func TestRecurringTimerMissedIntervals(t *testing.T) {
+	t.Setenv("ATTO_DIR", t.TempDir())
+	t0 := time.Date(2026, 10, 5, 12, 0, 0, 0, time.Local)
+	AddRecurringTimer("s", t0, 10*time.Minute, 0, time.Time{}, "poll")
+	// Due 12:10; at 12:47 intervals 12:10 (fires), 12:20, 12:30, 12:40 are due.
+	if n := FireDue("s", t0.Add(47*time.Minute)); n != 1 {
+		t.Fatalf("burst: fired %d", n)
+	}
+	evs := Drain("s")
+	if len(evs) != 1 || !strings.Contains(evs[0].Text, "skipped 3 missed") {
+		t.Fatalf("event %+v", evs)
+	}
+	if ts := Timers("s"); len(ts) != 1 || !ts[0].Due.Equal(t0.Add(50*time.Minute)) {
+		t.Fatalf("next %+v", ts)
+	}
+	if n := FireDue("s", t0.Add(47*time.Minute)); n != 0 {
+		t.Fatal("fired twice")
+	}
+}
+
+func TestRecurringTimerCount(t *testing.T) {
+	t.Setenv("ATTO_DIR", t.TempDir())
+	t0 := time.Date(2026, 10, 5, 12, 0, 0, 0, time.Local)
+	AddRecurringTimer("s", t0, time.Minute, 2, time.Time{}, "twice")
+	FireDue("s", t0.Add(time.Minute))
+	if ts := Timers("s"); len(ts) != 1 || ts[0].Left != 1 {
+		t.Fatalf("after first %+v", ts)
+	}
+	FireDue("s", t0.Add(2*time.Minute))
+	if len(Timers("s")) != 0 {
+		t.Fatal("timer should be gone after its last firing")
+	}
+	if evs := Drain("s"); len(evs) != 2 || !strings.Contains(evs[1].Text, "finished") {
+		t.Fatalf("events %+v", evs)
+	}
+	// Skipped intervals count against the limit.
+	AddRecurringTimer("s", t0, time.Minute, 3, time.Time{}, "burst")
+	FireDue("s", t0.Add(10*time.Minute))
+	if len(Timers("s")) != 0 || len(Drain("s")) != 1 {
+		t.Fatal("exhausted by skipped intervals: want one event and no timer")
+	}
+}
+
+func TestRecurringTimerUntilAndCancel(t *testing.T) {
+	t.Setenv("ATTO_DIR", t.TempDir())
+	t0 := time.Date(2026, 10, 5, 12, 0, 0, 0, time.Local)
+	if _, err := AddRecurringTimer("s", t0, 10*time.Minute, 0, t0.Add(5*time.Minute), "x"); err == nil {
+		t.Fatal("until before first firing should fail")
+	}
+	AddRecurringTimer("s", t0, 10*time.Minute, 0, t0.Add(25*time.Minute), "until")
+	FireDue("s", t0.Add(10*time.Minute)) // next 12:20, within until
+	if len(Timers("s")) != 1 {
+		t.Fatal("should continue")
+	}
+	FireDue("s", t0.Add(20*time.Minute)) // next 12:30 > 12:25
+	if len(Timers("s")) != 0 {
+		t.Fatal("should stop at until")
+	}
+	if evs := Drain("s"); len(evs) != 2 {
+		t.Fatalf("events %+v", evs)
+	}
+	// Overdue long after until: the 12:10 occurrence was inside the window,
+	// so it fires once, then the timer ends.
+	AddRecurringTimer("s", t0, 10*time.Minute, 0, t0.Add(15*time.Minute), "stale")
+	if n := FireDue("s", t0.Add(3*time.Hour)); n != 1 {
+		t.Fatalf("fired %d", n)
+	}
+	if len(Timers("s")) != 0 {
+		t.Fatal("stale timer should be gone")
+	}
+	Drain("s")
+
+	c, _ := AddRecurringTimer("s", t0, time.Minute, 0, time.Time{}, "cancel me")
+	if err := CancelTimer("s", c.ID); err != nil || len(Timers("s")) != 0 {
+		t.Fatal("cancel")
+	}
+	if FireDue("s", t0.Add(time.Hour)) != 0 {
+		t.Fatal("canceled timer fired")
+	}
+}
+
+func TestRecurringTimerMinimumAndLegacyFiles(t *testing.T) {
+	t.Setenv("ATTO_DIR", t.TempDir())
+	if _, err := AddRecurringTimer("s", time.Now(), 30*time.Second, 0, time.Time{}, "x"); err == nil {
+		t.Fatal("want minimum interval error")
+	}
+	// A one-shot file written before recurring timers existed still loads.
+	old := `{"id":"abc123","due":"2026-10-05T12:00:00Z","message":"old","created":"2026-10-05T11:00:00Z"}`
+	if err := writeAtomic(filepath.Join(timerDir("s"), "abc123.json"), []byte(old)); err != nil {
+		t.Fatal(err)
+	}
+	ts := Timers("s")
+	if len(ts) != 1 || ts[0].Recurring() || ts[0].Schedule() != "" {
+		t.Fatalf("legacy %+v", ts)
+	}
+	if FireDue("s", time.Date(2026, 10, 5, 13, 0, 0, 0, time.UTC)) != 1 || len(Timers("s")) != 0 {
+		t.Fatal("legacy timer should fire once and vanish")
 	}
 }
 
