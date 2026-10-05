@@ -127,6 +127,7 @@ func (e *ext) jsRegisterCommand(name string, spec *goja.Object) {
 	defer e.mu.Unlock()
 	e.commands = slices.DeleteFunc(e.commands, func(c Command) bool { return c.Name == name })
 	e.commands = append(e.commands, Command{Name: name, Description: desc, Ext: e.spec.Name})
+	e.m.cmdVer.Add(1)
 }
 
 func (e *ext) jsLog(c goja.FunctionCall) goja.Value {

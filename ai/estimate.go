@@ -5,7 +5,6 @@ package ai
 
 import (
 	"encoding/json"
-	"unicode/utf16"
 )
 
 // Port of src/utils/estimate.ts: about 4 characters per token. Lengths
@@ -16,7 +15,18 @@ const (
 	estimatedImageChars = 4800
 )
 
-func jsLen(s string) int { return len(utf16.Encode([]rune(s))) }
+// jsLen is s's length in UTF-16 code units. Ranging over s decodes it as
+// []rune(s) does (an invalid byte is U+FFFD, one unit), without the copy.
+func jsLen(s string) int {
+	n := 0
+	for _, r := range s {
+		n++
+		if r > 0xFFFF {
+			n++
+		}
+	}
+	return n
+}
 
 func ceilDiv(n, d int) int { return (n + d - 1) / d }
 

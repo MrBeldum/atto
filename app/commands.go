@@ -7,6 +7,7 @@ import (
 
 	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/core"
+	"github.com/sebastianrcnt/atto/extensions"
 	"github.com/sebastianrcnt/atto/session"
 	"github.com/sebastianrcnt/atto/skills"
 	"github.com/sebastianrcnt/atto/tui"
@@ -62,13 +63,16 @@ const maxSuggestions = 5
 func (a *App) suggestions() *tui.SelectList {
 	cmds := a.allCommands()
 	if a.sugList != nil {
-		// A resumed or cleared session rescans the skills; follow it.
-		if len(a.sugList.Items) != len(cmds) {
+		// A resumed or cleared session rescans the skills, and extensions
+		// add commands; follow them.
+		if a.sugGen != a.cmds.gen {
 			a.sugList.Items = commandItems(cmds)
+			a.sugGen = a.cmds.gen
 		}
 		return a.sugList
 	}
 	l := &tui.SelectList{MaxVisible: maxSuggestions, Indent: " ", LabelWidth: 18, Items: commandItems(cmds)}
+	a.sugGen = a.cmds.gen
 	l.Source = a.editor.Text
 	l.Match = func(it tui.SelectItem, t string) bool {
 		if !strings.HasPrefix(t, "/") || strings.ContainsAny(t, " \n") || t == a.sugDismissed {
@@ -135,19 +139,40 @@ func (a *App) renderSuggestions(width int) []string {
 	return a.renderMentions(width)
 }
 
+// cmdCache is allCommands' result and what it was built from.
+type cmdCache struct {
+	skills []skills.Skill
+	ext    *extensions.Manager
+	extVer uint64
+	all    []command
+	gen    int // counts rebuilds
+}
+
 // allCommands is the built-in commands plus one /skill:<name> per skill of
 // this session, like pi. Skills hidden from the model are listed too: the
-// command is how you run them.
+// command is how you run them. It is called every frame, so the list is
+// kept until the skills (a rescan makes a new slice) or the extension
+// commands change.
 func (a *App) allCommands() []command {
 	if a.agent == nil {
 		return commands
 	}
 	sk, _ := a.agent.Skills()
+	var ver uint64
+	if a.ext != nil {
+		ver = a.ext.CommandsVersion()
+	}
+	c := &a.cmds
+	if c.all != nil && c.ext == a.ext && c.extVer == ver && len(c.skills) == len(sk) && (len(sk) == 0 || &c.skills[0] == &sk[0]) {
+		return c.all
+	}
 	all := slices.Clone(commands)
 	all = append(all, a.extensionCommands()...)
 	for _, s := range sk {
 		all = append(all, command{"skill:" + s.Name, "[text]", s.Description, (*App).cmdSkill})
 	}
+	c.skills, c.ext, c.extVer, c.all = sk, a.ext, ver, all
+	c.gen++
 	return all
 }
 

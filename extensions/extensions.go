@@ -30,6 +30,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dop251/goja"
@@ -103,6 +104,8 @@ type Manager struct {
 	mcp  mcp.Backend
 
 	logMu sync.Mutex
+
+	cmdVer atomic.Uint64 // see CommandsVersion
 }
 
 // Load discovers and starts the extensions for a session in o.Cwd. It
@@ -249,6 +252,7 @@ func (m *Manager) load() {
 	m.mu.Lock()
 	m.exts = exts
 	m.mu.Unlock()
+	m.cmdVer.Add(1)
 }
 
 // entryDir is the extensions directory s was found in.
@@ -293,6 +297,7 @@ func (m *Manager) Close() {
 	exts := m.exts
 	m.exts = nil
 	m.mu.Unlock()
+	m.cmdVer.Add(1)
 	var wg sync.WaitGroup
 	for _, e := range exts {
 		wg.Add(1)
@@ -341,6 +346,11 @@ func (m *Manager) running() []*ext {
 	}
 	return out
 }
+
+// CommandsVersion changes whenever the commands Commands returns may have:
+// when extensions load or are disposed of, or one registers a command. It
+// lets callers cache Commands.
+func (m *Manager) CommandsVersion() uint64 { return m.cmdVer.Load() }
 
 // Commands are the slash commands extensions registered, in load order.
 // A name registered twice keeps its first.

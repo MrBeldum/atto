@@ -152,6 +152,9 @@ type App struct {
 	// for which Esc closed it.
 	sugList      *tui.SelectList
 	sugDismissed string
+	sugGen       int      // cmds.gen the list was built from
+	cmds         cmdCache // see allCommands
+	statusRows   statusCache
 	// mention is the "@" file list (mention.go).
 	mention mentions
 
