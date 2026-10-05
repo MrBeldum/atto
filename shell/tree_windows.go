@@ -20,7 +20,7 @@ type Tree struct {
 
 func NewTree(cmd *exec.Cmd) *Tree {
 	t := &Tree{cmd: cmd}
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP}
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | consoleFlags()}
 	if job, err := windows.CreateJobObject(nil, nil); err == nil {
 		info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 		info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
@@ -68,6 +68,22 @@ func (t *Tree) Kill() {
 	} else if t.cmd.Process != nil {
 		_ = t.cmd.Process.Kill()
 	}
+}
+
+// ownConsole gives cmd a hidden console of its own unless this process's
+// console is already private.
+func ownConsole(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.CreationFlags |= consoleFlags()
+}
+
+func consoleFlags() uint32 {
+	if PrivateConsole {
+		return 0
+	}
+	return windows.CREATE_NO_WINDOW
 }
 
 // Detach makes cmd outlive its parent console.
