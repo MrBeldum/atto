@@ -123,7 +123,7 @@ func TestLoadedBlockAtSessionStart(t *testing.T) {
 		"Config     ~/.atto/settings.json, ~/.atto/models.json",
 		"Prompt     ", "system prompt: base, environment, 2 AGENTS files, 1 skill",
 	} {
-		if !strings.Contains(short, s) {
+		if !strings.Contains(filepath.ToSlash(short), s) {
 			t.Errorf("collapsed block lacks %q", s)
 		}
 	}
@@ -148,7 +148,7 @@ func TestLoadedBlockAtSessionStart(t *testing.T) {
 		"PreToolUse [Bash]  ./check.sh · ~/.atto/settings.json",
 		"System prompt (", "Also sent", "− Show less (click)",
 	} {
-		if !strings.Contains(long, s) {
+		if !strings.Contains(filepath.ToSlash(long), s) {
 			t.Errorf("expanded block lacks %q", s)
 		}
 	}
@@ -191,7 +191,7 @@ func TestReloadCommand(t *testing.T) {
 		"system prompt changed; the next request re-reads the prompt",
 		"Hooks      none",
 	} {
-		if !strings.Contains(got, s) {
+		if !strings.Contains(filepath.ToSlash(got), s) {
 			t.Errorf("reload block lacks %q", s)
 		}
 	}
