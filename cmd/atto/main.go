@@ -15,6 +15,7 @@ import (
 	"github.com/sebastianrcnt/atto/app"
 	"github.com/sebastianrcnt/atto/cli"
 	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/mcp"
 	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/server"
 	"github.com/sebastianrcnt/atto/update"
@@ -43,6 +44,8 @@ usage:
                                     hooks, settings, model
   atto reload                       from the agent's shell: reload AGENTS.md, skills,
                                     hooks, extensions and settings in the running session
+  atto mcp list|tools|call|add|remove|approve
+                                    MCP servers, used by the agent through its shell (atto mcp -h)
   atto extensions [list|approve <name>|types|docs]
                                     JavaScript/TypeScript extensions (docs: atto extensions docs)
   atto update [-check]              install the latest release
@@ -98,6 +101,7 @@ func subcommands() map[string]func([]string, io.Writer) error {
 		"context":    cli.RunContext,
 		"reload":     cli.RunReload,
 		"extensions": cli.RunExtensions,
+		"mcp":        cli.RunMCP,
 		"update":     cli.RunUpdate,
 		"channel":    cli.RunChannel,
 		"_supervise": cli.RunSupervise,
@@ -225,6 +229,7 @@ func resumeArgs(args []string) []string {
 
 func main() {
 	update.Cleanup()
+	mcp.Version = update.Current()
 	// This binary serves `atto _shell`, so the agent's commands can run
 	// under shell hosts and move to the background.
 	agent.ShellHost = true
@@ -238,7 +243,9 @@ func main() {
 		sub := subcommands()[os.Args[1]]
 		if sub != nil {
 			if err := sub(os.Args[2:], os.Stdout); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				if !errors.Is(err, cli.ErrSilent) {
+					fmt.Fprintln(os.Stderr, err)
+				}
 				os.Exit(1)
 			}
 			return

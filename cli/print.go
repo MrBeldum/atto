@@ -238,6 +238,8 @@ func RunPrint(o PrintOptions) error {
 	// default answers, and sendMessage steers the run.
 	ext := core.LoadExtensions(ag, &extensions.Headless{Out: os.Stderr, Send: ag.Steer})
 	defer ext.Close()
+	mc := core.LoadMCP(ag) // servers start on first use and end with the run
+	defer mc.Close()
 	core.Bind(ag, hk, sess, start, !o.NoSave)
 	ext.SessionStart(source)
 	if hk != nil {

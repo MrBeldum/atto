@@ -129,6 +129,33 @@ interface AttoFetchOptions {
   timeout?: number;
 }
 
+interface AttoMcpContent {
+  /** "text", "image", "audio", "resource_link" or "resource". */
+  type: string;
+  /** The text, or a note for what is not text. */
+  text?: string;
+  mimeType?: string;
+  uri?: string;
+  bytes?: number;
+}
+
+interface AttoMcpResult {
+  /** The result as the model reads it: text as is, other content summarized in brackets. */
+  text: string;
+  /** The tool reported an error. */
+  isError?: boolean;
+  content?: AttoMcpContent[];
+  structured?: any;
+}
+
+interface AttoMcpTool {
+  server: string;
+  name: string;
+  description?: string;
+  /** The tool's JSON schema for its arguments. */
+  inputSchema?: any;
+}
+
 interface Atto {
   /** The extension's name (its file or folder name). */
   readonly name: string;
@@ -170,6 +197,22 @@ interface Atto {
   };
 
   fetch(url: string, options?: AttoFetchOptions): Promise<AttoResponse>;
+
+  /**
+   * The session's MCP servers, the ones "atto mcp" reaches in the agent's
+   * shell (configured in ~/.atto/mcp.json, the project's .mcp.json or
+   * a private per-project file under ~/.atto). Servers start on first use and stay for the session.
+   */
+  mcp: {
+    /**
+     * Call a tool. Resolves with the result (check isError); rejects when
+     * the call could not be made: unknown server or tool, a project server
+     * not yet approved, a server that fails to start.
+     */
+    call(server: string, tool: string, args?: Record<string, any>): Promise<AttoMcpResult>;
+    /** The tools of one server, or of every server that starts. */
+    tools(server?: string): Promise<AttoMcpTool[]>;
+  };
 
   /** Send text to the model as a user message: steers a running turn, or starts one (TUI). */
   sendMessage(text: string): void;

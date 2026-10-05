@@ -156,7 +156,7 @@ To use the terminal's own selection instead, hold the key that bypasses mouse re
 | `/compact` | compact the conversation now |
 | `/copy` | copy the last answer; works over SSH in terminals with OSC 52 |
 | `/context` | show what fills the context and how much is cached |
-| `/reload` | read AGENTS.md, skills, hooks, extensions, `settings.json` and `models.json` again, keeping the conversation |
+| `/reload` | read AGENTS.md, skills, hooks, extensions, MCP servers, `settings.json` and `models.json` again, keeping the conversation |
 | `/extensions [approve <name>]` | list extensions, or approve a project extension |
 | `/resume` | resume a saved session |
 | `/tree` | go back to any point of the session; earlier branches are kept |
@@ -177,7 +177,7 @@ To use the terminal's own selection instead, hold the key that bypasses mouse re
 - `atto job start` runs a command in the background. With `-notify REGEXP` (and `-notify-limit N`, default 50) each matching output line wakes the agent while the job keeps running; matches within a second are batched.
 - `atto monitor` and `atto timer` wake the agent when something happens. `atto timer every 30m [-count N] [-until HH:MM|duration] <message>` repeats (minimum 1m, no drift; missed intervals fire once).
 - `atto goal complete|blocked|pause "<why>"` reports on the goal (done; stalled on the same blocker for three goal turns; paused at the user's request). A turn that fails stalls the goal, and one that hits the provider's usage limit marks it usage limited; `/goal resume` continues either.
-- `atto reload` reloads the session's AGENTS.md files, skills, hooks, extensions and settings after the agent edited them; the result comes back as an `[atto event]`.
+- `atto reload` reloads the session's AGENTS.md files, skills, hooks, extensions, MCP servers and settings after the agent edited them; the result comes back as an `[atto event]`.
 
 **Nothing loads unseen.** When a session starts, resumes or forks, the conversation opens with a dim "Loaded" block: the AGENTS.md (or AGENTS.override.md, CLAUDE.md) files in the system prompt with their sizes (and whether the 32 KiB cap cut them), files that were found but skipped and why, the skills and where they came from, the hooks, the extensions, the settings and models files read, and the model and effort with where each came from (`-m`, the session, `settings.json`). Click its header or press `Ctrl+T` for the full list. `/reload` shows it again with what changed. The same report:
 
@@ -234,6 +234,23 @@ export default function (atto) {
 - Also `atto.exec`, `atto.fs`, `fetch`, timers, `atto.sendMessage`; dialogs and widgets are TUI-only (in `-p` and the server, dialogs get default answers).
 - `atto extensions docs` prints the guide ([docs/extensions.md](docs/extensions.md)), `atto extensions types` the type declarations, `atto extensions` the list. A handler that hangs is skipped after 5 seconds and a runaway script is stopped and its extension disabled; atto goes on.
 
+**MCP.** atto has one tool, the shell, and keeps it that way: MCP servers are reached through `atto mcp` subcommands that the model runs in the shell, not through tools of their own. The tool schema and the system prompt stay the same whatever you configure (when at least one server exists the prompt gets one line naming them, in sorted order, so it changes only when your configuration does), and the prompt cache survives.
+
+```
+atto mcp add github -scope user -e GITHUB_TOKEN='${GITHUB_TOKEN}' -- npx -y @modelcontextprotocol/server-github
+atto mcp add docs -url https://mcp.example.com/mcp -H 'Authorization: Bearer ${DOCS_TOKEN}'
+atto mcp list                                 # servers, scope, status, tool count
+atto mcp tools                                # every tool, one line each
+atto mcp tools github create_issue            # one tool's full JSON schema
+atto mcp call github create_issue '{"repo": "me/x", "title": "Bug"}'
+echo '{"query": "atto"}' | atto mcp call docs search -    # arguments from stdin
+```
+
+- **Configuration** is Claude Code's `.mcp.json` format, `{"mcpServers": {"name": {"command", "args", "env"} | {"type": "http", "url", "headers"}}}`, in three places: `~/.atto/mcp.json` (user), `<project>/.mcp.json` (shared, checked in) and a private per-project file, `~/.atto/projects/<project name>-<hash>/mcp.json` (local, written by `atto mcp add -scope local`, outside the repository). The shared, checked-in file is `.mcp.json` and needs approval; a `<project>/.atto/mcp.json` is not read at all (the Loaded block says so and where to move it), because a repository must not be able to start commands unapproved. The later wins by name (local over project over user). Strings may use `${VAR}` and `${VAR:-default}`, which is how tokens stay out of the files. A project's `.mcp.json` works as it does in Claude Code; `~/.claude.json` is not read. Transports are stdio and streamable HTTP (`"type": "http"`; `"sse"` also works). Remote servers that need OAuth are not supported; use a header token.
+- **Approval.** A server from a project's `.mcp.json` runs a command the repository brought, so it needs your approval once, as project extensions do. At session start the TUI asks for each: allow, deny, or allow all for this project. Or run `atto mcp approve <name>`. Approvals are kept in `~/.atto/mcp-approvals.json` by file and server name with a hash of the entry, so a changed entry needs approval again ("allow all" covers a file's servers whatever they say later). Unapproved servers are listed but never started. `atto mcp approve` refuses when run by the agent (`ATTO_AGENT` is set). Servers in your own user and local files need no approval.
+- **Servers live in the session.** They start on first use and stay until the session ends, so a stateful server is not restarted per call. `atto mcp call` and `tools` run by the agent talk to the running atto over a Unix domain socket (`~/.atto/mcp/<session id>.json` holds its path and a random token, mode 0600; it works on Windows 10+ too). Run from a normal terminal, a server is started for that one command and stopped after. `/reload` (or `atto reload`) re-reads the files, keeps servers whose entry did not change and restarts those that did.
+- **Transparency.** The Loaded block and `atto context` list every server with its scope, transport, command or URL, and status (not started, running with N tools, failed with the reason, needs approval). The calls are ordinary shell commands, so they appear as normal tool blocks and a `PreToolUse` hook with matcher `Bash` can gate them (for example by looking for `atto mcp call github`). Extensions can use the same servers: `await atto.mcp.call(server, tool, args)` and `atto.mcp.tools(server?)`.
+
 **Front end and back end are separate.** Both servers speak the same JSON-RPC protocol, built around threads, turns and items:
 
 - `atto serve` serves it over HTTP + SSE and includes a web client, so you can use atto from a phone.
@@ -254,6 +271,7 @@ Everything lives in `~/.atto`. Set `ATTO_DIR` to move it.
 | Path | Contents |
 | --- | --- |
 | `settings.json` | default model and effort, renderer, `mouse`, status line, hooks, `updateCheck`, `doubleEscapeAction` (`tree`, `fork` or `none`), `branchSummary.skipPrompt`, `toolOutputTokenLimit` (how much of a command's output the model gets, default 10000 tokens; the middle is cut and the full output saved to a file, as in codex), `backgroundExit` (experimental: `false` turns off the exit menu that offers "Run in background" while a turn runs), `extensions` (`disabled` names, handler `timeout` in seconds) |
+| `mcp.json` | MCP servers (Claude Code's `.mcp.json` format); `mcp-approvals.json` holds approved project servers, `mcp/` the endpoints of running sessions |
 | `extensions/` | your extensions; `extension-approvals.json` holds approved project extensions, `extensions.log` their logs |
 | `models.json` | your providers and models |
 | `auth.json` | keys and logins (mode 0600) |

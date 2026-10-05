@@ -134,6 +134,18 @@ dialog does not count against the handler timeout.
   directories), `exists(path)`, `list(dir)` (sorted names, directories end
   in `/`): synchronous, UTF-8, relative to the session's directory; errors
   throw.
+- `atto.mcp.call(server, tool, args?)` and `atto.mcp.tools(server?)`: the
+  session's MCP servers (see `atto mcp -h`), the same ones the agent reaches
+  with `atto mcp` in its shell, started on first use and shared, so a
+  stateful server keeps its state. `call` resolves to `{text, isError,
+  content, structured?}` (`text` is what the model would read: text content
+  as is, other content summarized in brackets) and rejects when the call
+  could not be made: unknown server or tool, a project server the user has
+  not approved, a server that fails to start. `tools` resolves to
+  `[{server, name, description, inputSchema}]` for one server, or for every
+  server that starts. Calls made through `atto mcp call` are shell commands,
+  so `tool_call` handlers and hooks see them as such; `atto.mcp` calls are
+  not shell commands and are not seen by them.
 - `fetch(url, {method?, headers?, body?, timeout?})` (also `atto.fetch`):
   resolves to `{status, ok, headers, text(), json()}`; rejects on network
   errors only. Bodies over 10 MiB are cut.

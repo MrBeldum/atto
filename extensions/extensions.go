@@ -35,6 +35,7 @@ import (
 
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/mcp"
 )
 
 // Statuses of an extension.
@@ -95,6 +96,7 @@ type Manager struct {
 	id   string
 	exts []*ext
 	to   time.Duration
+	mcp  mcp.Backend
 
 	logMu sync.Mutex
 }

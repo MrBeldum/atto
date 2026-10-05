@@ -15,6 +15,9 @@ import (
 func LoadExtensions(ag *agent.Agent, host extensions.Host) *extensions.Manager {
 	m := extensions.Load(extensions.Options{Cwd: ag.Cwd, Agent: ag, Host: host})
 	ag.Extensions = m
+	if mm := MCPOf(ag); mm != nil {
+		m.SetMCP(mm)
+	}
 	return m
 }
 

@@ -42,6 +42,9 @@ func Reload(ag *agent.Agent, id, transcript string, prev Loaded) (Reloaded, erro
 		return Reloaded{}, err
 	}
 	r := Reloaded{Settings: settings, Models: models, Hooks: hk, HookSrc: src}
+	if m := MCPOf(ag); m != nil {
+		m.Reload() // before the prompt, which names the servers
+	}
 	r.PromptChanged = ag.Reload()
 	if m := ExtensionsOf(ag); m != nil {
 		m.Reload()
