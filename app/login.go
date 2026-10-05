@@ -10,8 +10,8 @@ import (
 	"os/signal"
 	"runtime"
 
-	"atto/auth"
-	"atto/config"
+	"github.com/sebastianrcnt/atto/auth"
+	"github.com/sebastianrcnt/atto/config"
 )
 
 // RunLogin implements "atto login openai": Sign in with ChatGPT.

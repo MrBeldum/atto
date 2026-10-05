@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"atto/session"
+	"github.com/sebastianrcnt/atto/session"
 )
 
 const historyUsage = `usage:

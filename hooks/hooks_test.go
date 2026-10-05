@@ -14,8 +14,8 @@ import (
 	"sync"
 	"testing"
 
-	"atto/agent"
-	"atto/config"
+	"github.com/sebastianrcnt/atto/agent"
+	"github.com/sebastianrcnt/atto/config"
 )
 
 func cmd(event, matcher, command string) map[string][]config.HookMatcher {

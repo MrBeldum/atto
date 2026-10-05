@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"atto/shell"
+	"github.com/sebastianrcnt/atto/shell"
 )
 
 const (

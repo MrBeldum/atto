@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"atto/agent"
-	"atto/config"
-	"atto/shell"
-	"atto/tui"
+	"github.com/sebastianrcnt/atto/agent"
+	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/shell"
+	"github.com/sebastianrcnt/atto/tui"
 )
 
 // statusInput is the JSON a statusLine command receives on stdin. Field

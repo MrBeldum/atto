@@ -4,9 +4,9 @@ import (
 	"os"
 	"strings"
 
-	"atto/config"
-	"atto/session"
-	"atto/tui"
+	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/session"
+	"github.com/sebastianrcnt/atto/tui"
 )
 
 type command struct {

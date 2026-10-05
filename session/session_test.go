@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"atto/provider"
+	"github.com/sebastianrcnt/atto/provider"
 )
 
 func TestWriterLoadList(t *testing.T) {

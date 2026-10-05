@@ -30,9 +30,9 @@ import (
 	"sync"
 	"time"
 
-	"atto/agent"
-	"atto/config"
-	"atto/shell"
+	"github.com/sebastianrcnt/atto/agent"
+	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/shell"
 )
 
 const (

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"atto/auth"
+	"github.com/sebastianrcnt/atto/auth"
 )
 
 const openaiFixture = `{

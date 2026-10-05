@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"atto/auth"
+	"github.com/sebastianrcnt/atto/auth"
 )
 
 // AuthEntry is one provider's credentials in auth.json. The format matches

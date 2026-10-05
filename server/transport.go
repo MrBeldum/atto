@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"atto/config"
+	"github.com/sebastianrcnt/atto/config"
 )
 
 // ServeStdio speaks JSON-RPC as JSON lines on r/w (codex app-server style):

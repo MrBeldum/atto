@@ -13,11 +13,11 @@ import (
 	"sync"
 	"time"
 
-	"atto/agent"
-	"atto/config"
-	"atto/hooks"
-	"atto/session"
-	"atto/tui"
+	"github.com/sebastianrcnt/atto/agent"
+	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/hooks"
+	"github.com/sebastianrcnt/atto/session"
+	"github.com/sebastianrcnt/atto/tui"
 )
 
 const Version = "0.0.3-dev"

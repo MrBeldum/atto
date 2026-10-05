@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/term"
 
-	"atto/config"
+	"github.com/sebastianrcnt/atto/config"
 )
 
 // RunAuth implements "atto auth set <provider>": it reads an API key

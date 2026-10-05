@@ -7,11 +7,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"atto/agent"
-	"atto/config"
-	"atto/provider"
-	"atto/session"
-	"atto/tui"
+	"github.com/sebastianrcnt/atto/agent"
+	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/provider"
+	"github.com/sebastianrcnt/atto/session"
+	"github.com/sebastianrcnt/atto/tui"
 )
 
 // usageStats tracks token usage for the status line and /context.

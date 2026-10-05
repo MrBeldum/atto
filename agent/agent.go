@@ -16,10 +16,10 @@ import (
 	"sync"
 	"time"
 
-	"atto/config"
-	"atto/provider"
-	"atto/session"
-	"atto/shell"
+	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/provider"
+	"github.com/sebastianrcnt/atto/session"
+	"github.com/sebastianrcnt/atto/shell"
 )
 
 // HookOutcome is what hooks decided for one event.

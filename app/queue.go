@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"atto/tui"
+	"github.com/sebastianrcnt/atto/tui"
 )
 
 // Pending input follows codex-rs:

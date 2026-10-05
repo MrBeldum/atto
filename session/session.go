@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
-	"atto/config"
-	"atto/provider"
+	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/provider"
 )
 
 const Version = 1

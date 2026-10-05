@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"atto/agent"
-	"atto/config"
-	"atto/hooks"
-	"atto/provider"
-	"atto/session"
+	"github.com/sebastianrcnt/atto/agent"
+	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/hooks"
+	"github.com/sebastianrcnt/atto/provider"
+	"github.com/sebastianrcnt/atto/session"
 )
 
 // Server holds threads and dispatches JSON-RPC requests. Notifications

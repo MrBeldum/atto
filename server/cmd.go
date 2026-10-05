@@ -11,7 +11,7 @@ import (
 	"os/signal"
 	"time"
 
-	"atto/config"
+	"github.com/sebastianrcnt/atto/config"
 )
 
 // RunStdio implements "atto app-server": JSON-RPC over stdin/stdout.

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"atto/agent"
-	"atto/session"
+	"github.com/sebastianrcnt/atto/agent"
+	"github.com/sebastianrcnt/atto/session"
 )
 
 const outputKeep = 64 * 1024 // command output kept on items

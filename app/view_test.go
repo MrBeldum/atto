@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"atto/tui"
+	"github.com/sebastianrcnt/atto/tui"
 )
 
 func TestExpanderOverridesDetails(t *testing.T) {

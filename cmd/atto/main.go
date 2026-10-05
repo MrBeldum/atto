@@ -8,9 +8,9 @@ import (
 	"io"
 	"os"
 
-	"atto/app"
-	"atto/provider"
-	"atto/server"
+	"github.com/sebastianrcnt/atto/app"
+	"github.com/sebastianrcnt/atto/provider"
+	"github.com/sebastianrcnt/atto/server"
 )
 
 const usage = `atto — a terminal coding harness
@@ -39,11 +39,11 @@ func main() {
 			"login":   app.RunLogin,
 			"logout":  app.RunLogout,
 			"serve": func(args []string, out io.Writer) error {
-				provider.UserAgent = "atto/" + app.Version
+				provider.UserAgent = "github.com/sebastianrcnt/atto/" + app.Version
 				return server.RunHTTP(app.Version, args, out)
 			},
 			"app-server": func([]string, io.Writer) error {
-				provider.UserAgent = "atto/" + app.Version
+				provider.UserAgent = "github.com/sebastianrcnt/atto/" + app.Version
 				return server.RunStdio(app.Version)
 			},
 		}[os.Args[1]]
@@ -92,7 +92,7 @@ func main() {
 		fmt.Println("atto", app.Version)
 		return
 	}
-	provider.UserAgent = "atto/" + app.Version
+	provider.UserAgent = "github.com/sebastianrcnt/atto/" + app.Version
 
 	var err error
 	if *print {

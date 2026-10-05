@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"atto/config"
-	"atto/session"
+	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/session"
 )
 
 // fakeServer replies with the given SSE chunks per request, in order, and

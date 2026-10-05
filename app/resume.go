@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"atto/agent"
-	"atto/session"
-	"atto/tui"
+	"github.com/sebastianrcnt/atto/agent"
+	"github.com/sebastianrcnt/atto/session"
+	"github.com/sebastianrcnt/atto/tui"
 )
 
 // resumePicker lists saved sessions, codex-style: newest first, filtered

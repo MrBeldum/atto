@@ -13,11 +13,11 @@ import (
 
 	"golang.org/x/term"
 
-	"atto/agent"
-	"atto/config"
-	"atto/hooks"
-	"atto/provider"
-	"atto/session"
+	"github.com/sebastianrcnt/atto/agent"
+	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/hooks"
+	"github.com/sebastianrcnt/atto/provider"
+	"github.com/sebastianrcnt/atto/session"
 )
 
 // PrintOptions configures a non-interactive run (atto -p).

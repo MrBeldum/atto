@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"atto/provider"
-	"atto/session"
+	"github.com/sebastianrcnt/atto/provider"
+	"github.com/sebastianrcnt/atto/session"
 )
 
 func TestHistoryGrepShow(t *testing.T) {

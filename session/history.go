@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"atto/config"
+	"github.com/sebastianrcnt/atto/config"
 )
 
 // Find locates a session file by ID in the active and archived directories.

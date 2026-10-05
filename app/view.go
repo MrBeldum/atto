@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"atto/agent"
-	"atto/tui"
+	"github.com/sebastianrcnt/atto/agent"
+	"github.com/sebastianrcnt/atto/tui"
 )
 
 // gap renders a blank line before a block, except at the very top.

@@ -1,4 +1,4 @@
-module atto
+module github.com/sebastianrcnt/atto
 
 go 1.27.1
 
