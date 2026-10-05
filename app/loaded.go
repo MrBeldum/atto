@@ -176,4 +176,5 @@ func (a *App) applyReload(r core.Reloaded, err error) {
 	}
 	a.add(&loadedBlock{l: r.Loaded, reloaded: true, changes: r.Changes, note: r.PromptNote(), expander: expander{d: &a.details}})
 	a.statusTrigger()
+	a.askMCPApprovals() // a project server the reload found
 }

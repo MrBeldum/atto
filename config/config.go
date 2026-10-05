@@ -127,6 +127,21 @@ func ExtensionApprovalsPath() string { return filepath.Join(Dir(), "extension-ap
 // ExtensionLogPath is where atto.log and extension errors are written.
 func ExtensionLogPath() string { return filepath.Join(Dir(), "extensions.log") }
 
+// MCPPath is the user's MCP server file, in Claude Code's .mcp.json format.
+func MCPPath() string { return filepath.Join(Dir(), "mcp.json") }
+
+// MCPApprovalsPath records the project MCP servers the user approved.
+func MCPApprovalsPath() string { return filepath.Join(Dir(), "mcp-approvals.json") }
+
+// MCPRunDir holds the endpoints of the running sessions' MCP managers.
+func MCPRunDir() string { return filepath.Join(Dir(), "mcp") }
+
+// ProjectMCPPath is a project's shared MCP server file (checked in).
+func ProjectMCPPath(root string) string { return filepath.Join(root, ".mcp.json") }
+
+// LocalMCPPath is a project's private MCP server file.
+func LocalMCPPath(root string) string { return filepath.Join(root, ".atto", "mcp.json") }
+
 // ProjectExtensionsDir is a project's own extensions directory.
 func ProjectExtensionsDir(root string) string { return filepath.Join(root, ".atto", "extensions") }
 

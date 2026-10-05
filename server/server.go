@@ -18,6 +18,7 @@ import (
 	"github.com/sebastianrcnt/atto/extensions"
 	"github.com/sebastianrcnt/atto/hooks"
 	"github.com/sebastianrcnt/atto/images"
+	"github.com/sebastianrcnt/atto/mcp"
 	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/session"
 )
@@ -93,6 +94,7 @@ type thread struct {
 	sess      *session.Writer
 	hooks     *hooks.Runner
 	ext       *extensions.Manager
+	mcp       *mcp.Manager
 	hookSrc   []config.HookSource
 	loaded    core.Loaded        // what it loaded, as of the last reload
 	tr        transcript.Builder // used by the running turn, or by restore while idle
@@ -129,6 +131,13 @@ func (s *Server) Close() {
 			go func() {
 				defer ending.Done()
 				t.hooks.SessionEnd(context.Background(), "other")
+			}()
+		}
+		if t.mcp != nil {
+			ending.Add(1)
+			go func() {
+				defer ending.Done()
+				_ = t.mcp.Close() // its servers end with the thread
 			}()
 		}
 		if t.ext != nil {
@@ -328,6 +337,7 @@ func (s *Server) newThread(cwd string, model config.ModelRef, effort string, fil
 	t.ext = core.LoadExtensions(ag, &extensions.Headless{Send: ag.Steer, OnNotify: func(ext, text, level string) {
 		s.notify(t, "extension/notify", map[string]any{"extension": ext, "message": text, "level": level})
 	}})
+	t.mcp = core.LoadMCP(ag)
 	core.Bind(ag, hk, file, start, true)
 	t.loaded = core.Collect(ag, src, modelFrom, effortFrom)
 	t.tr.IDPrefix = itemPrefix(t.id)

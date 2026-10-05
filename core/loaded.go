@@ -14,6 +14,7 @@ import (
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/extensions"
+	"github.com/sebastianrcnt/atto/mcp"
 	"github.com/sebastianrcnt/atto/skills"
 )
 
@@ -42,10 +43,12 @@ type Loaded struct {
 	// Extensions are the JavaScript extensions found, whether they run
 	// or not (see package extensions).
 	Extensions []extensions.Info `json:"extensions,omitempty"`
-	Config     []ConfigFile      `json:"config"`
-	Model      Choice            `json:"model"`
-	Effort     Choice            `json:"effort"`
-	Prompt     Prompt            `json:"system_prompt"`
+	// MCP are the MCP servers configured, started or not (see package mcp).
+	MCP    []mcp.Info   `json:"mcp,omitempty"`
+	Config []ConfigFile `json:"config"`
+	Model  Choice       `json:"model"`
+	Effort Choice       `json:"effort"`
+	Prompt Prompt       `json:"system_prompt"`
 	// Context is what else goes to the model besides the system prompt
 	// and the conversation: the tool schema, how images are sent, hook
 	// output.
@@ -179,6 +182,10 @@ func Collect(ag *agent.Agent, hookSrc []config.HookSource, modelFrom, effortFrom
 		l.Warnings = append(l.Warnings, extensionWarnings(l.Extensions)...)
 	}
 
+	var mcpWarn []string
+	l.MCP, mcpWarn = mcpInfos(ag)
+	l.Warnings = append(l.Warnings, mcpWarn...)
+
 	l.Config = configFiles(src.Cwd)
 
 	m, effort := ag.Current()
@@ -215,6 +222,13 @@ func Collect(ag *agent.Agent, hookSrc []config.HookSource, modelFrom, effortFrom
 	}
 	if sk > 0 {
 		l.Prompt.Parts = append(l.Prompt.Parts, Part{Name: "skills", Bytes: src.SkillBytes, Detail: plural(sk, "skill") + " listed"})
+	}
+	if len(l.MCP) > 0 {
+		var names []string
+		for _, in := range l.MCP {
+			names = append(names, in.Name)
+		}
+		l.Prompt.Parts = append(l.Prompt.Parts, Part{Name: "MCP servers", Detail: "one line naming " + strings.Join(names, ", ") + "; used through atto mcp in the shell"})
 	}
 
 	tool := ag.Shell.ToolName()
@@ -253,9 +267,13 @@ func Collect(ag *agent.Agent, hookSrc []config.HookSource, modelFrom, effortFrom
 // configFiles lists the configuration files read for a session in cwd.
 // Credentials are only checked for, never read here.
 func configFiles(cwd string) []ConfigFile {
+	root := agent.ProjectRoot(cwd)
 	files := []ConfigFile{
 		{Path: config.SettingsPath(), Role: "settings"},
 		{Path: config.ProjectSettingsPath(cwd), Role: "project settings (hooks)"},
+		{Path: config.MCPPath(), Role: "MCP servers"},
+		{Path: config.ProjectMCPPath(root), Role: "project MCP servers"},
+		{Path: config.LocalMCPPath(root), Role: "local MCP servers"},
 		{Path: config.ModelsPath(), Role: "models"},
 		{Path: config.AuthPath(), Role: "credentials"},
 	}
@@ -404,6 +422,10 @@ func (l Loaded) Summary() []Row {
 	rows = append(rows, Row{"Hooks", text})
 	if len(l.Extensions) > 0 { // most sessions have none: no row for them
 		rows = append(rows, Row{"Extensions", extensionSummary(l.Extensions)})
+	}
+
+	if len(l.MCP) > 0 { // likewise
+		rows = append(rows, Row{"MCP", mcpSummary(l.MCP)})
 	}
 
 	rows = append(rows, Row{"Model", l.modelText()})
@@ -555,6 +577,16 @@ func (l Loaded) Details() []Section {
 	if len(s.Rows) == 0 {
 		s.Rows = append(s.Rows, Row{"none", "put .ts or .js files in " + ShortPath(config.ExtensionsDir()) +
 			" or the project's .atto/extensions; see atto extensions docs"})
+	}
+	out = append(out, s)
+
+	s = Section{Title: "MCP servers"}
+	for _, in := range l.MCP {
+		s.Rows = append(s.Rows, mcpRow(in))
+	}
+	if len(s.Rows) == 0 {
+		s.Rows = append(s.Rows, Row{"none", "atto mcp add, or write " + ShortPath(config.MCPPath()) +
+			" (Claude Code's .mcp.json format); the project's .mcp.json needs approval"})
 	}
 	out = append(out, s)
 
@@ -744,6 +776,20 @@ func Diff(prev, cur Loaded) []Change {
 	}
 	a, b = ext(prev), ext(cur)
 	diff("extension", a, b, keys(a, b))
+
+	mc := func(l Loaded) map[string]string {
+		m := map[string]string{}
+		for _, in := range l.MCP {
+			gate := ""
+			if in.Status == mcp.NeedsApproval || in.Status == mcp.DeniedStatus {
+				gate = in.Status
+			}
+			m[in.Name] = in.Scope + " " + in.Path + " " + in.Hash + " " + gate
+		}
+		return m
+	}
+	a, b = mc(prev), mc(cur)
+	diff("MCP server", a, b, keys(a, b))
 
 	cfg := func(l Loaded) map[string]string {
 		m := map[string]string{}

@@ -60,6 +60,13 @@ type Extensions interface {
 	TurnEnd(err error)
 }
 
+// MCPServers names the MCP servers configured for a session, sorted. They
+// are reached through the shell ("atto mcp ..."), so the model needs
+// nothing but that one line in its prompt. Implemented by package mcp.
+type MCPServers interface {
+	PromptServers() []string
+}
+
 // ExtensionEvent prefixes the event of the notices extensions cause.
 const ExtensionEvent = "extension "
 
@@ -191,6 +198,11 @@ type Agent struct {
 	// Extensions, if set, run around prompts, tool calls and turns, after
 	// the hooks (see Extensions).
 	Extensions Extensions
+	// MCP, if set, names the configured MCP servers for the system prompt
+	// (see MCPServers). They are read when the prompt is built (at session
+	// start and on Reload), not per request, so the prompt only changes
+	// when the configuration does.
+	MCP MCPServers
 
 	// LastUsage is the usage of the most recent model call.
 	LastUsage provider.Usage
@@ -356,7 +368,11 @@ func (a *Agent) scan(start time.Time) (Sources, string) {
 	dirs := skills.Dirs(config.SkillsDir(), projectRoot(a.Cwd), home)
 	sk, issues := skills.LoadIssues(dirs)
 	files, skipped := scanInstructions(a.Cwd)
-	prompt := buildPrompt(a.Cwd, a.Shell, start, sk, files)
+	var mcp []string
+	if a.MCP != nil {
+		mcp = a.MCP.PromptServers()
+	}
+	prompt := buildPrompt(a.Cwd, a.Shell, start, sk, files, mcp)
 	var instr strings.Builder
 	writeInstructions(&instr, files)
 	return Sources{
@@ -1079,10 +1095,21 @@ func shellGuide(sh shell.Shell) string {
 }
 
 func systemPrompt(cwd string, sh shell.Shell, start time.Time, sk []skills.Skill) string {
-	return buildPrompt(cwd, sh, start, sk, loadInstructions(cwd))
+	return buildPrompt(cwd, sh, start, sk, loadInstructions(cwd), nil)
 }
 
-func buildPrompt(cwd string, sh shell.Shell, start time.Time, sk []skills.Skill, instr []instructionFile) string {
+// mcpLine is the prompt's one line about MCP, with the blank line after
+// it, or nothing when no server is configured. The names are sorted, so
+// the text depends on the configuration alone.
+func mcpLine(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	names = slices.Sorted(slices.Values(names))
+	return fmt.Sprintf("MCP servers are available through \"atto mcp tools [server [tool]]\" and \"atto mcp call <server> <tool> '<json args>'\" (configured: %s).\n\n", strings.Join(names, ", "))
+}
+
+func buildPrompt(cwd string, sh shell.Shell, start time.Time, sk []skills.Skill, instr []instructionFile, mcp []string) string {
 	var b strings.Builder
 	name := sh.ToolName()
 	fmt.Fprintf(&b, `You are atto, a coding agent running in the user's terminal.
@@ -1098,14 +1125,14 @@ Background work: start long-running commands (dev servers, watchers, long builds
 
 Goals: when a message starts with "[atto goal]", you are working toward a goal the user set and atto keeps starting turns until it is done. Mark it with "atto goal complete '<evidence>'" only after verifying it, or "atto goal blocked '<reason>'" when only the user can unblock it. Do not set goals yourself unless the user asks.
 
-Work autonomously: investigate, make the change, verify it. Keep replies concise and plain; the user sees your tool calls.
+%sWork autonomously: investigate, make the change, verify it. Keep replies concise and plain; the user sees your tool calls.
 
 Environment:
 - Working directory: %s
 - Platform: %s/%s
 - Shell: %s
 - Session started: %s
-`, cwd, runtime.GOOS, runtime.GOARCH, sh.Path, start.Format("2006-01-02"))
+`, mcpLine(mcp), cwd, runtime.GOOS, runtime.GOARCH, sh.Path, start.Format("2006-01-02"))
 
 	writeInstructions(&b, instr)
 	b.WriteString(skills.FormatForPrompt(sk, name))

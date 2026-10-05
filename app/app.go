@@ -20,6 +20,7 @@ import (
 	"github.com/sebastianrcnt/atto/extensions"
 	"github.com/sebastianrcnt/atto/hooks"
 	"github.com/sebastianrcnt/atto/images"
+	"github.com/sebastianrcnt/atto/mcp"
 	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/session"
 	"github.com/sebastianrcnt/atto/tui"
@@ -53,8 +54,11 @@ type App struct {
 	hooks  *hooks.Runner // nil when no hooks are configured
 	// ext runs the session's extensions (nil in tests that need none);
 	// extUI is what they show.
-	ext   *extensions.Manager
-	extUI extUI
+	ext *extensions.Manager
+	mcp *mcp.Manager
+	// mcpAsked are the approval prompts shown this run (name#hash).
+	mcpAsked map[string]bool
+	extUI    extUI
 	// hookSrc are the settings files the hooks came from, loaded what the
 	// session loaded (the "Loaded" block), and modelFrom/effortFrom where
 	// the model and effort in use came from.
@@ -196,6 +200,7 @@ func Run(opts Options) error {
 	a.ui.NoMouse = mouseDisabled(settings.Mouse, os.Getenv)
 	a.build()
 	a.ext = core.LoadExtensions(ag, newTUIHost(a))
+	a.mcp = core.LoadMCP(ag)
 	if noModels {
 		// First run: start anyway and say how to get a model, like pi.
 		a.notice("%s", core.NoModelsHint())
@@ -232,6 +237,7 @@ func Run(opts Options) error {
 		// As if typed: goes through submit, so a leading "/" is a command too.
 		a.ui.Do(func() { a.submit(opts.Prompt, nil) })
 	}
+	a.ui.Do(a.askMCPApprovals)
 	go a.watchInbox()
 	if a.ui.Mode == tui.Fullscreen && !a.ui.NoMouse {
 		go func() {
@@ -255,6 +261,7 @@ func Run(opts Options) error {
 		if a.ext != nil {
 			a.ext.Close() // the session's extensions run on there; no session_end
 		}
+		_ = a.mcp.Close()
 		return nil
 	}
 	if n := a.leaveCore(); n > 0 {
@@ -269,6 +276,7 @@ func Run(opts Options) error {
 		a.ext.SessionEnd("exit")
 		a.ext.Close()
 	}
+	_ = a.mcp.Close()
 	return nil
 }
 

@@ -66,6 +66,7 @@ func (e *ext) install() *goja.Object {
 	_ = atto.Set("exec", e.jsExec)
 	_ = atto.Set("fs", e.fsObject())
 	_ = atto.Set("fetch", e.jsFetch)
+	_ = atto.Set("mcp", e.mcpObject())
 	_ = atto.Set("sendMessage", func(text string) { e.m.host().SendMessage(text) })
 	_ = atto.Set("log", e.jsLog)
 	_ = atto.Set("session", session)
