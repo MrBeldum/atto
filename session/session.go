@@ -133,6 +133,26 @@ type Writer struct {
 	hasLeaf bool   // leaf is known; else read from the file on open
 	f       *os.File
 	err     error
+	// readOnly, when set, is why nothing is written (see lock.go).
+	readOnly string
+}
+
+// SetReadOnly makes w drop every entry, for a session another process is
+// writing; why is shown to the user.
+func (w *Writer) SetReadOnly(why string) {
+	w.mu.Lock()
+	w.readOnly = why
+	w.mu.Unlock()
+}
+
+// ReadOnly returns why w writes nothing, "" if it does.
+func (w *Writer) ReadOnly() string {
+	if w == nil {
+		return ""
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.readOnly
 }
 
 func newID() string {
@@ -261,6 +281,9 @@ func (w *Writer) BranchSummary(to string, e Entry) {
 
 // appendLocked writes e as a child of parent, or of the leaf if nil.
 func (w *Writer) appendLocked(e Entry, parent *string) {
+	if w.readOnly != "" {
+		return
+	}
 	if e.Time.IsZero() {
 		e.Time = time.Now()
 	}
@@ -344,6 +367,7 @@ type Summary struct {
 	Messages int    // user + assistant messages
 	Branch   string // git branch when the session began; "" if unknown
 	Size     int64  // file size in bytes
+	Running  int    // pid of the background process writing it; 0 if none
 }
 
 // List returns sessions, newest first. If cwd is non-empty only sessions
@@ -393,6 +417,9 @@ func summarize(path string) (Summary, error) {
 	s := Summary{Path: path, ID: h.ID, Cwd: h.Cwd, Created: h.Time, Updated: h.Time, Branch: h.GitBranch}
 	if st, err := os.Stat(path); err == nil {
 		s.Size = st.Size()
+	}
+	if l, ok := LockedBy(path); ok {
+		s.Running = l.PID
 	}
 	for _, e := range entries {
 		s.Updated = e.Time

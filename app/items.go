@@ -233,6 +233,7 @@ func (a *App) onEvent(ev any) {
 	}
 	a.tr().Event(ev)
 	a.goal.Event(ev)
+	a.backgroundEvent(ev)
 	switch e := ev.(type) {
 	case agent.ToolDraft:
 		a.activity = "Writing command"

@@ -332,7 +332,7 @@ func (a *App) cmdClear(string) {
 	a.notice("Started a new conversation.")
 }
 
-func (a *App) cmdQuit(string) { a.doQuit() }
+func (a *App) cmdQuit(string) { a.requestQuit() }
 
 func (a *App) cmdName(arg string) {
 	if arg == "" {

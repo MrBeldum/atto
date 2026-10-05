@@ -123,6 +123,8 @@ type App struct {
 	jobCount, timerCount int
 
 	goal core.GoalDriver
+	// bgx is the experimental exit menu (background_exit.go).
+	bgx bgExit
 
 	// Slash command list: selection, the text it belongs to, and the text
 	// for which Esc closed it.
@@ -178,6 +180,7 @@ func Run(opts Options) error {
 		a.ui.Mode = tui.Inline
 	}
 	a.escAction = settings.DoubleEscapeAction
+	a.bgx.off = settings.BackgroundExit != nil && !*settings.BackgroundExit
 	a.skipSummary = settings.BranchSummary != nil && settings.BranchSummary.SkipPrompt
 	a.ui.NoMouse = mouseDisabled(settings.Mouse, os.Getenv)
 	a.build()
@@ -236,7 +239,10 @@ func Run(opts Options) error {
 	})
 	a.ui.Stop()
 	a.sess.Close()
-	if n := core.Leave(a.sess.ID); n > 0 {
+	if a.printExit() { // the run goes on in the background
+		return nil
+	}
+	if n := a.leaveCore(); n > 0 {
 		fmt.Printf("atto: stopped %d background job(s)\n", n)
 	}
 	if a.hooks != nil {
@@ -255,7 +261,7 @@ func (a *App) build() {
 
 	// The command list sits above the input, as in Claude Code, so the
 	// input and the status line keep their place as it opens and closes.
-	a.ui.Footer.Add(tui.Func(a.renderActivity), tui.Func(a.renderPending), jumpPill{a}, tui.Func(a.renderSuggestions), tui.Func(a.renderInput), tui.Func(a.renderStatus))
+	a.ui.Footer.Add(tui.Func(a.renderActivity), tui.Func(a.renderPending), jumpPill{a}, tui.Func(a.renderReadOnly), tui.Func(a.renderSuggestions), tui.Func(a.renderInput), tui.Func(a.renderStatus))
 	a.ui.SetFocus(a.editor)
 	a.ui.OnInput = a.onInput
 	a.ui.OnCopy = a.copySelection
@@ -273,7 +279,7 @@ func (a *App) leaveSession(reason string) {
 		return
 	}
 	a.sessionEndHook(reason)
-	if n := core.Leave(a.sess.ID); n > 0 {
+	if n := a.leaveCore(); n > 0 {
 		a.notice("Stopped %d background job(s) of the previous conversation.", n)
 	}
 	a.jobCount, a.timerCount, a.pendingEvents = 0, 0, nil
@@ -383,6 +389,9 @@ func (a *App) onInput(data string) bool {
 	if a.modal != nil {
 		return false // the focused modal handles everything
 	}
+	if a.readOnlyKey(data) {
+		return true
+	}
 	if a.suggestionKey(tui.Key(data)) {
 		a.esc.reset() // an Esc that closed the "/" list is not a first Esc
 		return true
@@ -415,12 +424,12 @@ func (a *App) onInput(data string) bool {
 		case a.editor.Text() != "":
 			a.editor.SetText("")
 		default:
-			a.doQuit()
+			a.requestQuit()
 		}
 		return true
 	case "ctrl+d":
-		if a.editor.Text() == "" && !a.busy {
-			a.doQuit()
+		if a.editor.Text() == "" && (!a.busy || a.exitMenuAvailable()) {
+			a.requestQuit()
 			return true
 		}
 	case "ctrl+b":
@@ -454,6 +463,9 @@ func (a *App) onInput(data string) bool {
 }
 
 func (a *App) submit(text string, att []tui.Attachment) {
+	if a.refuseReadOnly(text) {
+		return
+	}
 	a.ui.ScrollToBottom()
 	if len(att) > 0 && !strings.HasPrefix(text, "/") {
 		a.submitWithImages(text, att)
@@ -495,6 +507,9 @@ func (a *App) recordSettings() {
 
 // startTurn runs a turn for text and its image attachments.
 func (a *App) startTurn(text string, att []tui.Attachment) {
+	if a.refuseReadOnly(text) {
+		return
+	}
 	imgs := attachedImages(att)
 	for _, im := range imgs {
 		if err := images.Save(im); err != nil {

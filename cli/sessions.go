@@ -143,6 +143,7 @@ type sessionJSON struct {
 	Preview  string    `json:"preview"`
 	Archived bool      `json:"archived"`
 	Path     string    `json:"path"`
+	Running  bool      `json:"running,omitempty"` // left running in the background
 }
 
 func sessionsList(out io.Writer, all, archived, asJSON bool, limit int) error {
@@ -163,7 +164,7 @@ func sessionsList(out io.Writer, all, archived, asJSON bool, limit int) error {
 	if asJSON {
 		rows := make([]sessionJSON, 0, len(list)) // [] rather than null when empty
 		for _, s := range list {
-			rows = append(rows, sessionJSON{s.ID, s.Name, s.Cwd, s.Created, s.Updated, s.Messages, s.Preview, s.Archived, s.Path})
+			rows = append(rows, sessionJSON{s.ID, s.Name, s.Cwd, s.Created, s.Updated, s.Messages, s.Preview, s.Archived, s.Path, s.Running > 0})
 		}
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
@@ -184,7 +185,14 @@ func sessionsList(out io.Writer, all, archived, asJSON bool, limit int) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	running := false
+	for _, s := range list {
+		running = running || s.Running > 0
+	}
 	head := "ID\tUPDATED\tMSGS\tNAME\tPREVIEW"
+	if running {
+		head = "ID\tUPDATED\tMSGS\tSTATUS\tNAME\tPREVIEW"
+	}
 	if all {
 		head += "\tCWD"
 	}
@@ -195,6 +203,13 @@ func sessionsList(out io.Writer, all, archived, asJSON bool, limit int) error {
 			name = "-"
 		}
 		row := fmt.Sprintf("%s\t%s\t%d\t%s\t%s", s.ID, session.RelTime(s.Updated), s.Messages, name, oneLine(s.Preview, 60))
+		if running {
+			status := "-"
+			if s.Running > 0 {
+				status = "running"
+			}
+			row = fmt.Sprintf("%s\t%s\t%d\t%s\t%s\t%s", s.ID, session.RelTime(s.Updated), s.Messages, status, name, oneLine(s.Preview, 60))
+		}
 		if all {
 			row += "\t" + s.Cwd
 		}
@@ -241,6 +256,9 @@ func sessionsShow(out io.Writer, path string) error {
 	status := "active"
 	if !strings.HasPrefix(path, config.SessionsDir()) {
 		status = "archived"
+	}
+	if l, ok := session.LockedBy(path); ok {
+		status += fmt.Sprintf(" (running in the background, pid %d)", l.PID)
 	}
 	f := func(k, v string) { fmt.Fprintf(out, "%-9s %s\n", k+":", v) }
 	f("id", h.ID)

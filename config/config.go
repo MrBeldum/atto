@@ -98,6 +98,9 @@ type Settings struct {
 	// BranchSummary configures what going back in the session tree (/tree)
 	// does with the branch being left, as pi's setting of the same name.
 	BranchSummary *BranchSummary `json:"branchSummary,omitempty"`
+	// BackgroundExit: false turns off the exit menu that offers "Run in
+	// background" while a turn is running (experimental; default on).
+	BackgroundExit *bool `json:"backgroundExit,omitempty"`
 }
 
 // BranchSummary is settings.json's "branchSummary".

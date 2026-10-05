@@ -44,6 +44,10 @@ type PrintOptions struct {
 	// out of budget, or failing); GoalBudget caps its tokens.
 	Goal       string
 	GoalBudget string
+	// Background is atto _continue (experimental): continue the session
+	// -session names without a new message, holding its lock, and notify
+	// the Notification hook when done.
+	Background bool
 }
 
 // printResult is the final JSON object for --output-format json and the
@@ -188,6 +192,12 @@ func RunPrint(o PrintOptions) error {
 		if saved, sess, err = core.Open(path); err != nil {
 			return err
 		}
+		release, err := lockForRun(path, o.Background, !o.NoSave)
+		if err != nil {
+			sess.Close()
+			return err
+		}
+		defer release()
 		start, source = saved.Header.Time, "resume"
 	default:
 		sess = session.New(cwd)
@@ -230,7 +240,7 @@ func RunPrint(o PrintOptions) error {
 		}
 	}
 	ag.Restore(saved.Branch())
-	if !o.NoSave {
+	if !o.NoSave && !o.Background {
 		sess.Append(session.Entry{Type: session.TypeModel, Provider: model.ProviderName, Model: model.Model.ID})
 		sess.Append(session.Entry{Type: session.TypeEffort, Effort: ag.Effort()})
 	}
@@ -270,13 +280,28 @@ func RunPrint(o PrintOptions) error {
 		d.Goal = g
 	}
 
+	mode := bgResumeTurn
+	if o.Background {
+		if mode = bgPrepare(&d, saved); mode == bgNothing {
+			fmt.Fprintln(os.Stderr, "atto: nothing to continue")
+			return nil
+		}
+	}
 	began := time.Now()
 	input := o.Prompt
 	if input == "" && d.Goal != nil {
 		input = d.Goal.Continuation()
 	}
 	imgs := o.Images // with the first turn only
+
+	resume := o.Background && mode == bgResumeTurn // the first turn has its message already
 	turn := func(ctx context.Context, input string, emit func(any)) error {
+		if resume {
+			resume = false
+			err := ag.Continue(ctx, emit)
+			p.tr.End()
+			return err
+		}
 		emit(transcript.Input{Text: input, Images: imgs})
 		err := ag.RunWithImages(ctx, input, imgs, emit)
 		imgs = nil
@@ -313,6 +338,14 @@ func RunPrint(o PrintOptions) error {
 	res.Subtype = "success"
 	if runErr != nil {
 		res.Subtype, res.IsError, res.Error = "error", true, runErr.Error()
+	}
+
+	if o.Background {
+		name := saved.Name
+		if name == "" {
+			name = sess.ID
+		}
+		bgNotify(hk, name, runErr)
 	}
 
 	switch o.Format {

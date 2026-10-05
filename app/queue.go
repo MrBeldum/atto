@@ -73,6 +73,9 @@ func (a *App) restoreToEditor(texts []string, att ...tui.Attachment) {
 
 // afterRun settles pending input once a turn or compaction finishes.
 func (a *App) afterRun(err error) {
+	if a.backgroundAfterRun(err) {
+		return
+	}
 	if a.runKind == "branchSummary" {
 		a.runKind = ""
 		if a.afterBranchSummary(err) {

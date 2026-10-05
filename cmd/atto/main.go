@@ -55,7 +55,7 @@ flags:
 // changing credentials. "" is atto itself (interactive or -p). Commands
 // that work on the agent's own session (history, job, goal, reload...) or
 // only read (context, models) are allowed.
-var nestedRefused = map[string]bool{"": true, "serve": true, "app-server": true, "resume": true, "login": true, "logout": true, "auth": true, "update": true, "channel": true}
+var nestedRefused = map[string]bool{"": true, "serve": true, "app-server": true, "resume": true, "login": true, "logout": true, "auth": true, "update": true, "channel": true, "_continue": true}
 
 func refuseNested(cmd string) {
 	if !config.InAgent() || !nestedRefused[cmd] {
@@ -99,6 +99,7 @@ func subcommands() map[string]func([]string, io.Writer) error {
 		"channel":    cli.RunChannel,
 		"_supervise": cli.RunSupervise,
 		"_shell":     cli.RunShellHost,
+		"_continue":  cli.RunContinue,
 		"login":      cli.RunLogin,
 		"logout":     cli.RunLogout,
 		"serve": func(args []string, out io.Writer) error {
