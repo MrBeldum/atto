@@ -103,6 +103,15 @@ func TestExtensionsCLI(t *testing.T) {
 	if out, _ := run("docs"); !strings.HasPrefix(out, "# Writing atto extensions") {
 		t.Fatal("docs prints the guide")
 	}
+	if out, err := run("source", "diff"); err != nil || !strings.Contains(out, "registerCommand") || !strings.Contains(out, `"diff"`) {
+		t.Fatalf("source diff: %v\n%s", err, out)
+	}
+	if _, err := run("source", "nope"); err == nil {
+		t.Fatal("unknown built-in extension")
+	}
+	if _, err := run("source"); err == nil {
+		t.Fatal("source needs a name")
+	}
 	if _, err := run("nope"); err == nil {
 		t.Fatal("usage")
 	}

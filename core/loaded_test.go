@@ -45,7 +45,7 @@ func project(t *testing.T) (atto, repo, cwd string) {
 	writeFile(t, filepath.Join(atto, "skills", "nodesc", "SKILL.md"), "---\nname: nodesc\n---\nx")
 	writeFile(t, filepath.Join(repo, ".agents", "skills", "pdf", "SKILL.md"), "---\nname: pdf\ndescription: Another\n---\nx")
 	writeFile(t, filepath.Join(repo, ".agents", "skills", "hidden", "SKILL.md"), "---\nname: hidden\ndescription: By command\ndisable-model-invocation: true\n---\nx")
-	writeFile(t, filepath.Join(atto, "settings.json"), `{"defaultProvider":"a","defaultModel":"two","hooks":{
+	writeFile(t, filepath.Join(atto, "settings.json"), `{"skills":{"disabled":["atto-extensions"]},"defaultProvider":"a","defaultModel":"two","hooks":{
 		"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"./check.sh --strict"}]}],
 		"Stop":[{"hooks":[{"type":"http","url":"http://127.0.0.1:9/stop"}]}]}}`)
 	writeFile(t, filepath.Join(atto, "models.json"), `{"providers":{"a":{"baseUrl":"http://127.0.0.1:9/v1","models":[{"id":"one"},{"id":"two","input":["text","image"]}]}}}`)
@@ -253,7 +253,7 @@ func TestReload(t *testing.T) {
 	// is gone from models.json.
 	writeFile(t, filepath.Join(repo, "AGENTS.override.md"), "new override rules")
 	writeFile(t, filepath.Join(atto, "skills", "deploy", "SKILL.md"), "---\nname: deploy\ndescription: Ship it\n---\nx")
-	writeFile(t, filepath.Join(atto, "settings.json"), `{"hooks":{"Stop":[{"hooks":[{"type":"http","url":"http://127.0.0.1:9/stop"}]}]}}`)
+	writeFile(t, filepath.Join(atto, "settings.json"), `{"skills":{"disabled":["atto-extensions"]},"hooks":{"Stop":[{"hooks":[{"type":"http","url":"http://127.0.0.1:9/stop"}]}]}}`)
 	writeFile(t, filepath.Join(atto, "models.json"), `{"providers":{"a":{"baseUrl":"http://127.0.0.1:9/v1","models":[{"id":"one"}]}}}`)
 	r, err = Reload(ag, "s1", "", r.Loaded)
 	if err != nil {

@@ -24,7 +24,13 @@ type Skill struct {
 	// DisableModelInvocation hides the skill from the system prompt; it can
 	// still be run explicitly with /skill:name.
 	DisableModelInvocation bool
+	// Source is Builtin for the skills inside atto; empty for those found
+	// in a directory.
+	Source string
 }
+
+// Builtin is the Source of a skill that ships inside atto.
+const Builtin = "builtin"
 
 // Dirs lists where skills are looked for, highest priority first (the first
 // skill of a name wins). userDir is ~/.atto/skills; the others are the

@@ -1,0 +1,33 @@
+---
+name: atto-extensions
+description: Write or change atto extensions (TypeScript) - events, slash commands, display-only block changes, side model calls - when the user wants to customize atto's behaviour or UI.
+---
+
+# Writing atto extensions
+
+An extension is a TypeScript file atto loads into every session. Do not guess its API: read it first.
+
+1. Read the API.
+   - `atto extensions docs` is the guide (events, ctx, UI, limits, examples).
+   - `atto extensions types` prints `atto.d.ts`, the exact signatures.
+   - `atto extensions source diff` prints the source of the built-in /diff extension: a small, complete example (atto.exec, parsing, ctx.ui.showText, a slash command). `atto extensions list` shows the other built-in ones.
+2. Decide where it goes.
+   - User extension: `~/.atto/extensions/<name>.ts` (or `<name>/index.ts` for several files). Needs no approval. This is the default.
+   - Project extension: `<project>/.atto/extensions/<name>.ts`, only if the user wants it shared with the repository. It does not run until the user approves it: tell them to run `/extensions approve <name>` (or `atto extensions approve <name>` in their own terminal). Never try to approve it yourself; the shell refuses.
+3. Write it: a default export taking `atto`, with `/// <reference path="./atto.d.ts" />` on top.
+4. Load it and read the result.
+   - Run `atto reload`. The answer comes back as an `[atto event]`: load errors have file:line:col. Fix and reload until it loads.
+   - `atto extensions list` shows each extension's status (ok, failed with the error, needs approval, disabled) without running it.
+   - Handler errors and `atto.log(...)` go to `~/.atto/extensions.log`.
+5. Tell the user what the extension does, where the file is, and (for a command) how to run it.
+
+## Rules
+
+- Display APIs (`ctx.ui.setBlockDisplay`, `setBlockStatus`, `showText`, `setStatus`, `setWidget`) change what the user sees, never what the model receives or what is saved as the conversation. To change what the model sees, use the blocking events.
+- Blocking events (`tool_call`, `tool_result`, `user_prompt`) are waited for and have a timeout (5 s by default). Keep their handlers fast and do slow work elsewhere (`message_end`, `turn_end`, a command). A handler that throws is skipped, not fatal.
+- `message_end` and `reasoning_end` never delay anything, so they are the place for model calls.
+- `atto.complete({model, prompt, ...})` makes a side model call: for helpers such as translation or summaries. The model is `provider/id` from models.json. Keep the default concurrency of 1 (local servers slow down or hang when asked in parallel), pass `reasoningEffort: "none"` when thinking is not needed, and set `timeoutMs` if the task is long. Handle rejection (server down, timeout) by showing a status such as "failed".
+- No Node.js: no `require`, `process` or npm packages that need them. Use `atto.exec`, `atto.fs`, `fetch`, `atto.mcp`.
+- Never put secrets (API keys, tokens) in extension files. Read them from the environment through `atto.exec`, or from a file the user keeps outside the repository.
+- Prefer small, single-purpose extensions: one file per behaviour, named for it.
+- To change a built-in extension, copy its source (`atto extensions source <name>`) to `~/.atto/extensions/<name>.ts` and edit the copy; an extension with the same name replaces the built-in one.

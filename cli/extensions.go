@@ -12,7 +12,7 @@ import (
 	"github.com/sebastianrcnt/atto/extensions"
 )
 
-const extensionsUsage = `usage: atto extensions [list [-json] | approve <name> | types | docs]
+const extensionsUsage = `usage: atto extensions [list [-json] | approve <name> | types | docs | source <name>]
 
   list            the extensions a session here loads (the default), without
                   running them: user ones from ~/.atto/extensions, project ones
@@ -21,6 +21,7 @@ const extensionsUsage = `usage: atto extensions [list [-json] | approve <name> |
                   a change to it needs approval again. Not from an agent's shell.
   types           print atto.d.ts, the API's TypeScript declarations
   docs            print the guide to writing extensions
+  source <name>   print the source of a built-in extension (diff), as an example
 
 A running session picks changes up with /reload (or atto reload).`
 
@@ -84,6 +85,16 @@ func RunExtensions(args []string, out io.Writer) error {
 		return err
 	case "docs":
 		_, err := io.WriteString(out, docs.Extensions)
+		return err
+	case "source":
+		if len(args) != 1 {
+			return fmt.Errorf("%s", extensionsUsage)
+		}
+		src, ok := extensions.BuiltinSource(args[0])
+		if !ok {
+			return fmt.Errorf("atto: no built-in extension %q (see: atto extensions list)", args[0])
+		}
+		_, err := io.WriteString(out, src)
 		return err
 	}
 	return fmt.Errorf("%s", extensionsUsage)

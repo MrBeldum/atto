@@ -55,3 +55,9 @@ func bundleSpec(s Spec) (string, error) {
 		Loader:     api.LoaderTS,
 	}}, s.Path)
 }
+
+// BuiltinSource is the TypeScript source of the built-in extension name.
+func BuiltinSource(name string) (string, bool) {
+	src, err := builtinFS.ReadFile(path.Join(builtinDir, name+".ts"))
+	return string(src), err == nil
+}

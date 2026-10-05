@@ -75,6 +75,9 @@ type Skill struct {
 	Path   string `json:"path"`
 	Dir    string `json:"dir"`              // the skills directory it was found in
 	Hidden bool   `json:"hidden,omitempty"` // not in the prompt; run with /skill:name
+	// Source is "builtin" for a skill that ships inside atto (Dir is empty:
+	// it is written to the cache); empty for one found in a directory.
+	Source string `json:"source,omitempty"`
 	sum    string
 }
 
@@ -143,7 +146,7 @@ func Collect(ag *agent.Agent, hookSrc []config.HookSource, modelFrom, effortFrom
 		}
 	}
 	for _, s := range src.Skills {
-		x := Skill{Name: s.Name, Path: s.FilePath, Hidden: s.DisableModelInvocation}
+		x := Skill{Name: s.Name, Path: s.FilePath, Hidden: s.DisableModelInvocation, Source: s.Source}
 		for _, d := range l.SkillDirs {
 			if within(d, s.FilePath) {
 				x.Dir = d
@@ -401,6 +404,10 @@ func (l Loaded) Summary() []Row {
 
 	var names []string
 	for _, s := range l.Skills {
+		if s.Source == skills.Builtin {
+			names = append(names, s.Name+" (builtin)")
+			continue
+		}
 		names = append(names, s.Name)
 	}
 	text := "none"
@@ -557,6 +564,9 @@ func (l Loaded) Details() []Section {
 	}
 	for _, sk := range l.Skills {
 		text := ShortPath(sk.Path)
+		if sk.Source == skills.Builtin {
+			text += " · builtin"
+		}
 		if sk.Hidden {
 			text += " · not in the prompt; run with /skill:" + sk.Name
 		}
