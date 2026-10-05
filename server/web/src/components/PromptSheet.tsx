@@ -8,22 +8,53 @@ import type { Prompt } from "../types";
 
 export type Answer = { index: number } | { text: string } | { cancel: true };
 
+// The prompt on screen (one at a time), and how many history.back()
+// calls of ours have not popped yet.
+let shown: { id: string; back: () => void } | null = null;
+let ours = 0;
+let listening = false;
+
+function onPop() {
+  if (ours > 0) {
+    // Our own pop of a prompt that closed; a prompt that opened since
+    // gets its entry back.
+    ours--;
+    if (shown) history.pushState({ prompt: shown.id }, "");
+    return;
+  }
+  const s = shown;
+  if (!s) return;
+  shown = null;
+  s.back();
+}
+
 // useBack cancels on the phone's back gesture: an open prompt is a
-// history entry, popped again when it closes some other way.
+// history entry, popped again when it closes some other way. A prompt
+// that follows another (the terminal asks the next question) takes over
+// its entry, and the pop of a closed prompt is never taken for the back
+// gesture on the next one, which would cancel it.
 function useBack(id: string, onBack: () => void) {
   const back = useRef(onBack);
   back.current = onBack;
-  useEffect(() => {
-    history.pushState({ prompt: id }, "");
-    let popped = false;
-    const onPop = () => {
-      popped = true;
-      back.current();
-    };
-    window.addEventListener("popstate", onPop);
+  useLayoutEffect(() => {
+    if (!listening) {
+      listening = true;
+      window.addEventListener("popstate", onPop);
+    }
+    const me = { id, back: () => back.current() };
+    shown = me;
+    if (history.state?.prompt) history.replaceState({ prompt: id }, "");
+    else history.pushState({ prompt: id }, "");
     return () => {
-      window.removeEventListener("popstate", onPop);
-      if (!popped && history.state?.prompt === id) history.back();
+      if (shown !== me) return; // popped by the back gesture
+      shown = null;
+      // Later, so a prompt opening in the same update takes the entry.
+      setTimeout(() => {
+        if (shown === null && history.state?.prompt) {
+          ours++;
+          history.back();
+        }
+      }, 0);
     };
   }, [id]);
 }

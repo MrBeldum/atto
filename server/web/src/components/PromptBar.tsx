@@ -6,6 +6,7 @@
 // it steers, stops and moves a command to the background.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { loadDraft, saveDraft } from "../storage";
 import { ArrowUp, Image as ImageIcon, MoveDown, Stop } from "./icons";
 
 export type Pending = { mimeType: string; data: string; url: string; name: string };
@@ -56,7 +57,8 @@ export default function PromptBar({
   onBackground: () => void;
   warn: (text: string) => void;
 }) {
-  const [text, setText] = useState("");
+  // The draft outlives a reload or a new login.
+  const [text, setText] = useState(loadDraft);
   const [images, setImages] = useState<Pending[]>([]);
   const [drop, setDrop] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -67,6 +69,7 @@ export default function PromptBar({
     if (!ta) return;
     ta.style.height = "auto";
     ta.style.height = Math.min(ta.scrollHeight, window.innerHeight * 0.4) + "px";
+    saveDraft(text);
   }, [text]);
 
   const add = (files: Iterable<File>) => {
@@ -85,7 +88,7 @@ export default function PromptBar({
     if (ok) {
       images.forEach((im) => URL.revokeObjectURL(im.url));
       setImages([]);
-    } else setText(t);
+    } else setText((cur) => (cur.trim() ? t + "\n" + cur : t)); // back, with what was typed since
   };
 
   return (

@@ -11,7 +11,9 @@ import Thinking from "./components/Thinking";
 import ToolRow from "./components/ToolRow";
 import { Markdown } from "./markdown";
 import { Client, initialToken, saveToken, Unauthorized } from "./rpc";
-import { anchorIndex, anchorShift, atBottom, nextFollow } from "./scroll";
+import { loadThreadId, saveThreadId } from "./storage";
+import { anchorShift, atBottom, firstBelow, nextFollow } from "./scroll";
+import { Transcript } from "./transcript";
 import type { GoalInfo, Item, Model, Notification, Prompt, ThreadInfo, ThreadSummary } from "./types";
 
 // --- items ---
@@ -37,7 +39,7 @@ const Caret = () => (
   <span className="ml-0.5 inline-block h-[1em] w-0.5 translate-y-[3px] rounded-full bg-ink" style={{ animation: "caret-blink 1s step-end infinite" }} />
 );
 
-const ItemView = memo(function ItemView({ it }: { it: Item }) {
+export const ItemView = memo(function ItemView({ it }: { it: Item }) {
   const working = it.status === "inProgress";
   switch (it.type) {
     case "userMessage":
@@ -104,40 +106,17 @@ const ItemView = memo(function ItemView({ it }: { it: Item }) {
   return null;
 });
 
-// --- the transcript store: items by ID in order, updated in place and
-// rendered once per frame however many deltas arrive ---
-
-class Transcript {
-  order: string[] = [];
-  byId = new Map<string, Item>();
-  notes = 0;
-
-  reset(items: Item[] = []) {
-    this.order = [];
-    this.byId.clear();
-    items.forEach((it) => this.upsert(it));
-  }
-  upsert(it: Item) {
-    if (!this.byId.has(it.id)) this.order.push(it.id);
-    this.byId.set(it.id, it);
-  }
-  delta(id: string, d: string) {
-    const it = this.byId.get(id);
-    if (!it) return;
-    if (it.type === "commandExecution") this.byId.set(id, { ...it, output: (it.output || "") + d });
-    else this.byId.set(id, { ...it, text: (it.text || "") + d });
-  }
-  note(text: string, tone: "error" | "info" = "info") {
-    this.upsert({ id: "note-" + ++this.notes, type: "note", text, tone });
-  }
-  list(): Item[] {
-    return this.order.map((id) => this.byId.get(id)!);
-  }
-  running(): boolean {
-    for (const it of this.byId.values()) if (it.type === "commandExecution" && it.status === "inProgress" && !it.pending) return true;
-    return false;
-  }
-}
+// Items in blocks (see transcript.ts): a frame re-renders the block
+// that changed.
+export const Block = memo(function Block({ items }: { items: Item[] }) {
+  return (
+    <>
+      {items.map((it) => (
+        <ItemView key={it.id} it={it} />
+      ))}
+    </>
+  );
+});
 
 // --- app ---
 
@@ -226,6 +205,16 @@ export default function App() {
         if (live) openLive();
         return;
       }
+      if (n.method === "events/reset") {
+        // The server restarted or we were away too long: read again.
+        if (live) openLive();
+        else if (cur) reopen(cur.threadId);
+        else {
+          follow(p.eventId || 0);
+          loadThreads();
+        }
+        return;
+      }
       if (!cur || p.threadId !== cur.threadId) {
         if (n.method === "turn/completed" && !live) loadThreads();
         return;
@@ -293,6 +282,7 @@ export default function App() {
       setPrompt(t.prompt || null);
       setGoal(t.goal || null);
       if (t.busy) setBusySince(Date.now());
+      if (!t.live) saveThreadId(t.threadId);
       followRef.current = true;
       setAway(false);
       setDrawer(false);
@@ -313,6 +303,15 @@ export default function App() {
     client.call<ThreadInfo>("thread/read").then(show).catch(fail);
   }, [client, show, fail]);
 
+  // reopen reads a thread of atto serve again (thread/resume loads it if
+  // the server restarted since).
+  const reopen = useCallback(
+    (threadId: string) => {
+      client.call<ThreadInfo>("thread/resume", { threadId }).then(show).catch(fail);
+    },
+    [client, show, fail],
+  );
+
   // Start: check the token, then load models and the thread(s).
   const start = useCallback(async () => {
     setPhase("loading");
@@ -330,6 +329,9 @@ export default function App() {
       } else {
         follow(init.eventId || 0);
         loadThreads();
+        // Back where this tab was before a reload.
+        const was = loadThreadId();
+        if (was) client.call<ThreadInfo>("thread/resume", { threadId: was }).then(show, () => saveThreadId(""));
       }
     } catch (e) {
       if (!(e instanceof Unauthorized)) {
@@ -338,6 +340,16 @@ export default function App() {
       }
     }
   }, [client, show, follow, loadThreads]);
+
+  useEffect(() => {
+    let hiddenAt = 0;
+    const onVis = () => {
+      if (document.hidden) hiddenAt = Date.now();
+      else if (hiddenAt) client.wake(Date.now() - hiddenAt);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [client]);
 
   useEffect(() => {
     if (client.token) start();
@@ -352,13 +364,11 @@ export default function App() {
     lastTop.current = el.scrollTop;
   };
   const setAnchor = (el: HTMLElement) => {
-    const kids = Array.from(bodyRef.current?.children || []) as HTMLElement[];
-    const i = anchorIndex(
-      kids.map((k) => k.offsetTop),
-      kids.map((k) => k.offsetHeight),
-      el.scrollTop,
-    );
-    anchor.current = i >= 0 ? { el: kids[i], top: kids[i].offsetTop } : null;
+    const kids = bodyRef.current?.children;
+    if (!kids) return;
+    const at = (i: number) => kids[i] as HTMLElement;
+    const i = firstBelow(kids.length, (i) => at(i).offsetTop + at(i).offsetHeight, el.scrollTop);
+    anchor.current = i >= 0 ? { el: at(i), top: at(i).offsetTop } : null;
   };
   // settle runs after every layout change: to the bottom while
   // following, else the anchor stays put when what is above it changes
@@ -394,11 +404,21 @@ export default function App() {
     setAway(!f);
   };
   const unfollow = () => {
-    if (followRef.current) {
+    const el = logRef.current;
+    if (followRef.current && el && el.scrollHeight > el.clientHeight + 1) {
       followRef.current = false;
       setAway(true);
       if (logRef.current) setAnchor(logRef.current);
     }
+  };
+  // A finger lifted: take in where it left the view before settling, as
+  // its scroll event may not have arrived yet (a quick flick up must not
+  // snap back to the bottom).
+  const endTouch = () => {
+    touching.current = false;
+    const el = logRef.current;
+    if (el && Math.abs(el.scrollTop - lastTop.current) >= 1) onScroll();
+    settle();
   };
   useLayoutEffect(settle);
   useEffect(() => {
@@ -496,9 +516,9 @@ export default function App() {
       </div>
     );
 
-  const items = store.list();
+  const blocks = store.blocks();
   const busy = !!info?.busy;
-  const last = items[items.length - 1];
+  const last = store.last();
   const streaming = last && last.status === "inProgress";
   const pickable = models.filter((m) => m.hasKey || m.id === info?.model);
   const title = info ? info.name || baseName(info.cwd) : "New conversation";
@@ -624,17 +644,17 @@ export default function App() {
           onScroll={onScroll}
           onWheel={(e) => e.deltaY < 0 && unfollow()}
           onTouchStart={() => (touching.current = true)}
-          onTouchEnd={() => ((touching.current = false), settle())}
-          onTouchCancel={() => ((touching.current = false), settle())}
+          onTouchEnd={endTouch}
+          onTouchCancel={endTouch}
           className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain"
           style={{ WebkitOverflowScrolling: "touch", overflowAnchor: "none" }}
         >
-          <div ref={bodyRef} className="mx-auto flex w-full max-w-[820px] flex-col gap-3 px-4 pt-4 pb-6">
+          <div ref={bodyRef} className="transcript mx-auto flex w-full max-w-[820px] flex-col gap-3 px-4 pt-4 pb-6">
             {!info && (
               <div className="py-16 text-center text-[14px] text-ink-3">{live ? "Waiting for the terminal session…" : "Pick a conversation, or write below to start one."}</div>
             )}
-            {items.map((it) => (
-              <ItemView key={it.id} it={it} />
+            {blocks.map((b, j) => (
+              <Block key={j} items={b} />
             ))}
             {busy && !streaming && <Loading label="Working" since={busySince} />}
           </div>

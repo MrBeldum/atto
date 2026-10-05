@@ -25,8 +25,21 @@ export function nextFollow(follow: boolean, lastTop: number, top: number, height
 // the view. tops and heights are the items' offsets in the transcript.
 // -1 when there are none.
 export function anchorIndex(tops: number[], heights: number[], top: number): number {
-  for (let i = 0; i < tops.length; i++) if (tops[i] + heights[i] > top) return i;
-  return tops.length - 1;
+  return firstBelow(tops.length, (i) => tops[i] + heights[i], top);
+}
+
+// firstBelow is anchorIndex for n stacked items given by bottom(i), which
+// grows with i: a binary search, so a long transcript costs a few reads
+// of the layout per scroll event, not one per item.
+export function firstBelow(n: number, bottom: (i: number) => number, top: number): number {
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (bottom(mid) > top) hi = mid;
+    else lo = mid + 1;
+  }
+  return hi;
 }
 
 // anchorShift is how far to scroll so the anchor stays where it was: the

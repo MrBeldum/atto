@@ -55,14 +55,21 @@ export class Client {
   // reconnects by itself, with Last-Event-ID, while the server is away;
   // when it gives up (an error status), the token is checked: a revoked
   // one (/remote off or restarted) ends in onUnauthorized, else the
-  // stream reopens where it left off.
+  // stream reopens where it left off, waiting longer each time it fails.
+  // Events at or before the last one seen are skipped: a resume never
+  // applies a delta twice.
   follow(from: number, on: (n: Notification) => void, onState: (open: boolean) => void) {
     this.close();
     this.last = from;
+    this.on = on;
+    this.onState = onState;
     const url = "/events?token=" + encodeURIComponent(this.token) + (from ? "&lastEventId=" + from : "");
     const es = new EventSource(url);
     this.es = es;
-    es.onopen = () => onState(true);
+    es.onopen = () => {
+      this.delay = 1000;
+      onState(true);
+    };
     es.onerror = () => {
       onState(false);
       if (es.readyState !== EventSource.CLOSED || this.es !== es) return;
@@ -73,21 +80,41 @@ export class Client {
           () => this.es === es && this.follow(this.last, on, onState),
           (err) => !(err instanceof Unauthorized) && es.onerror?.(new Event("error")),
         );
-      }, 2000);
+      }, this.delay);
+      this.delay = Math.min(this.delay * 2, 30000);
     };
     es.onmessage = (e) => {
-      const id = Number(e.lastEventId);
-      if (id) this.last = id;
+      let n: Notification;
       try {
-        on(JSON.parse(e.data));
+        n = JSON.parse(e.data);
       } catch {
-        /* not ours */
+        return; // not ours
       }
+      // events/reset has no ID of its own (lastEventId is then the one
+      // before it): never skipped.
+      if (n.method !== "events/reset") {
+        const id = Number(e.lastEventId);
+        if (id && id <= this.last) return; // seen
+        if (id) this.last = id;
+      }
+      on(n);
     };
   }
 
+  // wake reopens the stream after the page was hidden for a while (a
+  // phone asleep): a connection the OS dropped may never say so.
+  wake(hiddenFor: number) {
+    const es = this.es;
+    if (!es || !this.on || !this.onState) return;
+    if (es.readyState === EventSource.OPEN && hiddenFor < 20000) return;
+    this.follow(this.last, this.on, this.onState);
+  }
+
   private last = 0;
+  private delay = 1000;
   private retry: ReturnType<typeof setTimeout> | undefined;
+  private on: ((n: Notification) => void) | null = null;
+  private onState: ((open: boolean) => void) | null = null;
 
   close() {
     clearTimeout(this.retry);

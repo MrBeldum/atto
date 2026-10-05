@@ -138,6 +138,19 @@ body {
   overscroll-behavior: none;
 }
 
+/* The transcript's items: those off screen skip layout and paint, so a
+   delta to the last of thousands lays out one item, not all of them (the
+   view keeps its anchor as their real heights arrive, see App.tsx). The
+   containment clips paint to the box: padding, cancelled by the margin,
+   leaves room for hover backgrounds and shadows that reach past it. */
+.transcript > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+  box-sizing: content-box;
+  padding: 6px 10px;
+  margin: -6px -10px;
+}
+
 /* Text the agent writes */
 .prose-atto {
   font-size: 15px;
