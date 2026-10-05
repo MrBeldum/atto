@@ -113,3 +113,22 @@ func TestSameDir(t *testing.T) {
 		t.Fatalf("case-insensitive only on Windows, got %v", got)
 	}
 }
+
+// A write after Close (an extension's session_end, say) still lands in the
+// file but leaves no handle open: Windows can't remove an open file.
+func TestWriteAfterCloseKeepsNoHandle(t *testing.T) {
+	t.Setenv("ATTO_DIR", t.TempDir())
+	w := New(t.TempDir())
+	w.Append(Entry{Type: TypeName, Name: "a"})
+	w.Close()
+	w.Append(Entry{Type: TypeName, Name: "b"})
+	if w.f != nil {
+		t.Fatal("a write after Close left the file open")
+	}
+	if _, entries, err := Load(w.Path); err != nil || len(entries) != 2 || entries[1].Name != "b" {
+		t.Fatalf("entries %+v, %v", entries, err)
+	}
+	if err := os.Remove(w.Path); err != nil {
+		t.Fatal(err)
+	}
+}

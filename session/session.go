@@ -194,6 +194,7 @@ type Writer struct {
 	hasLeaf bool   // leaf is known; else read from the file on open
 	f       *os.File
 	err     error
+	closed  bool // Close ran: later writes open the file, write and close it again
 	// readOnly, when set, is why nothing is written (see lock.go).
 	readOnly string
 }
@@ -355,7 +356,12 @@ func (w *Writer) appendLocked(e Entry, parent *string) {
 	if parent != nil {
 		e.Parent, e.FromID = *parent, w.leaf
 	}
-	if err := w.write(e); err != nil {
+	err := w.write(e)
+	if w.closed { // a late write (an extension's session_end, say) keeps no handle open
+		w.f.Close()
+		w.f = nil
+	}
+	if err != nil {
 		if w.err == nil {
 			w.err = err
 		}
@@ -379,6 +385,7 @@ func (w *Writer) Close() {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.closed = true
 	if w.f != nil {
 		w.f.Close()
 		w.f = nil

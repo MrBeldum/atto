@@ -125,7 +125,6 @@ func (s *Server) Close() {
 			t.cancel()
 		}
 		t.mu.Unlock()
-		t.sess.Close()
 		if t.hooks != nil { // threads end together, so one slow hook costs little
 			ending.Add(1)
 			go func() {
@@ -150,6 +149,10 @@ func (s *Server) Close() {
 		}
 	}
 	ending.Wait()
+	// Last: SessionEnd hooks and extensions may still write to the session.
+	for _, t := range s.threads {
+		t.sess.Close()
+	}
 }
 
 func (t *thread) info() ThreadInfo {
