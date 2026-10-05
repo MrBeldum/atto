@@ -10,6 +10,7 @@ import (
 
 	"atto/app"
 	"atto/provider"
+	"atto/server"
 )
 
 const usage = `atto — a terminal coding harness
@@ -21,6 +22,8 @@ usage:
   atto models [refresh]             list available models
   atto auth set <provider>          store an API key
   atto history grep|show ...        search a session transcript
+  atto serve [-listen addr]         JSON-RPC over HTTP + SSE, with a web client
+  atto app-server                   JSON-RPC over stdio (JSON lines)
 
 flags:
 `
@@ -31,6 +34,14 @@ func main() {
 			"history": app.RunHistory,
 			"auth":    app.RunAuth,
 			"models":  app.RunModels,
+			"serve": func(args []string, out io.Writer) error {
+				provider.UserAgent = "atto/" + app.Version
+				return server.RunHTTP(app.Version, args, out)
+			},
+			"app-server": func([]string, io.Writer) error {
+				provider.UserAgent = "atto/" + app.Version
+				return server.RunStdio(app.Version)
+			},
 		}[os.Args[1]]
 		if sub != nil {
 			if err := sub(os.Args[2:], os.Stdout); err != nil {
