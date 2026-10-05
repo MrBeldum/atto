@@ -90,6 +90,10 @@ type Settings struct {
 	// pi: "tree" (default, the session tree), "fork" (pick a message to
 	// fork a new session from) or "none".
 	DoubleEscapeAction string `json:"doubleEscapeAction,omitempty"`
+	// Mouse: false leaves the mouse to the terminal in fullscreen mode, so
+	// its own selection works without a modifier key; atto then scrolls
+	// with PageUp/PageDown only. ATTO_NO_MOUSE=1 does the same.
+	Mouse *bool `json:"mouse,omitempty"`
 }
 
 // HookMatcher selects hooks by tool name (regexp; "" or "*" match all).

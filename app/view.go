@@ -122,6 +122,25 @@ func (e *expander) toggle() {
 	}
 }
 
+// clickable records, at render time, which lines of a block toggle it: its
+// header and its disclosure line, and only when there is something to
+// expand or collapse. A click anywhere else in the block (to start a
+// selection, say) leaves it alone.
+type clickable struct {
+	more  bool // something to expand or collapse
+	lines int  // lines rendered
+	foot  bool // the last line is a disclosure line
+}
+
+func (c *clickable) clicks(more bool, out []string, foot bool) []string {
+	c.more, c.lines, c.foot = more, len(out), foot
+	return out
+}
+
+func (c clickable) hit(line int) bool {
+	return c.more && (line == 0 || c.foot && line == c.lines-1)
+}
+
 // gapped components forward clicks past the leading blank line.
 func (g gap) Click(line int) bool {
 	if c, ok := g.Component.(tui.Clickable); ok && line > 0 {
@@ -134,6 +153,7 @@ func (g gap) Click(line int) bool {
 // expands on click.
 type thinkingBlock struct {
 	expander
+	clickable
 	text  strings.Builder
 	start time.Time
 	dur   time.Duration
@@ -147,8 +167,8 @@ func (t *thinkingBlock) finish() {
 	}
 }
 
-func (t *thinkingBlock) Click(int) bool {
-	if strings.TrimSpace(t.text.String()) == "" {
+func (t *thinkingBlock) Click(line int) bool {
+	if !t.hit(line) {
 		return false
 	}
 	t.toggle()
@@ -156,7 +176,9 @@ func (t *thinkingBlock) Click(int) bool {
 }
 
 func (t *thinkingBlock) Render(width int) []string {
-	body := tui.Wrap(strings.TrimSpace(t.text.String()), max(1, width-4))
+	text := strings.TrimSpace(t.text.String())
+	has := text != "" // Wrap("") is one empty line
+	body := tui.Wrap(text, max(1, width-4))
 	style := func(s string) string { return tui.Dim(tui.Italic(s)) }
 	expanded := t.expanded()
 	if !t.done {
@@ -176,26 +198,27 @@ func (t *thinkingBlock) Render(width int) []string {
 		for _, l := range body {
 			out = append(out, "    "+style(l))
 		}
-		return out
+		return t.clicks(hidden > 0 || expanded, out, false)
 	}
 	head := style(fmt.Sprintf("  ∴ Thought for %s", tui.FormatDuration(t.dur)))
 	if !expanded {
-		if len(body) > 0 {
+		if has {
 			head += tui.Dim(" · click to expand")
 		}
-		return []string{tui.Truncate(head, width, "…")}
+		return t.clicks(has, []string{tui.Truncate(head, width, "…")}, false)
 	}
 	out := []string{head}
 	for _, l := range body {
 		out = append(out, "    "+style(l))
 	}
-	return append(out, disclosure(true, 0, ""))
+	return t.clicks(has, append(out, disclosure(true, 0, "")), true)
 }
 
 // toolBlock shows a bash call: the model's description, the command, the
 // last few output lines and the outcome. Click expands the full output.
 type toolBlock struct {
 	expander
+	clickable
 	args    agent.BashArgs
 	timeout time.Duration
 	start   time.Time
@@ -215,7 +238,10 @@ func (b *toolBlock) append(s string) {
 	}
 }
 
-func (b *toolBlock) Click(int) bool {
+func (b *toolBlock) Click(line int) bool {
+	if !b.hit(line) {
+		return false
+	}
 	b.toggle()
 	return true
 }
@@ -324,12 +350,14 @@ func (b *toolBlock) Render(width int) []string {
 	case collapsible:
 		out = append(out, tui.Dim("    + Show details"))
 	}
-	return out
+	// Every collapsible state ends with its disclosure line.
+	return b.clicks(collapsible, out, collapsible)
 }
 
 // compactBlock reports a compaction; the notes expand on click.
 type compactBlock struct {
 	expander
+	clickable
 	auto    bool
 	running bool
 	notes   strings.Builder
@@ -338,8 +366,8 @@ type compactBlock struct {
 	elapsed time.Duration
 }
 
-func (c *compactBlock) Click(int) bool {
-	if c.running {
+func (c *compactBlock) Click(line int) bool {
+	if c.running || !c.hit(line) {
 		return false
 	}
 	c.toggle()
@@ -360,7 +388,7 @@ func (c *compactBlock) Render(width int) []string {
 		for _, l := range lines {
 			out = append(out, "    "+tui.Dim(l))
 		}
-		return out
+		return c.clicks(false, out, false)
 	}
 	head := tui.FG(6, "  ◇ ") + kind
 	if c.elapsed > 0 {
@@ -373,13 +401,13 @@ func (c *compactBlock) Render(width int) []string {
 		head += tui.Dim(fmt.Sprintf(" · %s tokens before", tui.FormatTokens(c.before)))
 	}
 	if !c.expanded() {
-		return []string{tui.Truncate(head+tui.Dim(" · click to view notes"), width, "…")}
+		return c.clicks(true, []string{tui.Truncate(head+tui.Dim(" · click to view notes"), width, "…")}, false)
 	}
 	out := []string{tui.Truncate(head, width, "…")}
 	for _, l := range tui.Markdown(c.notes.String(), max(1, width-4)) {
 		out = append(out, "    "+l)
 	}
-	return append(out, disclosure(true, 0, ""))
+	return c.clicks(true, append(out, disclosure(true, 0, "")), true)
 }
 
 // noticeBlock is a one-off status message from atto itself.

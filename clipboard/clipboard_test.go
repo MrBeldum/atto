@@ -211,3 +211,35 @@ func TestWriteText(t *testing.T) {
 		t.Fatalf("no tool: %v %q", err, f.ran)
 	}
 }
+
+func TestWritePrimary(t *testing.T) {
+	cases := []struct {
+		goos  string
+		env   map[string]string
+		tools []string
+		want  string // command run, "" for none
+	}{
+		{"linux", map[string]string{"WAYLAND_DISPLAY": "w"}, []string{"wl-copy"}, "wl-copy --primary"},
+		{"linux", map[string]string{"DISPLAY": ":0"}, []string{"xclip"}, "xclip -selection primary"},
+		{"freebsd", map[string]string{"DISPLAY": ":0"}, []string{"xsel"}, "xsel --primary --input"},
+		{"linux", nil, []string{"xclip"}, ""},
+		{"darwin", map[string]string{"DISPLAY": ":0"}, []string{"xclip"}, ""},
+	}
+	for _, c := range cases {
+		f := &fakeClipboard{env: c.env, tools: map[string]bool{}, outputs: map[string][]byte{}}
+		for _, tool := range c.tools {
+			f.tools[tool] = true
+			f.outputs[tool] = nil
+		}
+		err := f.clipboard(c.goos).WritePrimary("hi")
+		if c.want == "" {
+			if err != ErrNoCopyTool || len(f.ran) != 0 {
+				t.Errorf("%s %v: err %v ran %q", c.goos, c.env, err, f.ran)
+			}
+			continue
+		}
+		if err != nil || !slices.Equal(f.ran, []string{c.want}) || f.stdins[0] != "hi" {
+			t.Errorf("%s %v: err %v ran %q", c.goos, c.env, err, f.ran)
+		}
+	}
+}

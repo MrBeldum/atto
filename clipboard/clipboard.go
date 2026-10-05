@@ -118,6 +118,29 @@ func (c Clipboard) WriteText(text string) error {
 	return c.RunStdin(ctx, input, args[0], args[1:]...)
 }
 
+// WritePrimary puts text on the X11/Wayland PRIMARY selection, the one a
+// middle click pastes. Only Linux and the BSDs have it; elsewhere, or with
+// no tool, it returns ErrNoCopyTool.
+func (c Clipboard) WritePrimary(text string) error {
+	have := func(name string) bool { _, err := c.LookPath(name); return err == nil }
+	var args []string
+	switch {
+	case c.GOOS == "darwin" || c.GOOS == "windows":
+	case c.Getenv("WAYLAND_DISPLAY") != "" && have("wl-copy"):
+		args = []string{"wl-copy", "--primary"}
+	case c.Getenv("DISPLAY") != "" && have("xclip"):
+		args = []string{"xclip", "-selection", "primary"}
+	case c.Getenv("DISPLAY") != "" && have("xsel"):
+		args = []string{"xsel", "--primary", "--input"}
+	}
+	if args == nil {
+		return ErrNoCopyTool
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return c.RunStdin(ctx, text, args[0], args[1:]...)
+}
+
 // Output forms a clipboard command can produce.
 const (
 	outRaw    = iota // image bytes

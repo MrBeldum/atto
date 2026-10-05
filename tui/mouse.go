@@ -204,6 +204,9 @@ func (t *TUI) release(x, y int) {
 	}
 	ms := t.mouse
 	t.mouse.down, t.mouse.autoDir = false, 0
+	if ms.moved {
+		t.mouse.at = time.Time{} // the next press starts a new click series
+	}
 	if ms.count == 1 {
 		back := x == ms.px && y == ms.py // a drag that came back is nothing
 		if !ms.moved || back {

@@ -20,7 +20,7 @@ func TestExpanderOverridesDetails(t *testing.T) {
 	if len(b.Render(40)) < 3 {
 		t.Fatal("click should expand")
 	}
-	g.Click(3)
+	g.Click(4) // "Show less", the last line
 	if len(b.Render(40)) != 1 {
 		t.Fatal("second click should collapse")
 	}
@@ -30,7 +30,8 @@ func TestExpanderOverridesDetails(t *testing.T) {
 	if !b.expanded() {
 		t.Fatal("ctrl+t should expand")
 	}
-	g.Click(3)
+	b.Render(40) // clicks hit what was last drawn
+	g.Click(4)   // "Show less", the last line
 	if b.expanded() {
 		t.Fatal("click should collapse even with details on")
 	}
@@ -76,5 +77,61 @@ func TestDisplayLinesTrimsPadding(t *testing.T) {
 	}
 	if got := displayLines("  \r\n\r\n"); len(got) != 0 {
 		t.Fatalf("blank output has no lines: %q", got)
+	}
+}
+
+func TestClickTogglesOnlyHeaderAndDisclosure(t *testing.T) {
+	b := &toolBlock{expander: expander{d: &details{}}, done: true}
+	b.args.Description = "list"
+	b.args.Command = "ls"
+	b.append("1\n2\n3\n4\n5\n6\n")
+	out := b.Render(60) // header, $ ls, 3 output lines, "+ 3 lines"
+	if b.Click(1) || b.Click(2) || b.expanded() {
+		t.Fatal("a click on the command or the output toggled")
+	}
+	if !b.Click(len(out)-1) || !b.expanded() {
+		t.Fatal("the disclosure line expands")
+	}
+	out = b.Render(60)
+	if b.Click(3) || !b.expanded() {
+		t.Fatal("a click in the expanded output toggled")
+	}
+	if !b.Click(0) || b.expanded() {
+		t.Fatal("the header collapses")
+	}
+
+	// Nothing more to show: not clickable at all.
+	short := &toolBlock{expander: expander{d: &details{}}, done: true}
+	short.args.Command = "true"
+	short.append("ok\n")
+	short.Render(60)
+	if short.Click(0) {
+		t.Fatal("a block with nothing hidden toggled")
+	}
+
+	th := &thinkingBlock{expander: expander{d: &details{}}, done: true}
+	th.Render(60)
+	if th.Click(0) {
+		t.Fatal("empty thinking toggled")
+	}
+	th.text.WriteString("a\nb")
+	th.Render(60)
+	if !th.Click(0) {
+		t.Fatal("thinking header expands")
+	}
+	th.Render(60) // header, a, b, Show less
+	if th.Click(1) || !th.Click(3) || th.expanded() {
+		t.Fatal("thinking: only header and Show less toggle")
+	}
+
+	c := &compactBlock{expander: expander{d: &details{}}}
+	c.notes.WriteString("notes")
+	c.Render(60)
+	if !c.Click(0) {
+		t.Fatal("compaction header expands")
+	}
+	n := len(c.Render(60))
+	if c.Click(1) || !c.Click(n-1) {
+		t.Fatal("compaction: only header and Show less toggle")
 	}
 }
