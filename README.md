@@ -243,6 +243,15 @@ Everything lives in `~/.atto`. Set `ATTO_DIR` to move it.
 
 If text looks garbled, doubled or leaves fragments behind (seen with wide characters such as Korean in Windows Terminal and other ConPTY hosts), atto can repaint every visible row on each frame instead of only the changed ones. This is on by default on Windows. Set `ATTO_FULL_REPAINT=1` to force it on, or `ATTO_FULL_REPAINT=0` to force it off, on any OS.
 
+## Development
+
+```sh
+go install ./cmd/atto          # this machine
+scripts/deploy.sh win linux    # other machines over ssh, no GitHub involved
+```
+
+`scripts/deploy.sh` builds an edge binary of this checkout for each host's system and installs it where the install scripts would (`%LOCALAPPDATA%\Programs\atto` on Windows, `~/.local/bin` elsewhere), so `atto update` there keeps following edge. Its version ends in `.local`.
+
 ## License
 
 [MIT](LICENSE)
