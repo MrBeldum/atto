@@ -25,6 +25,7 @@ const openaiFixture = `{
  "gpt-5.1":{"id":"gpt-5.1","tool_call":true,"reasoning":true,"limit":{"context":400000,"output":128000},"provider":{"npm":"@ai-sdk/openai"}},
  "claude-x":{"id":"claude-x","tool_call":true,"reasoning":true,"limit":{"context":1000,"output":100},"provider":{"npm":"@ai-sdk/anthropic"}},
  "grok-4.7":{"id":"grok-4.7","tool_call":true,"reasoning":true,"limit":{"context":1000,"output":100},"provider":{"npm":"@ai-sdk/openai"}},
+ "muse-spark-1.3":{"id":"muse-spark-1.3","tool_call":true,"reasoning":true,"limit":{"context":1000,"output":100},"provider":{"npm":"@ai-sdk/openai"},"reasoning_options":[{"type":"effort","values":["none","minimal","low","medium","high","xhigh"]}]},
  "glm-5":{"id":"glm-5","tool_call":true,"reasoning":false,"limit":{"context":1000,"output":100}}
 }}}`
 
@@ -116,6 +117,12 @@ func TestZenGPTUsesResponses(t *testing.T) {
 	// Other models marked as OpenAI's (Grok, Muse Spark) speak Responses too.
 	if grok, ok := m.Find("opencode", "grok-4.7"); !ok || grok.API() != "openai-responses" {
 		t.Errorf("grok-4.7: %v %+v", ok, grok)
+	}
+	// Levels of a model atto has no rules for come from models.dev.
+	if muse, ok := m.Find("opencode", "muse-spark-1.3"); !ok || strings.Join(muse.Model.Levels(), ",") != "off,minimal,low,medium,high,xhigh" {
+		t.Errorf("muse levels: %v", muse.Model.Levels())
+	} else if v := muse.Model.EffortMap["off"]; v == nil || *v != "none" {
+		t.Errorf("muse off: %v", v)
 	}
 }
 

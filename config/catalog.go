@@ -100,6 +100,12 @@ type modelsDevModel struct {
 	Provider *struct {
 		NPM string `json:"npm"`
 	} `json:"provider"`
+	// ReasoningOptions lists the reasoning controls a model takes, e.g.
+	// {"type":"effort","values":["minimal","low","medium","high","xhigh"]}.
+	ReasoningOptions []struct {
+		Type   string   `json:"type"`
+		Values []string `json:"values"`
+	} `json:"reasoning_options"`
 	Cost *modelsDevCost `json:"cost"`
 }
 
@@ -299,6 +305,11 @@ func catalogModel(cp catalogProvider, id string, m modelsDevModel) (Model, bool)
 	}
 	if responses {
 		mod.Efforts, mod.EffortMap = responsesEfforts(id)
+		if mod.Efforts == nil {
+			// Not an OpenAI model atto knows the levels of (Muse Spark,
+			// Grok on OpenCode): the levels models.dev lists.
+			mod.Efforts, mod.EffortMap = listedEfforts(m)
+		}
 		return mod, true
 	}
 	// Default: OpenAI-style reasoning_effort. Reasoning models on OpenCode
@@ -358,6 +369,26 @@ var gptVersion = regexp.MustCompile(`^gpt-(\d+)(?:\.(\d+))?`)
 // "off"); 5.2 added xhigh; codex models never take "none"; pro models only
 // the top levels. Unknown models get nothing, so no reasoning field is sent.
 // Override per model with effortMap in models.json.
+// listedEfforts is the effort levels models.dev lists for a model, nil if
+// none. "none" becomes atto's "off", sent as "none".
+func listedEfforts(m modelsDevModel) ([]string, map[string]*string) {
+	for _, o := range m.ReasoningOptions {
+		if o.Type != "effort" || len(o.Values) == 0 {
+			continue
+		}
+		var levels []string
+		var effortMap map[string]*string
+		for _, v := range o.Values {
+			if v == "none" {
+				v, effortMap = "off", map[string]*string{"off": str("none")}
+			}
+			levels = append(levels, v)
+		}
+		return levels, effortMap
+	}
+	return nil, nil
+}
+
 func responsesEfforts(id string) ([]string, map[string]*string) {
 	if len(id) > 1 && id[0] == 'o' && id[1] >= '0' && id[1] <= '9' {
 		return []string{"low", "medium", "high"}, nil
