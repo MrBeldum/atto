@@ -30,6 +30,7 @@ func init() {
 		{"context", "[system]", "Show what fills the context and cache use", (*App).cmdContext},
 		{"reload", "", "Re-read AGENTS.md, skills, hooks, settings and models", (*App).cmdReload},
 		{"request", "", "Save the raw last request to a file", (*App).cmdRequest},
+		{"debug", "", "Save a heap profile and memory figures to ~/.atto/debug", (*App).cmdDebug},
 		{"login", "[provider]", "Sign in with an account or save an API key", (*App).cmdLogin},
 		{"logout", "[provider]", "Remove stored credentials", (*App).cmdLogout},
 		{"resume", "", "Resume a saved conversation", (*App).cmdResume},
