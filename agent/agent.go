@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/images"
 	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/session"
 	"github.com/sebastianrcnt/atto/shell"
@@ -255,12 +256,12 @@ func (a *Agent) LastRequest() []byte {
 // Breakdown sizes the parts of the context, in characters. Call only while
 // no turn is running.
 type Breakdown struct {
-	System, Tools, User, Notes, Assistant, Reasoning, ToolCalls, ToolResults int
-	Messages                                                                 int
+	System, Tools, User, Images, Notes, Assistant, Reasoning, ToolCalls, ToolResults int
+	Messages                                                                         int
 }
 
 func (b Breakdown) Total() int {
-	return b.System + b.Tools + b.User + b.Notes + b.Assistant + b.Reasoning + b.ToolCalls + b.ToolResults
+	return b.System + b.Tools + b.User + b.Images + b.Notes + b.Assistant + b.Reasoning + b.ToolCalls + b.ToolResults
 }
 
 func (a *Agent) Breakdown() Breakdown {
@@ -276,6 +277,7 @@ func (a *Agent) Breakdown() Breakdown {
 			} else {
 				b.User += len(m.Content)
 			}
+			b.Images += len(m.Images) * imageChars
 		case "assistant":
 			b.Assistant += len(m.Content)
 			b.Reasoning += len(m.ReasoningContent)
@@ -344,14 +346,17 @@ func (a *Agent) Restore(entries []session.Entry) {
 			if e.Message == nil {
 				continue
 			}
-			a.messages = append(a.messages, *e.Message)
+			a.messages = append(a.messages, withImageData(*e.Message))
 			if e.Usage != nil {
 				a.LastUsage, a.sinceUsage = *e.Usage, 0
 			} else {
 				a.sinceUsage += messageChars(*e.Message)
 			}
 		case session.TypeCompaction:
-			a.messages = append([]provider.Message(nil), e.Replacement...)
+			a.messages = nil
+			for _, m := range e.Replacement {
+				a.messages = append(a.messages, withImageData(m))
+			}
 			a.LastUsage = provider.Usage{}
 			a.sinceUsage = len(a.system)
 			for _, m := range a.messages {
@@ -361,8 +366,29 @@ func (a *Agent) Restore(entries []session.Entry) {
 	}
 }
 
+// withImageData loads the bytes of a restored message's images. An image
+// whose file is gone stays without data and is sent as a short note.
+func withImageData(m provider.Message) provider.Message {
+	if len(m.Images) == 0 {
+		return m
+	}
+	ims := make([]provider.Image, len(m.Images))
+	for i, im := range m.Images {
+		ims[i] = im
+		if loaded, err := images.Load(im); err == nil {
+			ims[i] = loaded
+		}
+	}
+	m.Images = ims
+	return m
+}
+
+// imageChars is the context an image is assumed to take, in characters:
+// codex estimates 7373 bytes for an image resized to fit 2048px.
+const imageChars = 7373
+
 func messageChars(m provider.Message) int {
-	n := len(m.Content) + len(m.ReasoningContent)
+	n := len(m.Content) + len(m.ReasoningContent) + len(m.Images)*imageChars
 	for _, tc := range m.ToolCalls {
 		n += len(tc.Function.Name) + len(tc.Function.Arguments)
 	}
@@ -414,6 +440,9 @@ func (a *Agent) request(extra ...provider.Message) (provider.Streamer, provider.
 	msgs = append(msgs, provider.Message{Role: "system", Content: a.system})
 	msgs = append(msgs, a.messages...)
 	msgs = append(msgs, extra...)
+	if !model.Model.Images() {
+		msgs = withoutImages(msgs, ImagesUnsupported)
+	}
 	return client, provider.Request{
 		SessionID: sessID,
 		Model:     model.Model.ID,
@@ -424,10 +453,56 @@ func (a *Agent) request(extra ...provider.Message) (provider.Streamer, provider.
 	}
 }
 
+// ImagesUnsupported replaces images in requests to a model without image
+// input (the history keeps them), as codex does.
+const ImagesUnsupported = "[image content omitted because you do not support image input]"
+
+// ImagesCompacted replaces images in the user messages kept by compaction.
+const ImagesCompacted = "[image omitted by compaction]"
+
+// withoutImages returns msgs with each image replaced by note. The caller's
+// messages are not modified.
+func withoutImages(msgs []provider.Message, note string) []provider.Message {
+	var out []provider.Message
+	for i, m := range msgs {
+		if len(m.Images) == 0 {
+			continue
+		}
+		if out == nil {
+			out = append([]provider.Message(nil), msgs...)
+		}
+		out[i] = stripImages(m, note)
+	}
+	if out == nil {
+		return msgs
+	}
+	return out
+}
+
+func stripImages(m provider.Message, note string) provider.Message {
+	notes := make([]string, len(m.Images))
+	for i := range notes {
+		notes[i] = note
+	}
+	if m.Content != "" {
+		m.Content += "\n"
+	}
+	m.Content += strings.Join(notes, "\n")
+	m.Images = nil
+	return m
+}
+
 // Run sends input and loops through tool calls until the model stops.
 // Compaction runs automatically before the turn and between tool calls
 // when the context passes AutoCompactLimit.
 func (a *Agent) Run(ctx context.Context, input string, emit func(any)) error {
+	return a.RunWithImages(ctx, input, nil, emit)
+}
+
+// RunWithImages is Run with images attached to the user message. Their
+// bytes must be loaded, and saved with images.Save for the session to
+// resume with them.
+func (a *Agent) RunWithImages(ctx context.Context, input string, imgs []provider.Image, emit func(any)) error {
 	if a.Hooks != nil {
 		o := a.Hooks.UserPromptSubmit(ctx, input)
 		emitHook(emit, "UserPromptSubmit", o)
@@ -445,7 +520,7 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(any)) error {
 			return err
 		}
 	}
-	a.appendMessage(provider.Message{Role: "user", Content: input}, session.Entry{})
+	a.appendMessage(provider.Message{Role: "user", Content: input, Images: imgs}, session.Entry{})
 	stopHookActive := false
 
 	for step := 1; ; step++ {
@@ -667,6 +742,11 @@ func (a *Agent) compact(ctx context.Context, emit func(any), auto bool) error {
 		m := a.messages[i]
 		if m.Role != "user" || strings.HasPrefix(m.Content, SummaryPrefix) {
 			continue
+		}
+		// Like codex, kept messages carry text only; each image becomes a
+		// note (the placeholder labels in the text still say what it was).
+		if len(m.Images) > 0 {
+			m = stripImages(m, ImagesCompacted)
 		}
 		if len(m.Content) > budget {
 			m.Content = m.Content[len(m.Content)-budget:] + "\n[truncated]"
