@@ -95,7 +95,7 @@ func BenchmarkRenderLongTranscript(b *testing.B) {
 }
 
 // BenchmarkRenderStreaming is BenchmarkRenderLongTranscript with the
-// model streaming thinking into a last block.
+// model streaming thinking into a last block, a token a frame.
 func BenchmarkRenderStreaming(b *testing.B) {
 	for _, m := range renderModes {
 		b.Run(m.name, func(b *testing.B) {
@@ -106,6 +106,9 @@ func BenchmarkRenderStreaming(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := range b.N {
+				if th.text.Len() > 16<<10 { // a new block now and then: a typical length
+					th.text.Reset()
+				}
 				th.text.WriteString("token ")
 				if i%50 == 49 {
 					th.text.WriteString("\n")
