@@ -28,6 +28,8 @@ func init() {
 		{"context", "[system]", "Show what fills the context and cache use", (*App).cmdContext},
 		{"request", "", "Save the raw last request to a file", (*App).cmdRequest},
 		{"resume", "", "Resume a saved conversation", (*App).cmdResume},
+		{"tree", "", "Go back to any point of the conversation (also esc esc)", (*App).cmdTree},
+		{"fork", "", "Start a new conversation from an earlier message", (*App).cmdFork},
 		{"name", "<name>", "Name this conversation", (*App).cmdName},
 		{"rename", "<name>", "Rename this conversation", (*App).cmdName},
 		{"archive", "", "Archive this conversation and start a new one", (*App).cmdArchive},

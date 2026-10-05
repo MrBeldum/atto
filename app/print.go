@@ -167,6 +167,7 @@ func RunPrint(o PrintOptions) error {
 			return err
 		}
 		sess, start = session.Resume(path, h), h.Time
+		sess.SetLeaf(session.Leaf(entries))
 	default:
 		sess, start = session.New(cwd), time.Now()
 	}
@@ -220,7 +221,7 @@ func RunPrint(o PrintOptions) error {
 			fmt.Fprintln(os.Stderr, n)
 		}
 	}
-	ag.Restore(entries)
+	ag.Restore(session.Active(entries))
 	if !o.NoSave {
 		ag.Record = sess.Append
 		sess.Append(session.Entry{Type: session.TypeModel, Provider: model.ProviderName, Model: model.Model.ID})

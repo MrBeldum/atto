@@ -107,6 +107,7 @@ atto -p -goal "make the tests pass" -goal-budget 200k
 | `Enter` | send; while the agent works, steer it after its current step |
 | `Tab` | queue a message for when the agent finishes |
 | `Esc` | interrupt, or send pending steers now |
+| `Esc` `Esc` | on an empty prompt: open the session tree to go back to an earlier message and edit it |
 | `Shift+Tab` | cycle reasoning effort |
 | `Ctrl+T` | expand all thinking and command output (or click a block) |
 | `Ctrl+C` | interrupt; clears the input when idle; quits when the input is empty |
@@ -126,6 +127,8 @@ Pastes over 1000 characters show as `[Pasted Content 1234 chars]` and are sent i
 | `/copy` | copy the last answer; works over SSH in terminals with OSC 52 |
 | `/context` | show what fills the context and how much is cached |
 | `/resume` | resume a saved session |
+| `/tree` | go back to any point of the session; earlier branches are kept |
+| `/fork` | start a new session from an earlier message |
 | `/name` | name the session |
 | `/archive` | archive the session and start a new one |
 | `/clear` | start a new session |
@@ -149,7 +152,7 @@ Pastes over 1000 characters show as `[Pasted Content 1234 chars]` and are sent i
 - The system prompt and the tool schema don't change during a session.
 - Compaction keeps the latest user messages plus a summary, the way codex does it. Run `/context` to see the cache hit rate.
 
-**Sessions** are JSONL files under `~/.atto/sessions/`.
+**Sessions** are JSONL files under `~/.atto/sessions/`. As in pi, entries form a tree: going back with `/tree` starts a new branch in the same file and keeps the old one. `atto history grep` searches every branch and marks entries on other branches; `-active` limits it to the current one.
 
 **Hooks** use the same format as Claude Code: `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop`, `PreCompact` and `SessionStart`.
 
@@ -175,7 +178,7 @@ Everything lives in `~/.atto`. Set `ATTO_DIR` to move it.
 
 | Path | Contents |
 | --- | --- |
-| `settings.json` | default model and effort, renderer, status line, hooks, `updateCheck` |
+| `settings.json` | default model and effort, renderer, status line, hooks, `updateCheck`, `doubleEscapeAction` (`tree`, `fork` or `none`) |
 | `models.json` | your providers and models |
 | `auth.json` | keys and logins (mode 0600) |
 | `sessions/` | saved sessions |

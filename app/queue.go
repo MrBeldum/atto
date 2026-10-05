@@ -84,6 +84,11 @@ func (a *App) afterRun(err error) {
 		a.notice("Worked for %s • %s", took, time.Now().Format("3:04 PM"))
 	}
 	a.runKind = ""
+	if id := a.pendingTree; id != "" {
+		a.pendingTree = ""
+		a.navigateTree(id)
+		return
+	}
 	if p := a.pendingResume; p != "" {
 		a.pendingResume = ""
 		a.agent.DrainSteers()

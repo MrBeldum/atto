@@ -3,9 +3,15 @@
 //
 // The first line is a "session" header. Every later line is one Entry,
 // written and flushed as it happens, so a crash loses at most the line
-// being written. Replaying the entries in order reconstructs the
-// conversation: a "compaction" entry replaces all earlier messages with the
-// handoff notes.
+// being written.
+//
+// Entries form a tree, as in pi: each has an id and the id of its parent
+// (see tree.go). The last entry in the file is the active leaf, and the
+// conversation is the path from the root to it. Going back to an earlier
+// point appends a "branch" entry whose parent is that point, so the file
+// stays append-only and every branch is kept. Replaying the path in order
+// reconstructs the conversation: a "compaction" entry replaces all earlier
+// messages with the handoff notes.
 package session
 
 import (
@@ -37,6 +43,8 @@ const (
 	TypeEffort     = "effort"
 	TypeName       = "name"
 	TypeGoal       = "goal"
+	TypeLabel      = "label"  // a bookmark on another entry (/tree shift+l)
+	TypeBranch     = "branch" // moves the active leaf to its parent (/tree)
 )
 
 // Entry is one line of a session file. Fields are used according to Type.
@@ -44,10 +52,16 @@ type Entry struct {
 	Type string    `json:"type"`
 	Time time.Time `json:"time"`
 
+	// ID is the session ID on the header and the entry's own ID on every
+	// other line. Parent is the entry this one follows ("" for a root).
+	// Files written before entries had IDs are linked on Load.
+	ID     string `json:"id,omitempty"`
+	Parent string `json:"parentId,omitempty"`
+
 	// session header
-	Version int    `json:"version,omitempty"`
-	ID      string `json:"id,omitempty"`
-	Cwd     string `json:"cwd,omitempty"`
+	Version       int    `json:"version,omitempty"`
+	Cwd           string `json:"cwd,omitempty"`
+	ParentSession string `json:"parentSession,omitempty"` // path of the session this was forked from
 
 	// message
 	Message    *provider.Message `json:"message,omitempty"`
@@ -71,6 +85,13 @@ type Entry struct {
 
 	// goal: a snapshot of the session's goal (null when cleared)
 	Goal json.RawMessage `json:"goal,omitempty"`
+
+	// label: Label names TargetID ("" clears it)
+	TargetID string `json:"targetId,omitempty"`
+	Label    string `json:"label,omitempty"`
+
+	// branch: the leaf the user navigated away from
+	FromID string `json:"fromId,omitempty"`
 }
 
 // ToolMeta records how a tool call went, for redisplay on resume.
@@ -90,6 +111,9 @@ type Writer struct {
 	Path    string
 	cwd     string
 	created time.Time
+	parent  string // ParentSession for the header
+	leaf    string // ID of the last entry: the parent of the next one
+	hasLeaf bool   // leaf is known; else read from the file on open
 	f       *os.File
 	err     error
 }
@@ -108,9 +132,28 @@ func New(cwd string) *Writer {
 	return &Writer{ID: id, Path: path, cwd: cwd, created: now}
 }
 
-// Resume returns a writer that appends to an existing session file.
+// Resume returns a writer that appends to an existing session file. New
+// entries continue from its last entry; SetLeaf(Leaf(entries)) saves
+// reading the file again to find it.
 func Resume(path string, h Entry) *Writer {
 	return &Writer{ID: h.ID, Path: path, cwd: h.Cwd, created: h.Time}
+}
+
+// SetLeaf sets the entry the next appended entry follows.
+func (w *Writer) SetLeaf(id string) {
+	w.mu.Lock()
+	w.leaf, w.hasLeaf = id, true
+	w.mu.Unlock()
+}
+
+// Leaf returns the ID of the last entry written (the active leaf).
+func (w *Writer) Leaf() string {
+	if w == nil {
+		return ""
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.leaf
 }
 
 func (w *Writer) open() error {
@@ -141,9 +184,14 @@ func (w *Writer) open() error {
 				_, _ = f.Write([]byte{'\n'})
 			}
 		}
+		if !w.hasLeaf {
+			if _, entries, err := Load(w.Path); err == nil {
+				w.leaf, w.hasLeaf = Leaf(entries), true
+			}
+		}
 	}
 	if statErr != nil { // new file: write the header
-		return w.write(Entry{Type: TypeSession, Time: w.created, Version: Version, ID: w.ID, Cwd: w.cwd})
+		return w.write(Entry{Type: TypeSession, Time: w.created, Version: Version, ID: w.ID, Cwd: w.cwd, ParentSession: w.parent})
 	}
 	return nil
 }
@@ -157,23 +205,49 @@ func (w *Writer) write(e Entry) error {
 	return err
 }
 
-// Append writes e, stamping the time if unset. Errors are sticky and
-// reported by Err; persistence never interrupts the conversation.
+// Append writes e as a child of the active leaf, which it becomes. It
+// stamps the time if unset. Errors are sticky and reported by Err;
+// persistence never interrupts the conversation.
 func (w *Writer) Append(e Entry) {
 	if w == nil {
 		return
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.appendLocked(e, nil)
+}
+
+// Branch moves the active leaf to the entry with ID to ("" for before the
+// first entry), recording a "branch" entry there so the move survives a
+// resume. Later entries continue from it; the old branch stays in the file.
+func (w *Writer) Branch(to string) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.appendLocked(Entry{Type: TypeBranch}, &to)
+}
+
+// appendLocked writes e as a child of parent, or of the leaf if nil.
+func (w *Writer) appendLocked(e Entry, parent *string) {
 	if e.Time.IsZero() {
 		e.Time = time.Now()
 	}
-	if err := w.open(); err != nil {
+	if err := w.open(); err != nil { // finds the leaf of a resumed file
 		return
 	}
-	if err := w.write(e); err != nil && w.err == nil {
-		w.err = err
+	e.ID, e.Parent = newEntryID(), w.leaf
+	if parent != nil {
+		e.Parent, e.FromID = *parent, w.leaf
 	}
+	if err := w.write(e); err != nil {
+		if w.err == nil {
+			w.err = err
+		}
+		return
+	}
+	w.leaf, w.hasLeaf = e.ID, true
 }
 
 func (w *Writer) Err() error {
@@ -223,6 +297,7 @@ func Load(path string) (Entry, []Entry, error) {
 		}
 		entries = append(entries, e)
 	}
+	link(entries)
 	return header, entries, sc.Err()
 }
 
@@ -253,7 +328,7 @@ func List(cwd string, archived bool) ([]Summary, error) {
 			return nil
 		}
 		s, err := summarize(path)
-		if err != nil || (cwd != "" && s.Cwd != cwd) || s.Messages == 0 {
+		if err != nil || (cwd != "" && s.Cwd != cwd) || s.Preview == "" {
 			return nil
 		}
 		s.Archived = archived
@@ -278,14 +353,22 @@ func summarize(path string) (Summary, error) {
 		if e.Type == TypeName {
 			s.Name = e.Name
 		}
+		// A preview from any branch keeps a session that went back to its
+		// start listed; the active branch's first message replaces it.
+		if e.Type == TypeMessage && e.Message != nil && e.Message.Role == "user" && s.Preview == "" {
+			s.Preview = e.Message.Content
+		}
+	}
+	first := true
+	for _, e := range Active(entries) { // the conversation on the active branch
 		if e.Type != TypeMessage || e.Message == nil {
 			continue
 		}
 		switch e.Message.Role {
 		case "user":
 			s.Messages++
-			if s.Preview == "" {
-				s.Preview = e.Message.Content
+			if first {
+				s.Preview, first = e.Message.Content, false
 			}
 		case "assistant":
 			s.Messages++

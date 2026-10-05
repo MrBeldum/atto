@@ -35,10 +35,13 @@ type Item struct {
 	N     int
 	Label string // e.g. "user", "assistant", "tool: Run tests", "compaction"
 	Text  string
+	// OffBranch marks entries that are not on the active branch: the user
+	// went back to an earlier point (/tree) and continued from there.
+	OffBranch bool
 }
 
-// Items flattens entries into searchable text. Assistant tool calls are
-// rendered as "$ command" lines so commands can be found too.
+// Items flattens entries into searchable text, on every branch. Assistant
+// tool calls are rendered as "$ command" lines so commands can be found too.
 func Items(entries []Entry) []Item {
 	var out []Item
 	calls := map[string]string{} // tool call ID -> description
@@ -77,6 +80,10 @@ func Items(entries []Entry) []Item {
 				out = append(out, Item{N: n, Label: label, Text: m.Content})
 			}
 		}
+	}
+	active := OnActivePath(entries)
+	for i := range out {
+		out[i].OffBranch = !active[out[i].N-1]
 	}
 	return out
 }

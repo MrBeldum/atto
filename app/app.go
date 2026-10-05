@@ -86,6 +86,11 @@ type App struct {
 	sessName            string
 	// pendingResume is a session to switch to once the running turn stops.
 	pendingResume string
+	// pendingTree is a /tree entry to move to once the running turn stops.
+	pendingTree string
+	// esc detects Esc twice on an empty prompt; escAction is what it opens.
+	esc       doubleEsc
+	escAction string
 
 	// Inbox: events waiting for delivery, and counts for the status line.
 	pendingEvents        []events.Event
@@ -164,6 +169,7 @@ func Run(opts Options) error {
 	if a.hooks = hooks.New(hookCfg, cwd); a.hooks != nil {
 		a.agent.Hooks = a.hooks
 	}
+	a.escAction = settings.DoubleEscapeAction
 	a.build()
 	a.newSession()
 	a.sessionStartHook("startup")
@@ -295,7 +301,7 @@ func (a *App) addHeader() {
 	a.ui.Body.Add(tui.Func(func(width int) []string {
 		return []string{
 			tui.Truncate(tui.Bold("atto")+tui.Dim(" "+Version+"  ·  "+a.model().Model.DisplayName()), width, "…"),
-			tui.Truncate(tui.Dim("/ commands · enter steer · tab queue · shift+tab effort · ctrl+t details · esc interrupt"), width, "…"),
+			tui.Truncate(tui.Dim("/ commands · enter steer · tab queue · shift+tab effort · ctrl+t details · esc interrupt · esc esc go back"), width, "…"),
 		}
 	}))
 }
@@ -319,7 +325,11 @@ func (a *App) onInput(data string) bool {
 		return false // the focused modal handles everything
 	}
 	if a.suggestionKey(tui.Key(data)) {
+		a.esc.reset() // an Esc that closed the "/" list is not a first Esc
 		return true
+	}
+	if tui.Key(data) != "escape" {
+		a.esc.reset()
 	}
 	switch tui.Key(data) {
 	case "shift+tab":
@@ -331,12 +341,14 @@ func (a *App) onInput(data string) bool {
 		return true
 	case "escape":
 		if a.busy {
+			a.esc.reset()
 			if len(a.pendingSteers) > 0 {
 				a.sendSteersAfterInterrupt = true
 			}
 			a.cancel()
 			return true
 		}
+		return a.onEscape()
 	case "ctrl+c":
 		switch {
 		case a.busy:
