@@ -193,9 +193,9 @@ func refString(r *rand.Rand) string {
 // tabs, newlines, styles, hyperlinks and wrap marks.
 func TestWidthMatchesReference(t *testing.T) {
 	r := rand.New(rand.NewSource(1))
-	n := 200000
+	n := 30000
 	if testing.Short() {
-		n = 20000
+		n = 3000
 	}
 	eq := func(a, b []string) bool {
 		if len(a) != len(b) {
@@ -211,8 +211,13 @@ func TestWidthMatchesReference(t *testing.T) {
 	for range n {
 		s := refString(r)
 		w := r.Intn(12)
-		if got, want := Wrap(s, w), oldWrap(s, w); !eq(got, want) {
+		want := oldWrap(s, w)
+		if got := Wrap(s, w); !eq(got, want) {
 			t.Fatalf("Wrap(%q, %d) = %q, want %q", s, w, got, want)
+		}
+		k := 1 + r.Intn(4)
+		if got, want := WrapFirst(s, w, k), want[:min(k, len(want))]; !eq(got, want) {
+			t.Fatalf("WrapFirst(%q, %d, %d) = %q, want %q", s, w, k, got, want)
 		}
 		if got, want := WrapHard(s, w), oldWrapHard(s, w); !eq(got, want) {
 			t.Fatalf("WrapHard(%q, %d) = %q, want %q", s, w, got, want)

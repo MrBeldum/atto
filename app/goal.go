@@ -62,9 +62,16 @@ const goalUsage = "Usage: /goal [<objective>|clear|edit|pause|resume]"
 
 // infoBlock is codex's info message: a title after a bullet, and a dim hint
 // under it.
-type infoBlock struct{ title, hint string }
+type infoBlock struct {
+	title, hint string
+	cache       tui.RenderCache[[2]string]
+}
 
 func (b *infoBlock) Render(width int) []string {
+	return b.cache.Render(width, [2]string{b.title, b.hint}, func() []string { return b.render(width) })
+}
+
+func (b *infoBlock) render(width int) []string {
 	out := []string{tui.Truncate("  "+tui.Dim("• ")+b.title, width, "…")}
 	if b.hint != "" {
 		for _, l := range tui.Wrap(b.hint, max(1, width-4)) {

@@ -279,28 +279,44 @@ func StripWrapMarks(s string) string {
 // words longer than width are hard-broken, and styling active at a break is
 // carried onto the next line. Continuation lines start with a soft-wrap
 // mark (see wrapSpace).
-func Wrap(text string, width int) []string {
-	w := wrapper{width: max(1, width)}
-	w.buf = make([]byte, 0, len(text)+len(text)/4+16)
-	for {
+func Wrap(text string, width int) []string { return wrapText(text, width, 0) }
+
+// WrapFirst returns the first n lines of Wrap(text, width), and stops
+// wrapping there: a cheap way to tell whether text fits in n lines.
+func WrapFirst(text string, width, n int) []string { return wrapText(text, width, max(1, n)) }
+
+// wrapText wraps text, keeping only the first limit lines unless limit is 0.
+func wrapText(text string, width, limit int) []string {
+	w := wrapper{width: max(1, width), limit: limit}
+	size := len(text)
+	if limit > 0 {
+		size = min(size, limit*(w.width+16))
+	}
+	w.buf = make([]byte, 0, size+size/4+16)
+	for !w.full() {
 		i := strings.IndexByte(text, '\n')
 		if i < 0 {
 			w.line(text)
-			return w.lines()
+			break
 		}
 		w.line(text[:i])
 		text = text[i+1:]
 	}
+	return w.lines()
 }
 
 // wrapper builds all the lines of a Wrap in one buffer, so wrapping
 // allocates a few times per call, not per cell or per line.
 type wrapper struct {
 	width int
+	limit int // lines wanted, or 0 for all
 	st    sgrState
 	buf   []byte
 	cuts  []int // where each finished line ends in buf
 }
+
+// full reports whether the lines wanted are done.
+func (w *wrapper) full() bool { return w.limit > 0 && len(w.cuts) >= w.limit }
 
 // lines returns the finished lines, substrings of one string.
 func (w *wrapper) lines() []string {
@@ -358,7 +374,9 @@ func (w *wrapper) line(line string) {
 			tokW += n.width
 		}
 		if !sp && curW+tokW > width && curW > 0 {
-			w.cut(from, true)
+			if w.cut(from, true); w.full() {
+				return
+			}
 			start(wrapSpace) // tokens alternate, so a space run came before
 		}
 		for {
@@ -372,7 +390,9 @@ func (w *wrapper) line(line string) {
 				}
 			} else {
 				if curW+c.width > width && curW > 0 {
-					w.cut(from, true)
+					if w.cut(from, true); w.full() {
+						return
+					}
 					start(wrapJoin)
 				}
 				st.feed(c.esc)

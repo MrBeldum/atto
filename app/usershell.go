@@ -167,6 +167,15 @@ type shellBlock struct {
 	truncated bool
 	full      string
 	queued    bool // finished during a turn: the model gets it when it ends
+	cache     tui.RenderCache[shellKey]
+}
+
+// shellKey is what a shell block's lines depend on, but for the clock.
+type shellKey struct {
+	cmd, output, full                                string
+	dropped, exit                                    int
+	dur                                              time.Duration
+	exclude, done, canceled, truncated, queued, open bool
 }
 
 func (b *shellBlock) Click(line int) bool {
@@ -189,13 +198,30 @@ func (b *shellBlock) status() string {
 	return tui.FG(2, "✓") + " " + tui.FormatDuration(b.dur)
 }
 
+// Render caches the block; while the command runs, the header line, which
+// shows the time, is made again on every call.
 func (b *shellBlock) Render(width int) []string {
-	cmd := strings.TrimSpace(b.cmd)
-	first := cmd
+	key := shellKey{cmd: b.cmd, output: b.output.String(), full: b.full, dropped: b.dropped, exit: b.exit, dur: b.dur,
+		exclude: b.exclude, done: b.done, canceled: b.canceled, truncated: b.truncated, queued: b.queued, open: b.expanded()}
+	out := b.cache.Render(width, key, func() []string { return b.render(width) })
+	if !b.done {
+		out = append([]string{b.head(width)}, out[1:]...)
+	}
+	return out
+}
+
+// first is the command's first line.
+func (b *shellBlock) first() string {
+	first := strings.TrimSpace(b.cmd)
 	if i := strings.IndexByte(first, '\n'); i >= 0 {
 		first = first[:i] + " …"
 	}
-	head := tui.FG(5, tui.Bold("!")) + " " + tui.Bold(first)
+	return first
+}
+
+// head is the block's first line: the command and its status.
+func (b *shellBlock) head(width int) string {
+	head := tui.FG(5, tui.Bold("!")) + " " + tui.Bold(b.first())
 	note := ""
 	switch {
 	case b.exclude:
@@ -204,10 +230,16 @@ func (b *shellBlock) Render(width int) []string {
 		note = " · sent to the model after this turn"
 	}
 	line := head + tui.Dim(" · ") + b.status() + tui.Dim(note)
-	out := []string{tui.Truncate(line, width, tui.Dim("…"))}
+	return tui.Truncate(line, width, tui.Dim("…"))
+}
+
+func (b *shellBlock) render(width int) []string {
+	cmd := strings.TrimSpace(b.cmd)
+	first := b.first()
+	out := []string{b.head(width)}
 
 	lines := displayLines(b.output.String())
-	long := len(commandLines(first, width, 0)) > 1
+	long := commandRows(first, width, 2) > 1
 	multiLine := strings.Contains(cmd, "\n")
 	collapsible := len(lines) > toolPreviewLines || multiLine || long
 	expanded := collapsible && b.expanded()

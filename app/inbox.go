@@ -16,10 +16,15 @@ import (
 
 // eventBlock shows an [atto event] (job exit, timer, monitor) in the
 // transcript; the model receives the full text.
-type eventBlock struct{ title string }
+type eventBlock struct {
+	title string
+	cache tui.RenderCache[string]
+}
 
 func (e *eventBlock) Render(width int) []string {
-	return []string{tui.Truncate("  "+tui.FG(5, e.title), width, "…")}
+	return e.cache.Render(width, e.title, func() []string {
+		return []string{tui.Truncate("  "+tui.FG(5, e.title), width, "…")}
+	})
 }
 
 // liveSession is the session ID the inbox watcher drains; it changes on
