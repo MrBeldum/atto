@@ -151,8 +151,8 @@ Pastes over 1000 characters show as `[Pasted Content 1234 chars]` and are sent i
 **One tool.** The model works through a single shell tool: bash on macOS and Linux, PowerShell on Windows. Everything else is a command it can run:
 
 - `atto history grep` searches the session transcript, including turns that were compacted away.
-- `atto job start` runs a command in the background.
-- `atto monitor` and `atto timer` wake the agent when something happens.
+- `atto job start` runs a command in the background. With `-notify REGEXP` (and `-notify-limit N`, default 50) each matching output line wakes the agent while the job keeps running; matches within a second are batched.
+- `atto monitor` and `atto timer` wake the agent when something happens. `atto timer every 30m [-count N] [-until HH:MM|duration] <message>` repeats (minimum 1m, no drift; missed intervals fire once).
 - `atto goal complete` reports that a goal is done.
 
 **Prefix-cache friendly.**
