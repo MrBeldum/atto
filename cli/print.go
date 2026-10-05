@@ -388,14 +388,21 @@ func (p *printer) completed(it *transcript.Item) {
 		if len(out) > 4000 {
 			out = out[:4000] + "\n[truncated]"
 		}
-		p.emit(map[string]any{
+		ev := map[string]any{
 			"type": "tool_result", "id": it.CallID, "description": it.Description, "exit_code": r.ExitCode,
 			"timed_out": r.TimedOut, "duration_ms": it.Duration.Milliseconds(), "output": out,
-		})
+		}
+		if r.Job > 0 {
+			ev["background_job"] = r.Job
+		}
+		p.emit(ev)
 		if p.verbose && p.textMode() {
 			status := fmt.Sprintf("exit %d", r.ExitCode)
-			if r.TimedOut {
+			switch {
+			case r.TimedOut:
 				status = "timed out"
+			case r.Job > 0:
+				status = fmt.Sprintf("background job %d", r.Job)
 			}
 			fmt.Fprintf(p.errOut, "  └ %s · %s\n", status, tui.FormatDuration(it.Duration))
 		}

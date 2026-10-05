@@ -261,6 +261,9 @@ func toolInput(args agent.BashArgs) map[string]any {
 	if args.Timeout > 0 {
 		in["timeout"] = args.Timeout
 	}
+	if args.Background {
+		in["run_in_background"] = true
+	}
 	return in
 }
 
@@ -281,6 +284,9 @@ func (r *Runner) PreToolUse(ctx context.Context, args agent.BashArgs) (agent.Bas
 			if t, ok := u["timeout"].(float64); ok && t > 0 {
 				args.Timeout = int(t)
 			}
+			if b, ok := u["run_in_background"].(bool); ok {
+				args.Background = b
+			}
 		}
 	}
 	return args, fold(results, "PreToolUse")
@@ -290,6 +296,9 @@ func (r *Runner) PostToolUse(ctx context.Context, args agent.BashArgs, res agent
 	resp := map[string]any{
 		"stdout": res.Output, "exit_code": res.ExitCode, "interrupted": res.Canceled || res.TimedOut,
 		"output": output,
+	}
+	if res.Job > 0 {
+		resp["background_job"] = res.Job
 	}
 	return fold(r.run(ctx, "PostToolUse", toolName, map[string]any{
 		"tool_name": toolName, "tool_input": toolInput(args), "tool_response": resp,

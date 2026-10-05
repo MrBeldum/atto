@@ -87,6 +87,10 @@ type ToolResult struct {
 	TimedOut bool
 	Canceled bool
 	Err      string // the command could not run
+	// Job is the background job the command became (still running when
+	// the result came), and Background why (agent.BackgroundRequested...).
+	Job        int
+	Background string
 	// Text is the result as the model received it (live: before any
 	// PostToolUse hook added to it).
 	Text string

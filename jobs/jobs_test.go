@@ -11,11 +11,18 @@ import (
 	"github.com/sebastianrcnt/atto/events"
 )
 
-// The test binary doubles as the supervisor: Start re-executes
-// os.Executable() with "_supervise <dir>".
+// The test binary doubles as the supervisor and the shell host: Start
+// re-executes os.Executable() with "_supervise <dir>", StartHost with
+// "_shell".
 func TestMain(m *testing.M) {
 	if len(os.Args) == 3 && os.Args[1] == "_supervise" {
 		if err := Supervise(os.Args[2]); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	if len(os.Args) == 2 && os.Args[1] == "_shell" {
+		if err := ServeHost(os.Stdin, os.Stdout, os.Stderr); err != nil {
 			os.Exit(1)
 		}
 		os.Exit(0)

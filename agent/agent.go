@@ -149,6 +149,28 @@ type Agent struct {
 
 	steerMu sync.Mutex
 	steers  []string
+
+	// bg, while a command runs, moves it to the background (Background).
+	bgMu sync.Mutex
+	bg   chan struct{}
+}
+
+// Background moves the running shell command to the background, as if it
+// had reached its timeout: it keeps running as a job and the model is
+// told so. It reports whether a command was running that can move; the
+// move itself may still fail (e.g. too many jobs), in which case the
+// command runs on in the foreground. Safe to call from any goroutine.
+func (a *Agent) Background() bool {
+	a.bgMu.Lock()
+	defer a.bgMu.Unlock()
+	if a.bg == nil {
+		return false
+	}
+	select {
+	case a.bg <- struct{}{}:
+	default: // already asked
+	}
+	return true
 }
 
 // Steer queues a message for the running turn. It is added to the
@@ -628,7 +650,19 @@ func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, emit func(any
 	a.cfgMu.Lock()
 	env := a.env
 	a.cfgMu.Unlock()
-	res := RunShell(ctx, a.Shell, a.Cwd, env, args, func(s string) { emit(ToolOutput{ID: tc.ID, Chunk: s}) })
+	var bg chan struct{}
+	if ShellHost && !args.Background && envValue(env, "ATTO_SESSION_ID") != "" {
+		bg = make(chan struct{}, 1)
+		a.bgMu.Lock()
+		a.bg = bg
+		a.bgMu.Unlock()
+	}
+	res := runShell(ctx, a.Shell, a.Cwd, env, args, func(s string) { emit(ToolOutput{ID: tc.ID, Chunk: s}) }, bg)
+	if bg != nil {
+		a.bgMu.Lock()
+		a.bg = nil
+		a.bgMu.Unlock()
+	}
 	out := res.ForModel(args)
 	emit(ToolEnd{ID: tc.ID, Result: res, Text: out})
 	stop := false
@@ -649,6 +683,8 @@ func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, emit func(any
 		DurationMs:  res.Duration.Milliseconds(),
 		TimedOut:    res.TimedOut,
 		Canceled:    res.Canceled,
+		Job:         res.Job,
+		Background:  res.Background,
 	}, stop
 }
 

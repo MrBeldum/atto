@@ -131,7 +131,7 @@ func (b *Builder) apply(ev any, at time.Time) {
 		b.toolOutput(e.ID, e.Chunk)
 	case agent.ToolEnd:
 		r := e.Result
-		res := ToolResult{ExitCode: r.ExitCode, TimedOut: r.TimedOut, Canceled: r.Canceled, Text: e.Text}
+		res := ToolResult{ExitCode: r.ExitCode, TimedOut: r.TimedOut, Canceled: r.Canceled, Text: e.Text, Job: r.Job, Background: r.Background}
 		if r.Err != nil {
 			res.Err = r.Err.Error()
 		}
@@ -367,6 +367,7 @@ func (b *Builder) replayResult(e session.Entry) {
 	res, d := ToolResult{Text: m.Content}, time.Duration(0)
 	if t := e.Tool; t != nil {
 		res.ExitCode, res.TimedOut, res.Canceled = t.ExitCode, t.TimedOut, t.Canceled
+		res.Job, res.Background = t.Job, t.Background
 		d = time.Duration(t.DurationMs) * time.Millisecond
 	}
 	b.toolOutput(tc.ID, shownOutput(m.Content, e.Tool))
@@ -414,6 +415,8 @@ func shownOutput(content string, t *session.ToolMeta) string {
 	}
 	var ok bool
 	switch {
+	case t.Job > 0:
+		ok = agent.BackgroundStatus(last, t.Job)
 	case t.Canceled:
 		ok = last == "[canceled by user]"
 	case t.TimedOut:

@@ -271,3 +271,26 @@ func TestReplayInterruptedCall(t *testing.T) {
 		t.Fatalf("call without a result %+v", b)
 	}
 }
+
+// A command that moved to the background replays as such, without the
+// status line the model got.
+func TestReplayBackgroundedCall(t *testing.T) {
+	res := agent.BashResult{Output: "compiling\n", Job: 7, Background: agent.BackgroundTimeout, Duration: time.Minute}
+	content := res.ForModel(agent.BashArgs{})
+	entries := []session.Entry{
+		{Type: session.TypeMessage, Message: &provider.Message{Role: "user", Content: "go"}},
+		{Type: session.TypeMessage, Message: &provider.Message{Role: "assistant", ToolCalls: []provider.ToolCall{
+			{ID: "a", Function: provider.FunctionCall{Name: "bash", Arguments: `{"command":"make"}`}},
+		}}},
+		{Type: session.TypeMessage, Message: &provider.Message{Role: "tool", ToolCallID: "a", Content: content},
+			Tool: &session.ToolMeta{DurationMs: 60000, Job: 7, Background: agent.BackgroundTimeout}},
+	}
+	items := FromEntries("", entries)
+	if len(items) != 2 {
+		t.Fatalf("%+v", items)
+	}
+	it := items[1]
+	if it.Output != "compiling" || it.Status != Completed || it.Result.Job != 7 || it.Result.Background != agent.BackgroundTimeout {
+		t.Fatalf("%+v %+v", it, it.Result)
+	}
+}

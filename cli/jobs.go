@@ -336,3 +336,13 @@ func RunSupervise(args []string, _ io.Writer) error {
 	}
 	return jobs.Supervise(args[0])
 }
+
+// RunShellHost is the hidden entry point of a shell host: atto runs each
+// command of its shell tool under one, so the command can move to the
+// background (jobs.StartHost).
+func RunShellHost(args []string, _ io.Writer) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: atto _shell (started by atto, protocol on stdin)")
+	}
+	return jobs.ServeHost(os.Stdin, os.Stdout, os.Stderr)
+}

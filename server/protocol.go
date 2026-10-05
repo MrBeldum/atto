@@ -22,6 +22,7 @@
 //	turn/start     {threadId, input}               → {turnId}
 //	turn/steer     {threadId, input}               → {}
 //	turn/interrupt {threadId}                      → {}
+//	turn/background {threadId}                     → {}  (Ctrl+B: the running command becomes a job)
 //
 // Notifications (all carry threadId):
 //
@@ -100,6 +101,10 @@ type Item struct {
 	ExitCode    *int   `json:"exitCode,omitempty"`
 	DurationMs  int64  `json:"durationMs,omitempty"`
 	TimedOut    bool   `json:"timedOut,omitempty"`
+	// Job is the background job the command became (no exitCode then),
+	// and Background why: requested, timeout or user.
+	Job        int    `json:"job,omitempty"`
+	Background string `json:"background,omitempty"`
 
 	// compaction
 	Auto         bool `json:"auto,omitempty"`

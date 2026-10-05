@@ -349,6 +349,12 @@ func (a *App) onInput(data string) bool {
 			a.doQuit()
 			return true
 		}
+	case "ctrl+b":
+		// As in Claude Code: the running command moves to the background
+		// and the turn goes on. Otherwise it is the editor's cursor-left.
+		if a.busy && a.agent.Background() {
+			return true
+		}
 	case "ctrl+l":
 		a.ui.Redraw()
 		return true

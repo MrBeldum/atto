@@ -84,6 +84,9 @@ func wireItem(it *transcript.Item) Item {
 		if r := it.Result; r != nil {
 			code := r.ExitCode
 			w.ExitCode, w.DurationMs, w.TimedOut = &code, it.Duration.Milliseconds(), r.TimedOut
+			if r.Job > 0 { // still running
+				w.ExitCode, w.Job, w.Background = nil, r.Job, r.Background
+			}
 		}
 	case transcript.Compaction:
 		w.Type, w.Auto, w.TokensBefore, w.TokensAfter = ItemCompaction, it.Auto, it.TokensBefore, it.TokensAfter

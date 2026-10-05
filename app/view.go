@@ -242,10 +242,25 @@ func displayLines(raw string) []string {
 	return lines
 }
 
+// backgroundHintAfter is when a running command's block starts to
+// mention ctrl+b: quick commands never show it.
+const backgroundHintAfter = 3 * time.Second
+
 func (b *toolBlock) status() (icon, status string) {
 	switch {
 	case !b.done:
-		return tui.FG(3, "●"), fmt.Sprintf("%s / %s", tui.FormatDuration(time.Since(b.start).Truncate(100*time.Millisecond)), tui.FormatDuration(b.timeout))
+		ran := time.Since(b.start)
+		s := fmt.Sprintf("%s / %s", tui.FormatDuration(ran.Truncate(100*time.Millisecond)), tui.FormatDuration(b.timeout))
+		if ran >= backgroundHintAfter && agent.ShellHost {
+			s += " · ctrl+b to background"
+		}
+		return tui.FG(3, "●"), s
+	case b.res.Err != nil:
+		return tui.FG(1, "✗"), tui.FG(1, b.res.Err.Error())
+	case b.res.Job > 0 && b.res.Background == agent.BackgroundRequested:
+		return tui.FG(6, "◐"), tui.FG(6, fmt.Sprintf("running in background (job %d)", b.res.Job))
+	case b.res.Job > 0:
+		return tui.FG(6, "◐"), tui.FG(6, fmt.Sprintf("moved to background (job %d)", b.res.Job)) + tui.Dim(" · after "+tui.FormatDuration(b.res.Duration))
 	case b.res.Err != nil:
 		return tui.FG(1, "✗"), tui.FG(1, b.res.Err.Error())
 	case b.res.Canceled:

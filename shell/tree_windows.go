@@ -75,6 +75,24 @@ func Detach(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS}
 }
 
+// Isolate makes cmd outlive its parent but, unlike Detach, keeps it on the
+// parent's console, so that what it runs sees the same console (and code
+// page) as a command atto runs directly. It does not survive the console
+// itself closing.
+func Isolate(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP}
+}
+
+// KillGroup terminates pid. A Windows process tree is held together by
+// the job object of whoever started it, not by pid, so this kills only
+// the process itself.
+func KillGroup(pid int) {
+	if h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid)); err == nil {
+		_ = windows.TerminateProcess(h, 1)
+		windows.CloseHandle(h)
+	}
+}
+
 // Terminate stops a job supervisor. Windows has no SIGTERM, so the
 // supervisor is terminated outright; its kill-on-close job object takes
 // the command's whole tree down with it.
