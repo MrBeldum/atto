@@ -99,8 +99,8 @@ type App struct {
 
 	// Slash command list: selection, the text it belongs to, and the text
 	// for which Esc closed it.
-	sugSel               int
-	sugFor, sugDismissed string
+	sugList      *tui.SelectList
+	sugDismissed string
 
 	// Status line state.
 	gitBranch   string

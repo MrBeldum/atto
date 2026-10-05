@@ -1,7 +1,6 @@
 package app
 
 import (
-	"fmt"
 	"os"
 	"strings"
 
@@ -44,55 +43,53 @@ func init() {
 	}
 }
 
-// matchingCommands returns commands matching a partially typed "/name",
-// unless the list was dismissed with Esc for this text.
-func (a *App) matchingCommands() []command {
-	t := a.editor.Text()
-	if !strings.HasPrefix(t, "/") || strings.ContainsAny(t, " \n") || t == a.sugDismissed {
-		return nil
-	}
-	var out []command
-	for _, c := range commands {
-		if strings.HasPrefix(c.name, t[1:]) {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
 // maxSuggestions is how many commands the list shows at once (pi: 5).
 const maxSuggestions = 5
 
-// suggestion returns the matches and the selected index, which resets when
-// the typed text changes.
-func (a *App) suggestion() ([]command, int) {
-	m := a.matchingCommands()
-	if t := a.editor.Text(); t != a.sugFor {
-		a.sugFor, a.sugSel = t, 0
+// suggestions is the slash-command list: a SelectList driven by the editor's
+// text rather than its own filter. It is closed (matches nothing) unless the
+// text is a partly typed "/name", or after Esc for that same text.
+func (a *App) suggestions() *tui.SelectList {
+	if a.sugList != nil {
+		return a.sugList
 	}
-	if a.sugSel >= len(m) {
-		a.sugSel = 0
+	l := &tui.SelectList{MaxVisible: maxSuggestions, Indent: " ", LabelWidth: 18}
+	for _, c := range commands {
+		name := "/" + c.name
+		if c.args != "" {
+			name += " " + c.args
+		}
+		l.Items = append(l.Items, tui.SelectItem{Label: name, Detail: c.desc, Value: c.name, Data: c})
 	}
-	return m, a.sugSel
+	l.Source = a.editor.Text
+	l.Match = func(it tui.SelectItem, t string) bool {
+		if !strings.HasPrefix(t, "/") || strings.ContainsAny(t, " \n") || t == a.sugDismissed {
+			return false
+		}
+		return strings.HasPrefix(it.Value, t[1:])
+	}
+	a.sugList = l
+	return l
 }
 
 // suggestionKey handles the keys of an open command list, like pi: up/down
 // move, tab completes, enter completes and runs (or only completes when the
 // command needs an argument), esc closes the list.
 func (a *App) suggestionKey(key string) bool {
-	m, sel := a.suggestion()
-	if len(m) == 0 {
+	l := a.suggestions()
+	it, ok := l.Current()
+	if !ok {
 		return false
 	}
+	c := it.Data.(command)
 	switch key {
 	case "up":
-		a.sugSel = (sel + len(m) - 1) % len(m)
+		l.Move(-1)
 	case "down":
-		a.sugSel = (sel + 1) % len(m)
+		l.Move(1)
 	case "tab":
-		a.editor.SetText("/" + m[sel].name + " ")
+		a.editor.SetText("/" + c.name + " ")
 	case "enter":
-		c := m[sel]
 		if strings.HasPrefix(c.args, "<") { // a required argument
 			a.editor.SetText("/" + c.name + " ")
 			return true
@@ -111,32 +108,7 @@ func (a *App) renderSuggestions(width int) []string {
 	if a.modal != nil {
 		return nil
 	}
-	m, sel := a.suggestion()
-	if len(m) == 0 {
-		return nil
-	}
-	// The window keeps the selection centered, as pi's select list does.
-	start := max(0, min(sel-maxSuggestions/2, len(m)-maxSuggestions))
-	end := min(start+maxSuggestions, len(m))
-	var out []string
-	for i := start; i < end; i++ {
-		c := m[i]
-		name := "/" + c.name
-		if c.args != "" {
-			name += " " + c.args
-		}
-		name += strings.Repeat(" ", max(0, 18-tui.VisibleWidth(name)))
-		// Line up with the editor: " › " precedes the typed text.
-		line := "   " + name + tui.Dim(c.desc)
-		if i == sel {
-			line = " " + tui.FG(6, "› "+name) + tui.Dim(c.desc)
-		}
-		out = append(out, tui.Truncate(line, width, "…"))
-	}
-	if start > 0 || end < len(m) {
-		out = append(out, tui.Dim(fmt.Sprintf("   (%d/%d)", sel+1, len(m))))
-	}
-	return out
+	return a.suggestions().Render(width)
 }
 
 func (a *App) runCommand(text string) {
