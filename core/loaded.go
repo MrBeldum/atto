@@ -13,6 +13,7 @@ import (
 
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/extensions"
 	"github.com/sebastianrcnt/atto/skills"
 )
 
@@ -38,10 +39,13 @@ type Loaded struct {
 	SkillDirs    []string       `json:"skill_dirs"` // those that exist, highest priority first
 	SkillIssues  []skills.Issue `json:"skill_issues,omitempty"`
 	Hooks        []Hook         `json:"hooks"`
-	Config       []ConfigFile   `json:"config"`
-	Model        Choice         `json:"model"`
-	Effort       Choice         `json:"effort"`
-	Prompt       Prompt         `json:"system_prompt"`
+	// Extensions are the JavaScript extensions found, whether they run
+	// or not (see package extensions).
+	Extensions []extensions.Info `json:"extensions,omitempty"`
+	Config     []ConfigFile      `json:"config"`
+	Model      Choice            `json:"model"`
+	Effort     Choice            `json:"effort"`
+	Prompt     Prompt            `json:"system_prompt"`
 	// Context is what else goes to the model besides the system prompt
 	// and the conversation: the tool schema, how images are sent, hook
 	// output.
@@ -170,6 +174,11 @@ func Collect(ag *agent.Agent, hookSrc []config.HookSource, modelFrom, effortFrom
 		}
 	}
 
+	if m := ExtensionsOf(ag); m != nil {
+		l.Extensions = m.Report()
+		l.Warnings = append(l.Warnings, extensionWarnings(l.Extensions)...)
+	}
+
 	l.Config = configFiles(src.Cwd)
 
 	m, effort := ag.Current()
@@ -224,6 +233,18 @@ func Collect(ag *agent.Agent, hookSrc []config.HookSource, modelFrom, effortFrom
 				"Stop": "can keep the turn going",
 			}[ev]
 			l.Context = append(l.Context, Part{Name: ev + " hooks", Detail: what})
+		}
+	}
+	for _, ev := range []string{"user_prompt", "tool_result"} {
+		var names []string
+		for _, e := range l.Extensions {
+			if e.Status == extensions.Loaded && slices.Contains(e.Events, ev) {
+				names = append(names, e.Name)
+			}
+		}
+		if len(names) > 0 {
+			what := map[string]string{"user_prompt": "can add to prompts", "tool_result": "can rewrite tool results"}[ev]
+			l.Context = append(l.Context, Part{Name: ev + " extensions", Detail: what + " (" + strings.Join(names, ", ") + ")"})
 		}
 	}
 	return l
@@ -381,6 +402,9 @@ func (l Loaded) Summary() []Row {
 		text = fmt.Sprintf("%d: %s · from %s", len(l.Hooks), strings.Join(evs, ", "), strings.Join(from, ", "))
 	}
 	rows = append(rows, Row{"Hooks", text})
+	if len(l.Extensions) > 0 { // most sessions have none: no row for them
+		rows = append(rows, Row{"Extensions", extensionSummary(l.Extensions)})
+	}
 
 	rows = append(rows, Row{"Model", l.modelText()})
 
@@ -521,6 +545,16 @@ func (l Loaded) Details() []Section {
 	}
 	if len(s.Rows) == 0 {
 		s.Rows = append(s.Rows, Row{"none", "configure them under \"hooks\" in " + ShortPath(config.SettingsPath())})
+	}
+	out = append(out, s)
+
+	s = Section{Title: "Extensions"}
+	for _, e := range l.Extensions {
+		s.Rows = append(s.Rows, extensionRow(e))
+	}
+	if len(s.Rows) == 0 {
+		s.Rows = append(s.Rows, Row{"none", "put .ts or .js files in " + ShortPath(config.ExtensionsDir()) +
+			" or the project's .atto/extensions; see atto extensions types"})
 	}
 	out = append(out, s)
 
@@ -700,6 +734,16 @@ func Diff(prev, cur Loaded) []Change {
 	}
 	a, b = hk(prev), hk(cur)
 	diff("hook", a, b, keys(a, b))
+
+	ext := func(l Loaded) map[string]string {
+		m := map[string]string{}
+		for _, e := range l.Extensions {
+			m[e.Name] = e.Path + " " + e.Hash + " " + e.Status + " " + e.Error
+		}
+		return m
+	}
+	a, b = ext(prev), ext(cur)
+	diff("extension", a, b, keys(a, b))
 
 	cfg := func(l Loaded) map[string]string {
 		m := map[string]string{}

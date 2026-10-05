@@ -148,45 +148,91 @@ func (m *Manager) timeout() time.Duration {
 	return m.to
 }
 
-func (m *Manager) load() {
-	settings, _ := config.LoadSettings() // a broken file was reported by whoever loaded it first
-	to, disabled := DefaultTimeout, []string(nil)
-	if s := settings.Extensions; s != nil {
-		if s.Timeout > 0 {
-			to = time.Duration(s.Timeout) * time.Second
-		}
-		disabled = s.Disabled
+// Ready is the status Inspect gives an extension that would load.
+const Ready = "ready"
+
+// settings reads the timeout and the disabled names from settings.json.
+func settings() (time.Duration, []string) {
+	s, _ := config.LoadSettings() // a broken file was reported by whoever loaded it first
+	if s.Extensions == nil {
+		return DefaultTimeout, nil
 	}
+	to := DefaultTimeout
+	if s.Extensions.Timeout > 0 {
+		to = time.Duration(s.Extensions.Timeout) * time.Second
+	}
+	return to, s.Extensions.Disabled
+}
+
+// candidate is an extension found, checked without running it.
+type candidate struct {
+	Spec
+	code, status, err string
+}
+
+// check bundles every extension found for cwd and says which would run
+// (Ready) and why the others would not.
+func check(cwd string, disabled []string) []candidate {
+	var out []candidate
+	seen := map[string]string{}
+	for _, s := range Discover(cwd) {
+		c := candidate{Spec: s, status: Ready}
+		if prev, dup := seen[s.Name]; dup {
+			c.status, c.err = Failed, "another extension has this name: "+prev
+			out = append(out, c)
+			continue
+		}
+		seen[s.Name] = s.Path
+		if slices.Contains(disabled, s.Name) {
+			c.status = Disabled
+			out = append(out, c)
+			continue
+		}
+		code, err := Bundle(s.Path)
+		switch {
+		case err != nil:
+			c.status, c.err = Failed, err.Error()
+		case s.Source == Project && !approved(s.Path, code):
+			c.status = NeedsApproval
+		}
+		c.code = code
+		out = append(out, c)
+	}
+	return out
+}
+
+// Inspect reports the extensions for a session in cwd without running
+// any: those that would run have the status Ready.
+func Inspect(cwd string) []Info {
+	_, disabled := settings()
+	out := []Info{}
+	for _, c := range check(cwd, disabled) {
+		in := Info{Name: c.Name, Path: c.Path, Source: c.Source, Status: c.status, Error: c.err}
+		if c.code != "" {
+			in.Hash = hash(c.code)
+		}
+		out = append(out, in)
+	}
+	return out
+}
+
+func (m *Manager) load() {
+	to, disabled := settings()
 	m.mu.Lock()
 	m.to = to
 	m.mu.Unlock()
 
 	var exts []*ext
-	seen := map[string]string{}
 	typesFor := map[string]bool{}
-	for _, s := range Discover(m.cwd) {
-		typesFor[filepath.Dir(entryDir(s))] = true
-		if prev, dup := seen[s.Name]; dup {
-			exts = append(exts, stub(m, s, "", Failed, "another extension has this name: "+prev))
+	for _, c := range check(m.cwd, disabled) {
+		typesFor[filepath.Dir(entryDir(c.Spec))] = true
+		if c.status != Ready {
+			exts = append(exts, stub(m, c.Spec, c.code, c.status, c.err))
 			continue
 		}
-		seen[s.Name] = s.Path
-		if slices.Contains(disabled, s.Name) {
-			exts = append(exts, stub(m, s, "", Disabled, ""))
-			continue
-		}
-		code, err := Bundle(s.Path)
-		if err != nil {
-			exts = append(exts, stub(m, s, "", Failed, err.Error()))
-			continue
-		}
-		if s.Source == Project && !approved(s.Path, code) {
-			exts = append(exts, stub(m, s, code, NeedsApproval, ""))
-			continue
-		}
-		e := newExt(m, s, code)
+		e := newExt(m, c.Spec, c.code)
 		go e.loop()
-		e.start(code)
+		e.start(c.code)
 		exts = append(exts, e)
 	}
 	for dir := range typesFor {

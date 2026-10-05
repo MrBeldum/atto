@@ -23,8 +23,8 @@ type Reloaded struct {
 	HookSrc  []config.HookSource
 }
 
-// Reload reads settings.json, models.json, the hooks, the AGENTS files and
-// the skills again for ag's session (id and transcript are what its hooks
+// Reload reads settings.json, models.json, the hooks, the AGENTS files,
+// the skills and the extensions again for ag's session (id and transcript are what its hooks
 // are told), keeping the conversation. The system prompt is rebuilt only if
 // its text changed. The model in use stays even when models.json no longer
 // has it (with a warning) until the user switches; if it is still there,
@@ -43,6 +43,9 @@ func Reload(ag *agent.Agent, id, transcript string, prev Loaded) (Reloaded, erro
 	}
 	r := Reloaded{Settings: settings, Models: models, Hooks: hk, HookSrc: src}
 	r.PromptChanged = ag.Reload()
+	if m := ExtensionsOf(ag); m != nil {
+		m.Reload()
+	}
 	hk.SetSession(id, transcript)
 	SetHooks(ag, hk)
 
@@ -55,7 +58,7 @@ func Reload(ag *agent.Agent, id, transcript string, prev Loaded) (Reloaded, erro
 		}
 	}
 	r.Loaded = Collect(ag, src, prev.Model.Origin, prev.Effort.Origin)
-	r.Loaded.Warnings = warnings
+	r.Loaded.Warnings = append(warnings, r.Loaded.Warnings...)
 	r.Changes = Diff(prev, r.Loaded)
 	return r, nil
 }

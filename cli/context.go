@@ -10,13 +10,15 @@ import (
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/core"
 	"github.com/sebastianrcnt/atto/events"
+	"github.com/sebastianrcnt/atto/extensions"
 )
 
 const contextUsage = `usage: atto context [-json] [-m provider/id] [-effort level]
 
 Shows what a session started in this directory loads: the AGENTS.md files
-and skills in its system prompt, the hooks, the settings and models files,
-and the model and effort it would use, with where each came from.`
+and skills in its system prompt, the hooks, the extensions (found, not
+run: "ready" would load), the settings and models files, and the model
+and effort it would use, with where each came from.`
 
 // RunContext implements "atto context".
 func RunContext(args []string, out io.Writer) error {
@@ -46,6 +48,7 @@ func RunContext(args []string, out io.Writer) error {
 		return err
 	}
 	l := core.Collect(ag, src, modelFrom, effortFrom)
+	l.Extensions = extensions.Inspect(cwd) // found, not run
 	if *asJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
@@ -64,7 +67,7 @@ func RunReload(args []string, out io.Writer) error {
 	fs := newFlags("reload")
 	session := sessionFlag(fs)
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
-		return fmt.Errorf("usage: atto reload [-session id]\n\nReloads AGENTS.md, skills, hooks, settings.json and models.json in the running session.")
+		return fmt.Errorf("usage: atto reload [-session id]\n\nReloads AGENTS.md, skills, hooks, extensions, settings.json and models.json in the running session.")
 	}
 	if err := requireSession(*session); err != nil {
 		return err

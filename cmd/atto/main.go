@@ -42,7 +42,9 @@ usage:
   atto context [-json]              what a session here loads: AGENTS.md, skills,
                                     hooks, settings, model
   atto reload                       from the agent's shell: reload AGENTS.md, skills,
-                                    hooks and settings in the running session
+                                    hooks, extensions and settings in the running session
+  atto extensions [list|approve <name>|types]
+                                    JavaScript/TypeScript extensions (docs/extensions.md)
   atto update [-check]              install the latest release
   atto serve [-listen addr]         JSON-RPC over HTTP + SSE, with a web client
   atto app-server                   JSON-RPC over stdio (JSON lines)
@@ -95,6 +97,7 @@ func subcommands() map[string]func([]string, io.Writer) error {
 		"goal":       cli.RunGoal,
 		"context":    cli.RunContext,
 		"reload":     cli.RunReload,
+		"extensions": cli.RunExtensions,
 		"update":     cli.RunUpdate,
 		"channel":    cli.RunChannel,
 		"_supervise": cli.RunSupervise,

@@ -168,6 +168,9 @@ func Bind(ag *agent.Agent, hk *hooks.Runner, file *session.Writer, start time.Ti
 		ag.Record = file.Append
 	}
 	hk.SetSession(file.ID, file.Path)
+	if m := ExtensionsOf(ag); m != nil {
+		m.SetSession(file.ID)
+	}
 }
 
 // Env is the environment of the commands an agent runs: the session ID
