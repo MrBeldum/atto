@@ -25,7 +25,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
-      contents: write     # replace the edge release and tag
+      contents: write     # update the edge release and move its tag
       id-token: write     # sign the build provenance
       attestations: write
     # Two quick pushes must not publish at the same time; the later one waits.
@@ -70,18 +70,41 @@ jobs:
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        # Recreate the release instead of editing it: stale assets and the
-        # old tag go with it, and the new tag lands on this exact commit.
+        # Update the release in place; never delete it. A delete+create leaves
+        # a window where releases/tags/edge and releases/download/edge/* are
+        # 404, which breaks install scripts, "atto update" and "atto channel
+        # edge". Asset names are fixed, so --clobber replaces every old asset.
         # --prerelease and --latest=false keep it out of releases/latest, so
         # stable installs and "atto update" never see it.
         run: |
+          set -euo pipefail
           printf 'Commit: %s/%s/commit/%s\n\nUnstable build of main, replaced on every push. Install with `ATTO_CHANNEL=edge`.\n' \
             "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA" > notes.md
-          gh release delete edge --cleanup-tag --yes || true
-          git push origin :refs/tags/edge || true
-          gh release create edge dist/* \
-            --title "$VERSION" \
-            --notes-file notes.md \
-            --target "$GITHUB_SHA" \
-            --prerelease \
-            --latest=false
+          if gh release view edge >/dev/null 2>&1; then
+            # 1. Move the tag to this commit (force-update the ref; create it
+            #    if the release somehow exists without its tag).
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/edge" \
+              -f sha="$GITHUB_SHA" -F force=true >/dev/null \
+              || gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
+                -f ref=refs/tags/edge -f sha="$GITHUB_SHA" >/dev/null
+            # 2. Binaries first, checksums.txt last and immediately after, so
+            #    the window where a new binary sits next to the old
+            #    checksums.txt (installers fail with a checksum error, never
+            #    install a bad binary) is only the gap between two uploads.
+            gh release upload edge dist/atto_* --clobber
+            gh release upload edge dist/checksums.txt --clobber
+            # 3. Title and notes last: they name the commit, so they flip
+            #    only once the assets match it.
+            gh release edit edge \
+              --title "$VERSION" \
+              --notes-file notes.md \
+              --prerelease \
+              --latest=false
+          else
+            gh release create edge dist/* \
+              --title "$VERSION" \
+              --notes-file notes.md \
+              --target "$GITHUB_SHA" \
+              --prerelease \
+              --latest=false
+          fi
