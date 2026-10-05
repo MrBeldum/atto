@@ -53,6 +53,12 @@ func TestBlockCacheInvalidation(t *testing.T) {
 			func(b cachedBlock) { b.(*toolBlock).res.Err = errors.New("no such command") }},
 		{"tool: background", func() cachedBlock { return newTool(d, "x", "", true) },
 			func(b cachedBlock) { b.(*toolBlock).res.Job = 3 }},
+		{"tool: done, folds", func() cachedBlock { return &toolBlock{expander: expander{d: d}, args: agent.BashArgs{Command: "ls"}} },
+			func(b cachedBlock) { b.(*toolBlock).done = true }},
+		{"tool: open", func() cachedBlock {
+			return &toolBlock{expander: expander{d: d}, args: agent.BashArgs{Command: "ls"}, done: true}
+		},
+			func(b cachedBlock) { b.(*toolBlock).Click(0) }},
 		{"tool: click", func() cachedBlock { return newTool(d, "ls", many, true) },
 			func(b cachedBlock) { b.(*toolBlock).Click(0) }},
 		{"tool: ctrl+t", func() cachedBlock { return newTool(d, "ls", many, true) }, ctrlT(d)},
@@ -157,6 +163,9 @@ func newTool(d *details, cmd, output string, done bool) *toolBlock {
 	b := &toolBlock{expander: expander{d: d}, args: agent.BashArgs{Description: "Run", Command: cmd}, done: done,
 		start: time.Now(), timeout: time.Minute}
 	b.append(output)
+	if done {
+		b.open.setTo(true) // shows the output, not only its line
+	}
 	return b
 }
 

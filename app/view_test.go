@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/tui"
 )
 
@@ -85,6 +86,12 @@ func TestClickTogglesOnlyHeaderAndDisclosure(t *testing.T) {
 	b.args.Description = "list"
 	b.args.Command = "ls"
 	b.append("1\n2\n3\n4\n5\n6\n")
+	if out := b.Render(60); len(out) != 1 || StripLine(out[0]) != "✓ list · 0ms  $ ls" {
+		t.Fatalf("done: not one line: %q", out)
+	}
+	if !b.Click(0) {
+		t.Fatal("the line does not open")
+	}
 	out := b.Render(60) // header, $ ls, 1, 2, "… +2 lines", 5, 6
 	if got := StripLine(out[4]); got != "    … +2 lines (click or ctrl+t to expand)" || StripLine(out[6]) != "    6" {
 		t.Fatalf("preview %q", out)
@@ -99,17 +106,28 @@ func TestClickTogglesOnlyHeaderAndDisclosure(t *testing.T) {
 	if b.Click(3) || !b.expanded() {
 		t.Fatal("a click in the expanded output toggled")
 	}
-	if !b.Click(0) || b.expanded() {
-		t.Fatal("the header collapses")
+	if !b.Click(0) || b.expanded() || len(b.Render(60)) != 1 {
+		t.Fatal("the header folds the block to its line")
+	}
+	if !b.Click(0) || b.expanded() || len(b.Render(60)) != 7 {
+		t.Fatal("opened again, it shows the preview, not all")
 	}
 
-	// Nothing more to show: not clickable at all.
+	// Nothing more than the output to show: only the header toggles.
 	short := &toolBlock{expander: expander{d: &details{}}, done: true}
 	short.args.Command = "true"
 	short.append("ok\n")
 	short.Render(60)
-	if short.Click(0) {
-		t.Fatal("a block with nothing hidden toggled")
+	if !short.Click(0) || len(short.Render(60)) != 3 || short.Click(1) || short.Click(2) {
+		t.Fatal("a short block: only the header toggles")
+	}
+
+	// A failed call shows why, folded.
+	bad := &toolBlock{expander: expander{d: &details{}}, done: true, res: agent.BashResult{ExitCode: 2}}
+	bad.args.Command = "make"
+	bad.append("a\nb\nc\nerror: boom\n")
+	if got := plainLines(bad.Render(60)); got != "✗ make · exit 2 · 0ms\n  └ c\n    error: boom" {
+		t.Fatalf("failed, folded:\n%s", got)
 	}
 
 	th := &thinkingBlock{expander: expander{d: &details{}}, done: true}

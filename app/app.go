@@ -136,6 +136,8 @@ type App struct {
 	// and skipSummary settings.json's branchSummary.skipPrompt.
 	summary     *summaryRun
 	skipSummary bool
+	// noToolGroups is settings.json's "toolGroups": false (see toolRun).
+	noToolGroups bool
 	// esc detects Esc twice on an empty prompt; escAction is what it opens.
 	esc       doubleEsc
 	escAction string
@@ -227,6 +229,7 @@ func Run(opts Options) error {
 	a.bgx.off = settings.BackgroundExit != nil && !*settings.BackgroundExit
 	a.skipSummary = settings.BranchSummary != nil && settings.BranchSummary.SkipPrompt
 	a.ui.NoMouse = mouseDisabled(settings.Mouse, os.Getenv)
+	a.noToolGroups = settings.ToolGroups != nil && !*settings.ToolGroups
 	a.build()
 	a.ext = core.LoadExtensions(ag, newTUIHost(a))
 	a.mcp = core.LoadMCP(ag)

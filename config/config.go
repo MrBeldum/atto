@@ -101,6 +101,11 @@ type Settings struct {
 	// its own selection works without a modifier key; atto then scrolls
 	// with PageUp/PageDown only. ATTO_NO_MOUSE=1 does the same.
 	Mouse *bool `json:"mouse,omitempty"`
+	// ToolGroups: false shows every command the model runs as its own
+	// block. By default consecutive commands collapse into one summary
+	// line of their descriptions (the last, and any that failed, stay
+	// shown); a click or ctrl+t expands it.
+	ToolGroups *bool `json:"toolGroups,omitempty"`
 	// BranchSummary configures what going back in the session tree (/tree)
 	// does with the branch being left, as pi's setting of the same name.
 	BranchSummary *BranchSummary `json:"branchSummary,omitempty"`

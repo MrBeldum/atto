@@ -122,7 +122,7 @@ atto -p -goal "make the tests pass" -goal-budget 200k
 | `Esc` | interrupt, or send pending steers now |
 | `Esc` `Esc` | on an empty prompt: open the session tree to go back to an earlier message and edit it |
 | `Shift+Tab` | cycle reasoning effort |
-| `Ctrl+T` | expand all thinking and command output (or click a block) |
+| `Ctrl+T` | expand everything: thinking, command groups and every command's full output; again to fold it all back (or click one block) |
 | `Ctrl+B` | move the running command to the background: it keeps running as a job (`/jobs`), the agent goes on and gets an `[atto event]` when it exits |
 | `Ctrl+C` | copy the selection if there is one; otherwise interrupt, clear the input when idle, or quit when the input is empty |
 | `Ctrl+V` / `Alt+V` | attach the image on the clipboard (use `Alt+V` where the terminal pastes text on `Ctrl+V`, as on Windows) |
@@ -136,6 +136,8 @@ Pasting the path of an image file, or dropping the file on the terminal, attache
 `atto -p` attaches images given with `-image` and an image piped to stdin (PNG, JPEG, GIF or WebP, recognized by its first bytes); the prompt argument is then the text. In the web client (`atto serve`, `/remote`), attach images with the image button, by pasting or by dropping them; over JSON-RPC, `turn/start` takes `images: [{mimeType, data}]` (base64 or a `data:` URL, at most 10 of 10 MB each). Either way the model must accept images.
 
 Pastes over 1000 characters show as `[Pasted Content 1234 chars]` and are sent in full.
+
+Commands the agent runs: while one runs, its block shows the command and the last lines of output (the line above the input then just says `Working…`). Once it ends it folds to one line, `✓ description · time  $ command`; a failed one (non-zero exit, timeout, canceled) keeps its last two output lines. Click the line for the full command and the output's first and last lines, `… +N lines` for all of it. Commands run one after another, with only the model's thinking between them, group: the ones before the last fold into one dim line of their descriptions, `▸ Read main.go, Search for TODOs  +3 more · 12s`, with `· 1 failed` in red when some failed (those stay shown below it, as does the last command). Click it, or press `Ctrl+T`, to see every command and thought of the group on a shaded background. Set `"toolGroups": false` in `settings.json` to show each command on its own.
 
 ### Mouse and selection
 
@@ -279,7 +281,7 @@ Everything lives in `~/.atto`. Set `ATTO_DIR` to move it.
 
 | Path | Contents |
 | --- | --- |
-| `settings.json` | default model and effort, renderer, `mouse`, status line, hooks, `updateCheck`, `doubleEscapeAction` (`tree`, `fork` or `none`), `branchSummary.skipPrompt`, `toolOutputTokenLimit` (how much of a command's output the model gets, default 10000 tokens; the middle is cut and the full output saved to a file, as in codex), `backgroundExit` (experimental: `false` turns off the exit menu that offers "Run in background" while a turn runs), `remote.port` (`/remote`'s port, default 7879), `extensions` (`disabled` names, handler `timeout` in seconds), `skills.disabled` (built-in skills to turn off) |
+| `settings.json` | default model and effort, renderer, `mouse`, `toolGroups` (`false`: no command groups), status line, hooks, `updateCheck`, `doubleEscapeAction` (`tree`, `fork` or `none`), `branchSummary.skipPrompt`, `toolOutputTokenLimit` (how much of a command's output the model gets, default 10000 tokens; the middle is cut and the full output saved to a file, as in codex), `backgroundExit` (experimental: `false` turns off the exit menu that offers "Run in background" while a turn runs), `remote.port` (`/remote`'s port, default 7879), `extensions` (`disabled` names, handler `timeout` in seconds), `skills.disabled` (built-in skills to turn off) |
 | `mcp.json` | MCP servers (Claude Code's `.mcp.json` format); `mcp-approvals.json` holds approved project servers, `mcp/` the endpoints of running sessions |
 | `extensions/` | your extensions; `extension-approvals.json` holds approved project extensions, `extensions.log` their logs |
 | `models.json` | your providers and models |

@@ -88,7 +88,11 @@ func (a *App) itemStarted(it *transcript.Item) {
 		a.thinking = &thinkingBlock{start: time.Now(), expander: expander{d: &a.details}}
 		a.thinking.disp.orig.d = &a.origView
 		a.trackBlock(it, a.thinking)
-		a.add(a.thinking)
+		if r := a.openRun(); r != nil { // between two calls, or after the last
+			r.add(a.thinking)
+		} else {
+			a.add(a.thinking)
+		}
 	case transcript.Assistant:
 		a.text = &textBlock{}
 		a.text.disp.orig.d = &a.origView
@@ -101,7 +105,12 @@ func (a *App) itemStarted(it *transcript.Item) {
 			a.tools = map[string]*toolBlock{}
 		}
 		a.tools[it.ID] = b
-		a.add(b)
+		r := a.openRun()
+		if r == nil {
+			r = &toolRun{expander: expander{d: &a.details}, off: &a.noToolGroups}
+			a.add(r)
+		}
+		r.add(b)
 	case transcript.Compaction:
 		a.compact = &compactBlock{auto: it.Auto, running: true, expander: expander{d: &a.details}}
 		a.add(a.compact)
@@ -112,6 +121,19 @@ func (a *App) itemStarted(it *transcript.Item) {
 	case transcript.ExtText:
 		a.extTextStarted(it)
 	}
+}
+
+// openRun is the run of calls the transcript ends with, if it does: a
+// call or reasoning that comes next joins it, anything else ends it.
+func (a *App) openRun() *toolRun {
+	if ch := a.ui.Body.Children; len(ch) > 0 {
+		if g, ok := ch[len(ch)-1].(gap); ok {
+			if r, ok := g.Component.(*toolRun); ok {
+				return r
+			}
+		}
+	}
+	return nil
 }
 
 // trackBlock remembers the block of an item until the item is saved and
@@ -262,12 +284,10 @@ func (a *App) onEvent(ev any) {
 	a.backgroundEvent(ev)
 	switch e := ev.(type) {
 	case agent.ToolDraft:
-		a.activity = "Writing command"
-		if e.Args.Description != "" {
-			a.activity = e.Args.Description
-		}
+		// The call's block shows what it is and how long it has run.
+		a.activity = "Working"
 	case agent.ToolStart:
-		a.activity = e.Args.Description
+		a.activity = "Working"
 	case agent.ToolEnd:
 		a.activity = "Thinking"
 	case agent.StepEnd:

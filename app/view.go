@@ -153,8 +153,10 @@ func (e *expander) expanded() bool {
 	return e.d != nil && e.d.on
 }
 
-func (e *expander) toggle() {
-	v := !e.expanded()
+func (e *expander) toggle() { e.setTo(!e.expanded()) }
+
+// setTo makes the block's own choice v.
+func (e *expander) setTo(v bool) {
 	e.set, e.val = true, v
 	if e.d != nil {
 		e.gen = e.d.gen
@@ -291,9 +293,14 @@ func (t *thinkingBlock) renderText(width int) []string {
 }
 
 // toolBlock shows a bash call: the model's description, the command, the
-// last few output lines and the outcome. Click expands the full output.
+// last few output lines and the outcome. Once the call is done it folds to
+// one line, the description, outcome and command (with the last output
+// lines when it failed: why it failed shows). A click on that line opens
+// the command and the output's first and last lines, a click on "… +N
+// lines" the whole output; ctrl+t opens every block in full.
 type toolBlock struct {
-	expander
+	expander          // the whole output
+	open     expander // more than one line, once done
 	clickable
 	args    agent.BashArgs
 	timeout time.Duration
@@ -313,6 +320,7 @@ type toolKey struct {
 	output                  string
 	total                   int
 	pending, done, expanded bool
+	open                    bool
 	res                     agent.BashResult // without Err, which may not be comparable
 	err                     string
 }
@@ -331,11 +339,28 @@ func (b *toolBlock) append(s string) {
 }
 
 func (b *toolBlock) Click(line int) bool {
+	if b.done && line == 0 {
+		// The header opens a done block, or folds it back to one line
+		// (forgetting that it showed the whole output).
+		if b.opened() {
+			b.setTo(false)
+		}
+		b.open.toggle()
+		return true
+	}
 	if !b.hit(line) {
 		return false
 	}
 	b.toggle()
 	return true
+}
+
+// opened reports whether a done block shows more than its line.
+func (b *toolBlock) opened() bool {
+	if b.open.d == nil {
+		b.open.d = b.d
+	}
+	return b.open.expanded()
 }
 
 // commandPreviewLines is how many lines a collapsed block gives its
@@ -441,7 +466,7 @@ func (b *toolBlock) status() (icon, status string) {
 // shows the time, is made again on every call.
 func (b *toolBlock) Render(width int) []string {
 	key := toolKey{args: b.args, timeout: b.timeout, output: b.output.String(), total: b.total,
-		pending: b.pending, done: b.done, expanded: b.expanded(), res: b.res}
+		pending: b.pending, done: b.done, expanded: b.expanded(), open: b.opened(), res: b.res}
 	if key.res.Err != nil {
 		key.res.Err, key.err = nil, b.res.Err.Error()
 	}
@@ -465,7 +490,43 @@ func (b *toolBlock) head(width int) string {
 	return tui.Truncate(head, width, tui.Dim("…"))
 }
 
+// line is a done block folded: description, outcome and command on one
+// line, and for a failed call the last output lines.
+func (b *toolBlock) line(width int) []string {
+	icon, status := b.status()
+	cmd := agent.FirstLine(b.args.Command)
+	if strings.Contains(strings.TrimSpace(b.args.Command), "\n") {
+		cmd += " …"
+	}
+	head := icon + " "
+	if desc := strings.Join(strings.Fields(b.args.Description), " "); desc != "" {
+		head += tui.Bold(desc) + tui.Dim(" · ") + tui.Dim(status) + tui.Dim("  $ "+cmd)
+	} else {
+		head += tui.Bold(cmd) + tui.Dim(" · ") + tui.Dim(status)
+	}
+	out := []string{tui.Truncate(head, width, tui.Dim("…"))}
+	if b.failed() {
+		lines := displayLines(b.output.String())
+		lines = lines[max(0, len(lines)-failedTailLines):]
+		for i, l := range lines {
+			prefix := "    "
+			if i == 0 {
+				prefix = "  └ "
+			}
+			out = append(out, tui.Truncate(tui.Dim(prefix+l), width, tui.Dim("…")))
+		}
+	}
+	return b.clicks(true, out, false)
+}
+
+// failedTailLines is how much of a failed call's output its folded block
+// shows.
+const failedTailLines = 2
+
 func (b *toolBlock) render(width int) []string {
+	if b.done && !b.opened() {
+		return b.line(width)
+	}
 	cmd := strings.TrimSpace(b.args.Command)
 	if i := strings.IndexByte(cmd, '\n'); i >= 0 {
 		cmd = cmd[:i] + " …"
