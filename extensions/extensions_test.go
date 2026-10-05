@@ -737,7 +737,8 @@ func TestGuideExamples(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parts := strings.Split(string(guide), "```ts\n")[1:]
+	// A Windows checkout may have CRLF line ends.
+	parts := strings.Split(strings.ReplaceAll(string(guide), "\r\n", "\n"), "```ts\n")[1:]
 	if len(parts) < 3 {
 		t.Fatalf("%d examples", len(parts))
 	}
