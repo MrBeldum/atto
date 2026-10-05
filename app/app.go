@@ -52,6 +52,8 @@ type App struct {
 
 	editor *tui.Editor
 	modal  modal
+	// login replaces the browser, clipboard and device ID in tests.
+	login loginHooks
 	// clipboard reads an image for Ctrl+V / Alt+V.
 	clipboard func(context.Context) (provider.Image, error)
 
@@ -119,7 +121,8 @@ func Run(opts Options) error {
 		return err
 	}
 	model, err := core.PickModel(models, settings, opts.Model)
-	if err != nil {
+	noModels := errors.Is(err, core.ErrNoModels)
+	if err != nil && !noModels {
 		return err
 	}
 	cwd, err := os.Getwd()
@@ -147,6 +150,10 @@ func Run(opts Options) error {
 	}
 	a.escAction = settings.DoubleEscapeAction
 	a.build()
+	if noModels {
+		// First run: start anyway and say how to get a model, like pi.
+		a.notice("%s", core.NoModelsHint())
+	}
 	a.newSession()
 	a.sessionStartHook("startup")
 	a.statusCmd = settings.StatusLine != nil && settings.StatusLine.Command != ""
@@ -264,10 +271,17 @@ func (a *App) effort() string {
 func (a *App) addHeader() {
 	a.ui.Body.Add(tui.Func(func(width int) []string {
 		return []string{
-			tui.Truncate(tui.Bold("atto")+tui.Dim(" "+Version+"  ·  "+a.model().Model.DisplayName()), width, "…"),
+			tui.Truncate(tui.Bold("atto")+tui.Dim(" "+Version+"  ·  "+a.headerModel()), width, "…"),
 			tui.Truncate(tui.Dim("/ commands · enter steer · tab queue · shift+tab effort · ctrl+t details · esc interrupt · esc esc go back"), width, "…"),
 		}
 	}))
+}
+
+func (a *App) headerModel() string {
+	if m := a.model().Model; m.ID != "" {
+		return m.DisplayName()
+	}
+	return "no model (/login)"
 }
 
 func (a *App) add(c tui.Component) { a.ui.Body.Add(gap{c}) }
@@ -374,6 +388,8 @@ func (a *App) submit(text string, att []tui.Attachment) {
 		}
 	case strings.HasPrefix(text, "/"):
 		a.runCommand(text)
+	case a.noModel():
+		a.restoreToEditor([]string{text})
 	case a.busy && a.runKind == "turn":
 		a.steer(text)
 	case a.busy:

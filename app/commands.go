@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/core"
 	"github.com/sebastianrcnt/atto/session"
 	"github.com/sebastianrcnt/atto/tui"
 )
@@ -26,6 +27,8 @@ func init() {
 		{"copy", "", "Copy the last answer (works over SSH via OSC 52)", (*App).cmdCopy},
 		{"context", "[system]", "Show what fills the context and cache use", (*App).cmdContext},
 		{"request", "", "Save the raw last request to a file", (*App).cmdRequest},
+		{"login", "[provider]", "Sign in with an account or save an API key", (*App).cmdLogin},
+		{"logout", "[provider]", "Remove stored credentials", (*App).cmdLogout},
 		{"resume", "", "Resume a saved conversation", (*App).cmdResume},
 		{"tree", "", "Go back to any point of the conversation (also esc esc)", (*App).cmdTree},
 		{"fork", "", "Start a new conversation from an earlier message", (*App).cmdFork},
@@ -155,12 +158,26 @@ func (a *App) cmdModel(arg string) {
 		a.setModel(ref)
 		return
 	}
+	a.modelPicker("")
+}
+
+// modelPicker opens the model list, optionally for one provider.
+func (a *App) modelPicker(provider string) {
 	cur := a.model()
 	p := &tui.SelectList{Title: "Select model (enter to choose, esc to cancel)", Filterable: true}
-	for i, r := range a.models.List() {
+	refs := a.models.List()
+	if len(refs) == 0 {
+		a.notice("%s", core.NoModelsHint())
+		return
+	}
+	for _, r := range refs {
+		if provider != "" && r.ProviderName != provider {
+			continue
+		}
+		i := len(p.Items)
 		detail := r.ProviderName
 		if r.APIKey == "" && r.Provider.Env != nil {
-			detail += " (no key: atto auth set " + r.ProviderName + ")"
+			detail += " (no key: /login)"
 		}
 		if r.Model.ContextWindow > 0 {
 			detail += " · " + tui.FormatTokens(r.Model.ContextWindow) + " ctx"

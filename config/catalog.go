@@ -13,6 +13,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sebastianrcnt/atto/ai"
+	"github.com/sebastianrcnt/atto/fsutil"
 )
 
 // Built-in providers come from the models.dev catalog (as pi does). Only
@@ -32,27 +35,45 @@ type catalogProvider struct {
 	api     string // wire API of the provider's models ("" = chat completions)
 	env     []string
 	headers map[string]string
+	// source is the models.dev provider to read ("" = name).
+	source string
+	// only keeps models whose ID has this prefix.
+	only string
 }
 
-// OpenCode Zen and Go: OpenAI-compatible chat completions, API key auth,
-// and a per-conversation routing header (pi: opencode-headers.ts). Zen's GPT
-// models are served over the Responses API instead.
+func (cp catalogProvider) sourceName() string {
+	if cp.source != "" {
+		return cp.source
+	}
+	return cp.name
+}
+
+// OpenCode Zen and Go: OpenAI-compatible chat completions with API key auth
+// (pi: providers/opencode.ts, opencode-go.ts); package ai adds their
+// per-conversation routing header. Zen's GPT models are served over the
+// Responses API instead.
 //
 // OpenAI itself uses the Responses API with an API key or Sign in with
-// ChatGPT (atto login openai); the session headers let it route turns of one
-// conversation to the same cache.
+// ChatGPT (/login); package ai sends the session_id routing headers that
+// keep turns of one conversation on the same cache.
 var catalogProviders = []catalogProvider{
 	{
 		name: "openai", display: "OpenAI", baseURL: "https://api.openai.com/v1", api: "openai-responses",
-		env: []string{"OPENAI_API_KEY"}, headers: map[string]string{"session_id": "$session", "x-client-request-id": "$session"},
+		env: []string{"OPENAI_API_KEY"},
+	},
+	{
+		// pi: providers/openai-codex.ts. The ChatGPT backend serves the GPT-5
+		// family to Plus/Pro subscribers logged in with /login (no API key).
+		name: "openai-codex", display: "OpenAI Codex (ChatGPT Plus/Pro)", baseURL: "https://chatgpt.com/backend-api",
+		api: "openai-codex-responses", env: []string{}, source: "openai", only: "gpt-5",
 	},
 	{
 		name: "opencode", display: "OpenCode Zen", baseURL: "https://opencode.ai/zen/v1",
-		env: []string{"OPENCODE_API_KEY"}, headers: map[string]string{"x-opencode-session": "$session"},
+		env: []string{"OPENCODE_API_KEY"},
 	},
 	{
 		name: "opencode-go", display: "OpenCode Go", baseURL: "https://opencode.ai/zen/go/v1",
-		env: []string{"OPENCODE_API_KEY"}, headers: map[string]string{"x-opencode-session": "$session"},
+		env: []string{"OPENCODE_API_KEY"},
 	},
 }
 
@@ -109,8 +130,8 @@ func RefreshCatalog(ctx context.Context) error {
 	}
 	subset := map[string]json.RawMessage{}
 	for _, cp := range catalogProviders {
-		if raw, ok := all[cp.name]; ok {
-			subset[cp.name] = raw
+		if raw, ok := all[cp.sourceName()]; ok {
+			subset[cp.sourceName()] = raw
 		}
 	}
 	data, err := json.Marshal(subset)
@@ -120,11 +141,7 @@ func RefreshCatalog(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(catalogPath()), 0o755); err != nil {
 		return err
 	}
-	tmp := catalogPath() + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, catalogPath())
+	return fsutil.WriteAtomic(catalogPath(), data, 0o644)
 }
 
 // CatalogProviders builds providers from the cached catalog (none if the
@@ -140,7 +157,7 @@ func CatalogProviders() map[string]Provider {
 		return out
 	}
 	for _, cp := range catalogProviders {
-		src, ok := cached[cp.name]
+		src, ok := cached[cp.sourceName()]
 		if !ok {
 			continue
 		}
@@ -152,6 +169,9 @@ func CatalogProviders() map[string]Provider {
 			p.API = "openai-completions"
 		}
 		for id, m := range src.Models {
+			if !strings.HasPrefix(id, cp.only) {
+				continue
+			}
 			if mod, ok := catalogModel(cp, id, m); ok {
 				p.Models = append(p.Models, mod)
 			}
@@ -174,7 +194,7 @@ func catalogModel(cp catalogProvider, id string, m modelsDevModel) (Model, bool)
 	if !m.ToolCall || m.Status == "deprecated" {
 		return Model{}, false
 	}
-	responses := cp.api == "openai-responses"
+	responses := cp.api == "openai-responses" || cp.api == "openai-codex-responses"
 	for _, no := range []string{"realtime", "audio", "image", "transcribe", "tts"} {
 		if responses && strings.Contains(id, no) {
 			return Model{}, false // not usable through text Responses requests
@@ -207,8 +227,10 @@ func catalogModel(cp catalogProvider, id string, m modelsDevModel) (Model, bool)
 	if mod.MaxTokens == 0 {
 		mod.MaxTokens = catalogMaxTokens
 	}
-	if responses && cp.api != "openai-responses" {
+	if responses && cp.api == "" {
 		mod.API = "openai-responses"
+		// pi: OpenCode's Responses proxy takes x-client-request-id only.
+		mod.Compat = &ai.Compat{SessionAffinityFormat: "openai-nosession"}
 	}
 	if !m.Reasoning {
 		return mod, true

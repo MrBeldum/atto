@@ -45,7 +45,7 @@ func TestCatalogAndMerge(t *testing.T) {
 		t.Fatalf("want glm-5.3 and kimi-k2.6, got %+v", refs)
 	}
 	glm, ok := m.Find("", "opencode-go/glm-5.3")
-	if !ok || glm.Model.Name != "My GLM" || glm.APIKey != "k-123" || glm.Provider.Headers["x-opencode-session"] != "$session" {
+	if !ok || glm.Model.Name != "My GLM" || glm.APIKey != "k-123" || len(glm.Provider.Headers) != 0 {
 		t.Fatalf("override/key/header: %+v", glm)
 	}
 	kimi, _ := m.Find("opencode-go", "kimi-k2.6")
@@ -86,7 +86,7 @@ func TestEffortMapLikePi(t *testing.T) {
 	if got := strings.Join(m.Levels(), ","); got != "high,xhigh,max" {
 		t.Fatalf("merged levels %s", got)
 	}
-	if m.WireEfforts()["xhigh"] != "max" {
-		t.Fatalf("wire %v", m.WireEfforts())
+	if *m.EffortMap["xhigh"] != "max" {
+		t.Fatalf("wire %v", m.EffortMap)
 	}
 }
