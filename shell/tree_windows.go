@@ -75,12 +75,12 @@ func Detach(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS}
 }
 
-// Isolate makes cmd outlive its parent but, unlike Detach, keeps it on the
-// parent's console, so that what it runs sees the same console (and code
-// page) as a command atto runs directly. It does not survive the console
-// itself closing.
+// Isolate makes cmd outlive its parent on a console of its own, hidden.
+// What it runs gets a console as usual, but changes to it (PowerShell
+// setting the code page, say) never reach the user's terminal, during or
+// after atto.
 func Isolate(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP}
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW}
 }
 
 // KillGroup terminates pid. A Windows process tree is held together by
