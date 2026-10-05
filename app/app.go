@@ -684,8 +684,10 @@ func (a *App) pinnedPrompt(firstVisible, width int) string {
 
 // legacyConsole reports a classic Windows console (conhost), where the
 // alternate screen and mouse reporting are unreliable; Windows Terminal
-// and VS Code set WT_SESSION or TERM_PROGRAM. Set "renderer" in
-// settings.json to override.
+// and VS Code set WT_SESSION or TERM_PROGRAM. Over SSH the client's
+// terminal does the drawing (and sshd passes neither variable), so an SSH
+// session is never legacy. Set "renderer" in settings.json to override.
 func legacyConsole() bool {
-	return runtime.GOOS == "windows" && os.Getenv("WT_SESSION") == "" && os.Getenv("TERM_PROGRAM") == ""
+	return runtime.GOOS == "windows" && os.Getenv("WT_SESSION") == "" && os.Getenv("TERM_PROGRAM") == "" &&
+		os.Getenv("SSH_CONNECTION") == "" && os.Getenv("SSH_TTY") == ""
 }
