@@ -26,7 +26,7 @@ const StartTimeout = 60 * time.Second
 type Options struct {
 	// Cwd is the session's working directory: stdio servers run there.
 	Cwd string
-	// Root is the project root, where .mcp.json and .atto/mcp.json are.
+	// Root is the project root, where .mcp.json is.
 	Root string
 	// Lookup resolves ${VAR}; nil is os.LookupEnv.
 	Lookup func(string) (string, bool)
@@ -144,6 +144,10 @@ func (m *Manager) Issues() []string {
 	defer m.mu.Unlock()
 	return append([]string(nil), m.issues...)
 }
+
+// Ignored is a repository file of local servers that is not read (see
+// Ignored), or "".
+func (m *Manager) Ignored() string { return Ignored(m.opts.Root) }
 
 // Names are the configured servers, sorted. Whether a server is approved
 // or running does not matter: the list changes only when the

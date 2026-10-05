@@ -44,11 +44,13 @@ type Loaded struct {
 	// or not (see package extensions).
 	Extensions []extensions.Info `json:"extensions,omitempty"`
 	// MCP are the MCP servers configured, started or not (see package mcp).
-	MCP    []mcp.Info   `json:"mcp,omitempty"`
-	Config []ConfigFile `json:"config"`
-	Model  Choice       `json:"model"`
-	Effort Choice       `json:"effort"`
-	Prompt Prompt       `json:"system_prompt"`
+	MCP []mcp.Info `json:"mcp,omitempty"`
+	// MCPIgnored is a <project>/.atto/mcp.json that is not read.
+	MCPIgnored string       `json:"mcp_ignored,omitempty"`
+	Config     []ConfigFile `json:"config"`
+	Model      Choice       `json:"model"`
+	Effort     Choice       `json:"effort"`
+	Prompt     Prompt       `json:"system_prompt"`
 	// Context is what else goes to the model besides the system prompt
 	// and the conversation: the tool schema, how images are sent, hook
 	// output.
@@ -185,6 +187,12 @@ func Collect(ag *agent.Agent, hookSrc []config.HookSource, modelFrom, effortFrom
 	var mcpWarn []string
 	l.MCP, mcpWarn = mcpInfos(ag)
 	l.Warnings = append(l.Warnings, mcpWarn...)
+	if m := MCPOf(ag); m != nil {
+		if p := m.Ignored(); p != "" {
+			l.MCPIgnored = p
+			l.Warnings = append(l.Warnings, mcpIgnoredText(p, src.Cwd))
+		}
+	}
 
 	l.Config = configFiles(src.Cwd)
 
@@ -273,7 +281,7 @@ func configFiles(cwd string) []ConfigFile {
 		{Path: config.ProjectSettingsPath(cwd), Role: "project settings (hooks)"},
 		{Path: config.MCPPath(), Role: "MCP servers"},
 		{Path: config.ProjectMCPPath(root), Role: "project MCP servers"},
-		{Path: config.LocalMCPPath(root), Role: "local MCP servers"},
+		{Path: config.LocalMCPPath(root), Role: "local MCP servers (private)"},
 		{Path: config.ModelsPath(), Role: "models"},
 		{Path: config.AuthPath(), Role: "credentials"},
 	}
@@ -426,6 +434,8 @@ func (l Loaded) Summary() []Row {
 
 	if len(l.MCP) > 0 { // likewise
 		rows = append(rows, Row{"MCP", mcpSummary(l.MCP)})
+	} else if l.MCPIgnored != "" {
+		rows = append(rows, Row{"MCP", "ignored: " + ShortPath(l.MCPIgnored)})
 	}
 
 	rows = append(rows, Row{"Model", l.modelText()})
@@ -583,6 +593,9 @@ func (l Loaded) Details() []Section {
 	s = Section{Title: "MCP servers"}
 	for _, in := range l.MCP {
 		s.Rows = append(s.Rows, mcpRow(in))
+	}
+	if l.MCPIgnored != "" {
+		s.Rows = append(s.Rows, Row{"ignored", mcpIgnoredText(l.MCPIgnored, l.Cwd)})
 	}
 	if len(s.Rows) == 0 {
 		s.Rows = append(s.Rows, Row{"none", "atto mcp add, or write " + ShortPath(config.MCPPath()) +

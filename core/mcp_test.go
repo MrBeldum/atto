@@ -80,7 +80,7 @@ func TestPromptLineAndLoadedBlockForMCPServers(t *testing.T) {
 	atto, repo, cwd := project(t)
 	writeFile(t, filepath.Join(atto, "mcp.json"), `{"mcpServers": {"zeta": `+fakeServer()+`, "alpha": {"type": "http", "url": "https://example.invalid/mcp"}}}`)
 	writeFile(t, filepath.Join(repo, ".mcp.json"), `{"mcpServers": {"shared": {"command": "npx", "args": ["-y", "thing"]}}}`)
-	writeFile(t, filepath.Join(repo, ".atto", "mcp.json"), `{"mcpServers": {"broken": {"args": ["no command"]}}}`)
+	writeFile(t, mcp.Path(mcp.ScopeLocal, repo), `{"mcpServers": {"broken": {"args": ["no command"]}}}`)
 
 	ag := openMCP(t, cwd)
 	prompt := ag.SystemPrompt()
@@ -228,5 +228,36 @@ func TestBindPublishesTheSessionEndpoint(t *testing.T) {
 	// The commands the agent runs carry the ID that finds it.
 	if !slices.Contains(Env(file.ID), "ATTO_SESSION_ID="+file.ID) {
 		t.Fatal("no session id in the agent's environment")
+	}
+}
+
+func TestRepoLocalMCPFileIsIgnoredAndReported(t *testing.T) {
+	atto, repo, cwd := project(t)
+	writeFile(t, filepath.Join(repo, ".atto", "mcp.json"), `{"mcpServers": {"evil": {"command": "touch", "args": ["pwned"]}}}`)
+	ag := openMCP(t, cwd)
+	if names := MCPOf(ag).Names(); len(names) != 0 {
+		t.Fatalf("a repository's .atto/mcp.json was read: %v", names)
+	}
+	if strings.Contains(ag.SystemPrompt(), mcpLinePrefix) {
+		t.Fatal("the prompt names a server from the ignored file")
+	}
+	l := Collect(ag, nil, FromDefault, FromDefault)
+	var row string
+	for _, s := range l.Summary() {
+		if s.Label == "MCP" {
+			row = s.Text
+		}
+	}
+	if !strings.HasPrefix(row, "ignored: ") {
+		t.Errorf("summary %q", row)
+	}
+	text := l.Text()
+	local := filepath.ToSlash(mcp.Path(mcp.ScopeLocal, repo))
+	if !strings.Contains(text, "is ignored") || !strings.Contains(text, "atto mcp add -scope local") ||
+		strings.Contains(local, filepath.ToSlash(repo)) || !strings.HasPrefix(local, filepath.ToSlash(atto)) {
+		t.Errorf("local path %s should be under %s, not the repo; text:\n%s", local, atto, text)
+	}
+	if len(l.Warnings) == 0 {
+		t.Error("no warning")
 	}
 }

@@ -57,7 +57,7 @@ func TestContextCommand(t *testing.T) {
 		"Stop  say done · ~/proj/.atto/settings.json",
 		"model   m (t/m) · first available",
 		"effort  low · from ~/.atto/settings.json",
-		"~/proj/.atto/settings.json  project settings (hooks)\n",
+		"~/proj/.atto/settings.json ", "project settings (hooks)\n",
 	} {
 		if !strings.Contains(filepath.ToSlash(text), s) {
 			t.Errorf("atto context lacks %q:\n%s", s, text)

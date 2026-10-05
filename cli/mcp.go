@@ -42,7 +42,7 @@ const mcpUsage = `usage: atto mcp <command>
 Servers are configured in Claude Code's .mcp.json format:
   user     ~/.atto/mcp.json
   project  <project>/.mcp.json         shared; each server needs approval once
-  local    <project>/.atto/mcp.json    private to you
+  local    ~/.atto/projects/<project>/mcp.json   private to you, outside the repo
 The later wins by name (local over project over user). Strings may use
 ${VAR} and ${VAR:-default}. Remote servers that need OAuth are not supported.
 

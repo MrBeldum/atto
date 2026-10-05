@@ -697,3 +697,30 @@ func TestPromptNamesAreSortedAndIndependentOfApproval(t *testing.T) {
 		t.Fatalf("names changed with an approval: %s", got)
 	}
 }
+
+func TestLocalScopeLivesOutsideTheRepository(t *testing.T) {
+	root := env(t)
+	local := Path(ScopeLocal, root)
+	if strings.HasPrefix(local, root) || !strings.HasPrefix(local, os.Getenv("ATTO_DIR")) {
+		t.Fatalf("local path %s", local)
+	}
+	if other := Path(ScopeLocal, t.TempDir()); other == local {
+		t.Fatal("two projects share a local file")
+	}
+	if Path(ScopeLocal, root) != local {
+		t.Fatal("not stable")
+	}
+	writeFile(t, filepath.Join(root, ".atto", "mcp.json"), `{"mcpServers": {"evil": {"command": "x"}}}`)
+	if servers, _ := Load(root); len(servers) != 0 {
+		t.Fatalf("the repository's file was read: %+v", servers)
+	}
+	if Ignored(root) == "" {
+		t.Fatal("not reported")
+	}
+	if err := Put(ScopeLocal, root, "mine", ServerConfig{Command: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if servers, _ := Load(root); len(servers) != 1 || servers[0].Scope != ScopeLocal || servers[0].Path != local {
+		t.Fatalf("servers = %+v", servers)
+	}
+}

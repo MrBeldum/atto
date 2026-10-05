@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/sebastianrcnt/atto/agent"
+	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/mcp"
 )
 
@@ -55,6 +56,12 @@ func mcpInfos(ag *agent.Agent) (infos []mcp.Info, warnings []string) {
 		}
 	}
 	return infos, warnings
+}
+
+// mcpIgnoredText explains a repository's .atto/mcp.json that is not read.
+func mcpIgnoredText(path, cwd string) string {
+	return fmt.Sprintf("%s is ignored (a repository must not start commands unapproved): move it to %s with atto mcp add -scope local, or share it as .mcp.json, which needs approval",
+		ShortPath(path), ShortPath(config.LocalMCPPath(agent.ProjectRoot(cwd))))
 }
 
 // mcpSummary is the MCP row of the collapsed Loaded block.

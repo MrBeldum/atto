@@ -38,7 +38,7 @@ import (
 const (
 	ScopeUser    = "user"    // ~/.atto/mcp.json
 	ScopeProject = "project" // <root>/.mcp.json; needs approval
-	ScopeLocal   = "local"   // <root>/.atto/mcp.json; private to the user
+	ScopeLocal   = "local"   // ~/.atto/projects/<project>/mcp.json; private to the user, outside the repository
 )
 
 // Scopes lists the scopes in precedence order, lowest first.
@@ -126,6 +126,17 @@ type Server struct {
 // File is the format of an MCP server file.
 type File struct {
 	Servers map[string]ServerConfig `json:"mcpServers"`
+}
+
+// Ignored returns the path of a <root>/.atto/mcp.json if the repository has
+// one: it is not read, since a repository could use it to start commands
+// without approval. Local servers go to the user's own ~/.atto instead.
+func Ignored(root string) string {
+	p := config.RepoMCPPath(root)
+	if st, err := os.Stat(p); err == nil && !st.IsDir() {
+		return p
+	}
+	return ""
 }
 
 // Path returns the file for scope in a project at root.

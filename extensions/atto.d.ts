@@ -201,7 +201,7 @@ interface Atto {
   /**
    * The session's MCP servers, the ones "atto mcp" reaches in the agent's
    * shell (configured in ~/.atto/mcp.json, the project's .mcp.json or
-   * .atto/mcp.json). Servers start on first use and stay for the session.
+   * a private per-project file under ~/.atto). Servers start on first use and stay for the session.
    */
   mcp: {
     /**

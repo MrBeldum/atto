@@ -17,6 +17,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -139,8 +141,21 @@ func MCPRunDir() string { return filepath.Join(Dir(), "mcp") }
 // ProjectMCPPath is a project's shared MCP server file (checked in).
 func ProjectMCPPath(root string) string { return filepath.Join(root, ".mcp.json") }
 
-// LocalMCPPath is a project's private MCP server file.
-func LocalMCPPath(root string) string { return filepath.Join(root, ".atto", "mcp.json") }
+// LocalMCPPath is a project's private MCP server file. It lives under
+// ~/.atto, never in the repository (which could bring one of its own and
+// have atto start its commands unapproved): projects/<name>-<hash of the
+// absolute root>/mcp.json.
+func LocalMCPPath(root string) string {
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	sum := sha256.Sum256([]byte(filepath.Clean(root)))
+	return filepath.Join(Dir(), "projects", filepath.Base(root)+"-"+hex.EncodeToString(sum[:4]), "mcp.json")
+}
+
+// RepoMCPPath is where an earlier version looked for local servers, inside
+// the repository. It is not read; atto only reports that it is there.
+func RepoMCPPath(root string) string { return filepath.Join(root, ".atto", "mcp.json") }
 
 // ProjectExtensionsDir is a project's own extensions directory.
 func ProjectExtensionsDir(root string) string { return filepath.Join(root, ".atto", "extensions") }

@@ -69,7 +69,7 @@ func TestMCPAddListRemove(t *testing.T) {
 	if out, err := runMCP(t, "add", "-scope", "project", "-H", "Authorization: Bearer ${TOKEN}", "-H", "X-A:b", "-url", "https://example.invalid/mcp", "rem"); err != nil || !strings.Contains(out, "atto mcp approve rem") {
 		t.Fatalf("add remote: %q %v", out, err)
 	}
-	if out, err := runMCP(t, "add", "loc", "--", "echo"); err != nil || !strings.Contains(out, ".atto/mcp.json") && !strings.Contains(out, `.atto\mcp.json`) {
+	if out, err := runMCP(t, "add", "loc", "--", "echo"); err != nil || !strings.Contains(out, "projects") {
 		t.Fatalf("default scope is local: %q %v", out, err)
 	}
 
