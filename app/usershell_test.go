@@ -230,7 +230,8 @@ func TestShellBashModeInput(t *testing.T) {
 		t.Fatal("hint without a command")
 	}
 	a.editor.SetText("  !ls")
-	if got := tui.StripEscapes(strings.Join(a.renderInput(60), "\n")); !strings.Contains(got, "bash mode") || !strings.Contains(got, "! ") {
+	// The typed "!" is the mode; the prompt stays, so it shows once.
+	if got := tui.StripEscapes(strings.Join(a.renderInput(60), "\n")); !strings.Contains(got, "bash mode") || !strings.Contains(got, "› ") || strings.Contains(got, "! ") {
 		t.Fatalf("input:\n%s", got)
 	}
 	a.editor.SetText("!!ls")

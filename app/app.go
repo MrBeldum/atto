@@ -731,16 +731,17 @@ func (a *App) renderInput(width int) []string {
 	return a.renderEditor(width)
 }
 
-// renderEditor draws the editor, in bash mode (green rule, "!" prompt and
-// a hint) while its text starts a shell command.
+// renderEditor draws the editor, in bash mode (green rule and a hint)
+// while its text starts a shell command. The prompt stays "›": the "!" or
+// "!!" typed is the mode, as in pi.
 func (a *App) renderEditor(width int) []string {
 	mode := shellMode(a.editor.Text())
+	a.editor.Prompt = tui.FG(6, "› ")
 	if mode == "" {
-		a.editor.Rule, a.editor.Prompt = tui.Dim, tui.FG(6, "› ")
+		a.editor.Rule = tui.Dim
 		return a.editor.Render(width)
 	}
 	a.editor.Rule = func(s string) string { return tui.FG(2, s) }
-	a.editor.Prompt = tui.FG(2, "! ")
 	hint := "bash mode · runs in " + shortPath(a.cwd) + " · output goes to the model"
 	if mode == "!!" {
 		hint = "bash mode · not sent to the model"
