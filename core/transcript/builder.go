@@ -28,6 +28,19 @@ type Input struct {
 	Images []provider.Image
 }
 
+// ShellStart, ShellOutput and ShellEnd are events a front end gives the
+// Builder for a command the user runs ("!cmd"): the agent emits none. At
+// most one runs at a time. Unlike the agent's events they may arrive in the
+// middle of a turn.
+type (
+	ShellStart struct {
+		Command string
+		Exclude bool
+	}
+	ShellOutput struct{ Chunk string }
+	ShellEnd    struct{ Exec session.BashExec }
+)
+
 // Handler receives items as they change. The *Item is the Builder's own
 // and keeps changing: copy what must stay. Any field may be nil.
 type Handler struct {
@@ -61,6 +74,7 @@ type Builder struct {
 	// that streams only whitespace leaves no item, as on replay.
 	reasoning, text, compact *Item
 	summary                  *Item // a branch summary being written
+	shell                    *Item // a command the user is running
 	pendReasoning, pendText  string
 	thinkStart               time.Time
 	tools                    map[string]*Item // by call ID, while running
@@ -112,7 +126,7 @@ func (b *Builder) end(at time.Time) {
 			b.endTool(it.CallID, ToolResult{Canceled: true, ExitCode: -1}, 0)
 		}
 	}
-	for _, c := range []**Item{&b.compact, &b.summary} {
+	for _, c := range []**Item{&b.compact, &b.summary, &b.shell} {
 		if *c != nil {
 			it := *c
 			*c = nil
@@ -126,6 +140,33 @@ func (b *Builder) apply(ev any, at time.Time) {
 	switch e := ev.(type) {
 	case Input:
 		b.input(e.Text, e.Images)
+	case ShellStart:
+		b.shell = b.start(Item{Kind: Shell, Status: InProgress, Command: e.Command, Excluded: e.Exclude})
+	case ShellOutput:
+		if it := b.shell; it != nil {
+			it.Output += e.Chunk
+			if len(it.Output) > 2*keepOutput {
+				cut := len(it.Output) - keepOutput
+				it.Dropped += cut
+				it.Output = it.Output[cut:]
+			}
+			b.delta(it, e.Chunk)
+		}
+	case ShellEnd:
+		if it := b.shell; it != nil {
+			b.shell = nil
+			x := e.Exec
+			// What was saved, as replays have only that.
+			it.Output, it.Dropped = x.Output, 0
+			it.Truncated, it.FullOutput = x.Truncated, x.FullOutputPath
+			it.Result = &ToolResult{ExitCode: x.ExitCode, Canceled: x.Cancelled}
+			it.Duration = time.Duration(x.DurationMs) * time.Millisecond
+			it.Status = Completed
+			if it.Result.Failed() {
+				it.Status = Failed
+			}
+			b.completed(it)
+		}
 	case agent.ReasoningDelta:
 		if b.thinkStart.IsZero() {
 			b.thinkStart = at
@@ -411,6 +452,13 @@ func (b *Builder) Replay(entries []session.Entry) {
 			b.interruptCalls()
 			b.apply(agent.BranchSummaryStart{}, e.Time)
 			b.apply(agent.BranchSummaryEnd{Summary: e.Summary, Elapsed: time.Duration(e.ElapsedMs) * time.Millisecond}, e.Time)
+		case session.TypeBashExecution:
+			if x := e.Bash; x != nil {
+				b.interruptCalls()
+				b.apply(ShellStart{Command: x.Command, Exclude: x.Exclude}, e.Time)
+				b.apply(ShellOutput{Chunk: x.Output}, e.Time)
+				b.apply(ShellEnd{Exec: *x}, e.Time)
+			}
 		case session.TypeMessage:
 			if m == nil {
 				continue

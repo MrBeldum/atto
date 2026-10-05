@@ -94,6 +94,12 @@ type App struct {
 	compact  *compactBlock
 	// summaryBlk is the branch summary block being streamed.
 	summaryBlk *summaryBlock
+	// shell is the command the user is running with "!", shellBlk the
+	// block of the latest one, and pendingShell those that finished during
+	// a run (see usershell.go).
+	shell        *shellRun
+	shellBlk     *shellBlock
+	pendingShell []pendingShell
 	// steered collects the user messages of a committed steer, shown as
 	// one block; replaying is set while blocks come from saved entries.
 	steered   []string
@@ -283,6 +289,7 @@ func (a *App) leaveSession(reason string) {
 		a.notice("Stopped %d background job(s) of the previous conversation.", n)
 	}
 	a.jobCount, a.timerCount, a.pendingEvents = 0, 0, nil
+	a.dropShell()
 }
 
 // newSession starts recording into a fresh session file.
@@ -408,6 +415,10 @@ func (a *App) onInput(data string) bool {
 		a.details.gen++ // the expanded blocks are confirmation enough
 		return true
 	case "escape":
+		if a.cancelShell() {
+			a.esc.reset()
+			return true
+		}
 		if a.busy {
 			a.esc.reset()
 			if len(a.pendingSteers) > 0 {
@@ -419,6 +430,7 @@ func (a *App) onInput(data string) bool {
 		return a.onEscape()
 	case "ctrl+c":
 		switch {
+		case a.cancelShell():
 		case a.busy:
 			a.cancel()
 		case a.editor.Text() != "":
@@ -467,6 +479,10 @@ func (a *App) submit(text string, att []tui.Attachment) {
 		return
 	}
 	a.ui.ScrollToBottom()
+	if cmd, exclude, ok := parseShell(text); ok && len(att) == 0 {
+		a.submitShell(text, cmd, exclude)
+		return
+	}
 	if len(att) > 0 && !strings.HasPrefix(text, "/") {
 		a.submitWithImages(text, att)
 		return
@@ -633,7 +649,24 @@ func (a *App) renderInput(width int) []string {
 	if a.modal != nil {
 		return append([]string{""}, a.modal.Render(width)...)
 	}
-	return a.editor.Render(width)
+	return a.renderEditor(width)
+}
+
+// renderEditor draws the editor, in bash mode (green rule, "!" prompt and
+// a hint) while its text starts a shell command.
+func (a *App) renderEditor(width int) []string {
+	mode := shellMode(a.editor.Text())
+	if mode == "" {
+		a.editor.Rule, a.editor.Prompt = tui.Dim, tui.FG(6, "› ")
+		return a.editor.Render(width)
+	}
+	a.editor.Rule = func(s string) string { return tui.FG(2, s) }
+	a.editor.Prompt = tui.FG(2, "! ")
+	hint := "bash mode · runs in " + shortPath(a.cwd) + " · output goes to the model"
+	if mode == "!!" {
+		hint = "bash mode · not sent to the model"
+	}
+	return append(a.editor.Render(width), tui.Truncate(" "+tui.FG(2, hint), width, "…"))
 }
 
 // jumpPill is the centered "Jump to bottom" pill above the input while the

@@ -50,6 +50,9 @@ const (
 	// summary of the branch left behind (pi's branch_summary), which the
 	// model sees on the new branch.
 	TypeBranchSummary = "branch_summary"
+	// TypeBashExecution is a shell command the user ran with "!" or "!!"
+	// in the prompt; unless excluded, the model sees it as a user message.
+	TypeBashExecution = "bash_execution"
 )
 
 // Entry is one line of a session file. Fields are used according to Type.
@@ -104,6 +107,26 @@ type Entry struct {
 	// branch_summary: the summary of the branch from FromID back to where
 	// it meets the new one (ElapsedMs is how long writing it took)
 	Summary string `json:"summary,omitempty"`
+
+	// bash_execution
+	Bash *BashExec `json:"bash,omitempty"`
+}
+
+// BashExec is a command the user ran with "!" (or "!!", which keeps it
+// out of the model's context).
+type BashExec struct {
+	Command string `json:"command"`
+	// Output is the command's output as shown and as sent to the model:
+	// tidied, and cut in the middle when long (Truncated; the whole of it
+	// is in FullOutputPath).
+	Output         string `json:"output,omitempty"`
+	ExitCode       int    `json:"exitCode"`
+	Cancelled      bool   `json:"cancelled,omitempty"`
+	Truncated      bool   `json:"truncated,omitempty"`
+	FullOutputPath string `json:"fullOutputPath,omitempty"`
+	// Exclude keeps the command and its output from the model ("!!").
+	Exclude    bool  `json:"excludeFromContext,omitempty"`
+	DurationMs int64 `json:"durationMs,omitempty"`
 }
 
 // ToolMeta records how a tool call went, for redisplay on resume.

@@ -511,6 +511,12 @@ func (a *Agent) Restore(entries []session.Entry) {
 			m := BranchSummaryMessage(e.Summary)
 			a.messages = append(a.messages, m)
 			a.sinceUsage += messageChars(m)
+		case session.TypeBashExecution:
+			if e.Bash != nil && !e.Bash.Exclude {
+				m := BashExecutionMessage(*e.Bash)
+				a.messages = append(a.messages, m)
+				a.sinceUsage += messageChars(m)
+			}
 		case session.TypeCompaction:
 			a.messages = nil
 			for _, m := range e.Replacement {

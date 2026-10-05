@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/events"
 	"github.com/sebastianrcnt/atto/session"
 	"github.com/sebastianrcnt/atto/tui"
@@ -542,6 +543,10 @@ func (p *treePicker) searchText(n *session.Node) string {
 		parts = append(parts, "compaction")
 	case session.TypeBranchSummary:
 		parts = append(parts, "branch summary", e.Summary)
+	case session.TypeBashExecution:
+		if x := e.Bash; x != nil {
+			parts = append(parts, "bash", x.Command, x.Output)
+		}
 	case session.TypeModel:
 		parts = append(parts, "model", e.Model)
 	case session.TypeEffort:
@@ -573,6 +578,10 @@ func (p *treePicker) copyText(n *session.Node) string {
 		return e.Notes
 	case session.TypeBranchSummary:
 		return e.Summary
+	case session.TypeBashExecution:
+		if x := e.Bash; x != nil {
+			return agent.BashExecutionText(*x)
+		}
 	}
 	return ""
 }
@@ -613,6 +622,16 @@ func (p *treePicker) entryText(n *session.Node) string {
 		return tui.FG(6, fmt.Sprintf("[compaction: %dk tokens]", (e.TokensBefore+500)/1000))
 	case session.TypeBranchSummary:
 		return tui.FG(5, "[branch summary]: ") + clip(oneLine(e.Summary), 200)
+	case session.TypeBashExecution:
+		x := e.Bash
+		if x == nil {
+			return ""
+		}
+		s := tui.FG(5, "[bash: "+clip(oneLine(x.Command), 50)+"]")
+		if x.Exclude {
+			s += tui.Dim(" (not sent to the model)")
+		}
+		return s
 	case session.TypeModel:
 		return tui.Dim("[model: " + e.Model + "]")
 	case session.TypeEffort:
