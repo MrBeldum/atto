@@ -84,16 +84,26 @@ var errNoClipboard = &copyError{"no clipboard command (install wl-clipboard or x
 
 // cmdCopy copies the last answer as markdown.
 func (a *App) cmdCopy(string) {
-	children := a.ui.Body.Children
+	text := lastAnswer(a.ui.Body.Children)
+	if text == "" {
+		a.notice("Nothing to copy yet.")
+		return
+	}
+	a.notice("Last answer (%d chars) %s.", len([]rune(text)), a.copyText(text))
+}
+
+// lastAnswer is the text of the last assistant answer in the transcript.
+func lastAnswer(children []tui.Component) string {
 	for i := len(children) - 1; i >= 0; i-- {
-		if t, ok := children[i].(*textBlock); ok {
-			text := strings.TrimSpace(t.text.String())
-			if text == "" {
-				continue
+		c := children[i]
+		if g, ok := c.(gap); ok { // a.add wraps blocks in a gap
+			c = g.Component
+		}
+		if t, ok := c.(*textBlock); ok {
+			if text := strings.TrimSpace(t.text.String()); text != "" {
+				return text
 			}
-			a.notice("Last answer (%d chars) %s.", len([]rune(text)), a.copyText(text))
-			return
 		}
 	}
-	a.notice("Nothing to copy yet.")
+	return ""
 }

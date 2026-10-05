@@ -174,15 +174,14 @@ func RunPrint(o PrintOptions) error {
 	defer sess.Close()
 
 	// Model and effort: flags, else the session's last, else defaults.
+	// The model and effort last used in the session, unless given.
 	modelID, effort := o.Model, o.Effort
-	if modelID == "" || effort == "" {
-		for _, e := range entries {
-			if e.Type == session.TypeModel && modelID == "" {
-				modelID = e.Provider + "/" + e.Model
-			}
-			if e.Type == session.TypeEffort && o.Effort == "" {
-				effort = e.Effort
-			}
+	for _, e := range entries {
+		if e.Type == session.TypeModel && o.Model == "" {
+			modelID = e.Provider + "/" + e.Model
+		}
+		if e.Type == session.TypeEffort && o.Effort == "" {
+			effort = e.Effort
 		}
 	}
 	model, ok := pickModel(models, settings, modelID)

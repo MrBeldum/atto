@@ -40,3 +40,12 @@ func TestCopyCommand(t *testing.T) {
 		t.Fatal("no display: no command, OSC 52 only", c)
 	}
 }
+
+func TestLastAnswerUnwrapsGap(t *testing.T) {
+	b := &textBlock{}
+	b.text.WriteString("the answer")
+	got := lastAnswer([]tui.Component{gap{b}, gap{&eventBlock{title: "later"}}})
+	if got != "the answer" {
+		t.Fatalf("%q", got)
+	}
+}
