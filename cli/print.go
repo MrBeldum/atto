@@ -332,7 +332,7 @@ func (p *printer) flushStep() {
 // counts its usage.
 func (p *printer) event(ev any) {
 	if p.tr.Handler.Started == nil {
-		p.tr.Handler = transcript.Handler{Started: p.started, Delta: p.delta, Completed: p.completed}
+		p.tr.Handler = transcript.Handler{Started: p.started, Delta: p.delta, Updated: p.updated, Completed: p.completed}
 	}
 	p.tr.Event(ev)
 	if e, ok := ev.(agent.StepEnd); ok {
@@ -345,16 +345,30 @@ func (p *printer) event(ev any) {
 func (p *printer) started(it *transcript.Item) {
 	switch it.Kind {
 	case transcript.Tool:
-		p.flushStep()
-		p.emit(map[string]any{"type": "tool_use", "id": it.CallID, "description": it.Description, "command": it.Command})
-		if p.verbose && p.textMode() {
-			fmt.Fprintf(p.errOut, "\n● %s  $ %s\n", it.Description, tui.FirstLine(it.Command))
+		if !it.Pending { // a call the model is writing is announced when it runs
+			p.toolUse(it)
 		}
 	case transcript.Hook:
 		p.emit(map[string]any{"type": "hook", "event": it.HookEvent, "message": it.Text, "blocked": it.Blocked})
 		if p.textMode() {
 			fmt.Fprintf(p.errOut, "⚑ %s: %s\n", it.HookEvent, it.Text)
 		}
+	}
+}
+
+// updated announces a call the model wrote once it is complete: tool_use
+// carries the final arguments, one per call.
+func (p *printer) updated(it *transcript.Item) {
+	if it.Kind == transcript.Tool && !it.Pending {
+		p.toolUse(it)
+	}
+}
+
+func (p *printer) toolUse(it *transcript.Item) {
+	p.flushStep()
+	p.emit(map[string]any{"type": "tool_use", "id": it.CallID, "description": it.Description, "command": it.Command})
+	if p.verbose && p.textMode() {
+		fmt.Fprintf(p.errOut, "\n● %s  $ %s\n", it.Description, tui.FirstLine(it.Command))
 	}
 }
 
@@ -381,7 +395,7 @@ func (p *printer) completed(it *transcript.Item) {
 	switch it.Kind {
 	case transcript.Tool:
 		r := it.Result
-		if r == nil {
+		if r == nil || it.CallID == "" { // a call the model wrote that never ran
 			return
 		}
 		out := r.Text

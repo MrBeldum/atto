@@ -20,7 +20,7 @@ import (
 // tr is the App's transcript builder, wired to the blocks.
 func (a *App) tr() *transcript.Builder {
 	if a.items.Handler.Started == nil {
-		a.items.Handler = transcript.Handler{Started: a.itemStarted, Delta: a.itemDelta, Completed: a.itemCompleted}
+		a.items.Handler = transcript.Handler{Started: a.itemStarted, Delta: a.itemDelta, Updated: a.itemUpdated, Completed: a.itemCompleted}
 	}
 	return &a.items
 }
@@ -82,7 +82,7 @@ func (a *App) itemStarted(it *transcript.Item) {
 		a.add(a.text)
 	case transcript.Tool:
 		b := &toolBlock{args: agent.BashArgs{Description: it.Description, Command: it.Command},
-			timeout: it.Timeout, start: time.Now(), expander: expander{d: &a.details}}
+			timeout: it.Timeout, pending: it.Pending, start: time.Now(), expander: expander{d: &a.details}}
 		if a.tools == nil {
 			a.tools = map[string]*toolBlock{}
 		}
@@ -115,6 +115,18 @@ func (a *App) itemDelta(it *transcript.Item, d string) {
 	}
 }
 
+// itemUpdated follows a tool call the model is writing, and starts its
+// timer when the call begins running.
+func (a *App) itemUpdated(it *transcript.Item) {
+	if b := a.tools[it.ID]; b != nil && it.Kind == transcript.Tool {
+		b.args = agent.BashArgs{Description: it.Description, Command: it.Command}
+		b.timeout = it.Timeout
+		if b.pending && !it.Pending {
+			b.pending, b.start = false, time.Now()
+		}
+	}
+}
+
 func (a *App) itemCompleted(it *transcript.Item) {
 	switch it.Kind {
 	case transcript.Reasoning:
@@ -126,7 +138,7 @@ func (a *App) itemCompleted(it *transcript.Item) {
 		a.text = nil
 	case transcript.Tool:
 		if b := a.tools[it.ID]; b != nil {
-			b.done = true
+			b.pending, b.done = false, true
 			if r := it.Result; r != nil {
 				b.res = agent.BashResult{ExitCode: r.ExitCode, TimedOut: r.TimedOut, Canceled: r.Canceled, Duration: it.Duration,
 					Job: r.Job, Background: r.Background}
@@ -216,6 +228,11 @@ func (a *App) onEvent(ev any) {
 	a.tr().Event(ev)
 	a.goal.Event(ev)
 	switch e := ev.(type) {
+	case agent.ToolDraft:
+		a.activity = "Writing command"
+		if e.Args.Description != "" {
+			a.activity = e.Args.Description
+		}
 	case agent.ToolStart:
 		a.activity = e.Args.Description
 	case agent.ToolEnd:

@@ -133,7 +133,7 @@ function update(el, it) {
       el.querySelector("pre").textContent = it.text || ""; break;
     case "commandExecution": {
       const st = it.status === "inProgress" ? '<span class="run">●</span>' : it.status === "failed" ? '<span class="bad">✗</span>' : '<span class="ok">✓</span>';
-      const meta = it.status === "inProgress" ? "running" : it.exitCode != null ? (it.exitCode ? `exit ${it.exitCode} · ` : "") + (it.durationMs / 1000).toFixed(1) + "s" : "";
+      const meta = it.pending ? "writing…" : it.status === "inProgress" ? "running" : it.exitCode != null ? (it.exitCode ? `exit ${it.exitCode} · ` : "") + (it.durationMs / 1000).toFixed(1) + "s" : "";
       const open = el.querySelector("details")?.open;
       el.className = "cmd";
       el.innerHTML = `<details><summary>${st} <b></b> · ${esc(meta)} <code></code></summary><pre></pre></details>`;
@@ -228,7 +228,7 @@ function connect() {
     }
     switch (n.method) {
       case "turn/started": setBusy(true); break;
-      case "item/started": case "item/completed": addItem(p.item); break;
+      case "item/started": case "item/updated": case "item/completed": addItem(p.item); break;
       case "item/delta": {
         const rec = items.get(p.itemId);
         if (!rec) break;

@@ -35,6 +35,10 @@ type Handler struct {
 	// Delta is text appended to the item: to Text, or for a tool to
 	// Output. It is applied to the item before the call.
 	Delta func(it *Item, text string)
+	// Updated fires when a tool item changes other than by output: its
+	// description and command as the model writes the call (Pending), and
+	// once more when the call is complete and starts running.
+	Updated func(it *Item)
 	// Completed fires once per item, with its final state. Items that are
 	// complete from the start (messages, hooks) get Started and Completed
 	// back to back.
@@ -59,6 +63,7 @@ type Builder struct {
 	pendReasoning, pendText  string
 	thinkStart               time.Time
 	tools                    map[string]*Item // by call ID, while running
+	drafts                   map[int]*Item    // by index in the response, while the model writes the call
 
 	// Replay: tool calls of the last assistant message waiting for their
 	// results.
@@ -98,8 +103,10 @@ func (b *Builder) End() { b.end(time.Now()) }
 
 func (b *Builder) end(at time.Time) {
 	b.closeText(at)
-	for _, it := range b.items { // in order, unlike the map
-		if it.Kind == Tool && it.Status == InProgress {
+	for _, it := range b.items { // in order, unlike the maps
+		if it.Kind == Tool && it.Pending {
+			b.endDraft(it, "")
+		} else if it.Kind == Tool && it.Status == InProgress {
 			b.endTool(it.CallID, ToolResult{Canceled: true, ExitCode: -1}, 0)
 		}
 	}
@@ -124,9 +131,16 @@ func (b *Builder) apply(ev any, at time.Time) {
 		b.stream(&b.text, &b.pendText, Assistant, e.Text)
 	case agent.StepEnd:
 		b.closeText(at)
+	case agent.ToolDraft:
+		b.closeText(at)
+		b.draft(e.Index, e.Args)
+	case agent.ToolDraftEnd:
+		if it := b.drafts[e.Index]; it != nil {
+			b.endDraft(it, e.Err)
+		}
 	case agent.ToolStart:
 		b.closeText(at)
-		b.startTool(e.ID, e.Args, e.Timeout)
+		b.startTool(e.ID, e.Index, e.Args, e.Timeout)
 	case agent.ToolOutput:
 		b.toolOutput(e.ID, e.Chunk)
 	case agent.ToolEnd:
@@ -223,9 +237,52 @@ func (b *Builder) closeText(at time.Time) {
 	b.pendText = ""
 }
 
-func (b *Builder) startTool(id string, args agent.BashArgs, timeout time.Duration) {
+// draft shows a tool call the model is still writing: it starts the call's
+// item, pending, and updates it as the arguments arrive.
+func (b *Builder) draft(index int, args agent.BashArgs) {
+	it := b.drafts[index]
+	if it == nil {
+		if b.drafts == nil {
+			b.drafts = map[int]*Item{}
+		}
+		b.drafts[index] = b.start(Item{Kind: Tool, Status: InProgress, Pending: true,
+			Description: args.Description, Command: args.Command})
+		return
+	}
+	if it.Description == args.Description && it.Command == args.Command {
+		return
+	}
+	it.Description, it.Command = args.Description, args.Command
+	b.updated(it)
+}
+
+// endDraft finishes a pending call that will not run, failed with err (or
+// canceled when err is empty).
+func (b *Builder) endDraft(it *Item, err string) {
+	for i, d := range b.drafts {
+		if d == it {
+			delete(b.drafts, i)
+		}
+	}
+	res := ToolResult{ExitCode: -1, Err: err, Canceled: err == ""}
+	it.Pending = false
+	it.Result = &res
+	it.Status = Failed
+	b.completed(it)
+}
+
+// startTool starts a call that runs now: the item its draft made, if any.
+func (b *Builder) startTool(id string, index int, args agent.BashArgs, timeout time.Duration) {
 	if b.tools == nil {
 		b.tools = map[string]*Item{}
+	}
+	if it := b.drafts[index]; it != nil {
+		delete(b.drafts, index)
+		it.Pending, it.CallID = false, id
+		it.Description, it.Command, it.Timeout = args.Description, args.Command, timeout
+		b.tools[id] = it
+		b.updated(it)
+		return
 	}
 	b.tools[id] = b.start(Item{Kind: Tool, Status: InProgress, CallID: id,
 		Description: args.Description, Command: args.Command, Timeout: timeout})
@@ -278,6 +335,12 @@ func (b *Builder) add(it Item) {
 func (b *Builder) delta(it *Item, text string) {
 	if b.Handler.Delta != nil {
 		b.Handler.Delta(it, text)
+	}
+}
+
+func (b *Builder) updated(it *Item) {
+	if b.Handler.Updated != nil {
+		b.Handler.Updated(it)
 	}
 }
 
