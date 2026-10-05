@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -88,12 +90,46 @@ type TUI struct {
 	newBelow    bool // output arrived below the view while scrolled up
 	prevFrame   []string
 
+	// FullRepaint rewrites every visible row, from column 1, on every frame
+	// that changes anything, instead of only the rows that differ. It trades
+	// bandwidth for robustness on terminals that mishandle sparse positioned
+	// writes (ConPTY-backed hosts such as Windows Terminal). Inline mode
+	// repaints the bottom viewport of its content; rows already in scrollback
+	// are never touched. New sets it from DefaultFullRepaint.
+	FullRepaint bool
+
 	// FullRedraws counts full redraws; useful for tests and debugging.
 	FullRedraws int
 }
 
 func New(term Terminal) *TUI {
-	return &TUI{term: term, wake: make(chan struct{}, 1), done: make(chan struct{})}
+	return &TUI{term: term, FullRepaint: DefaultFullRepaint(), wake: make(chan struct{}, 1), done: make(chan struct{})}
+}
+
+// DefaultFullRepaint reports whether full-repaint mode is on by default: on
+// for Windows, off elsewhere, overridable with ATTO_FULL_REPAINT=1 / =0.
+func DefaultFullRepaint() bool {
+	return fullRepaintFor(runtime.GOOS, os.Getenv("ATTO_FULL_REPAINT"))
+}
+
+// AnimationInterval is how often a busy UI should request a render to turn a
+// spinner. Full repaint rewrites the whole viewport per frame, so it ticks
+// slower (elapsed time is computed at render time and stays accurate).
+func (t *TUI) AnimationInterval() time.Duration {
+	if t.FullRepaint {
+		return 250 * time.Millisecond
+	}
+	return 80 * time.Millisecond
+}
+
+func fullRepaintFor(goos, env string) bool {
+	switch strings.TrimSpace(env) {
+	case "1":
+		return true
+	case "0":
+		return false
+	}
+	return goos == "windows"
 }
 
 // Start enters raw mode, starts the render loop and performs the first render.
@@ -491,6 +527,13 @@ func (t *TUI) doRender() {
 		return
 	}
 
+	// Full repaint: rewrite every visible content row, not just the changed
+	// ones, so ConPTY never has to merge a sparse update with older cells.
+	if t.FullRepaint {
+		first, last = prevViewportTop, len(newLines)-1
+		appendStart = false
+	}
+
 	var b strings.Builder
 	b.WriteString(syncBegin)
 	prevViewportBottom := prevViewportTop + height - 1
@@ -567,7 +610,7 @@ func (t *TUI) positionCursor(b *strings.Builder, cur *cursorPos, total int) {
 }
 
 // doRenderFullscreen composes a full frame (body window + pinned footer) and
-// rewrites only the screen rows that changed.
+// rewrites only the screen rows that changed (every row with FullRepaint).
 func (t *TUI) doRenderFullscreen() {
 	width, height := t.term.Size()
 	inner := t.innerWidth(width)
@@ -622,13 +665,19 @@ func (t *TUI) doRenderFullscreen() {
 	lines, cur := prepareLines(frame, width, height)
 
 	full := t.prevWidth != width || t.prevHeight != height || len(t.prevFrame) != len(lines)
+	changed := full
+	for i := 0; !changed && i < len(lines); i++ {
+		changed = t.prevFrame[i] != lines[i]
+	}
 	var b strings.Builder
 	if full {
 		t.FullRedraws++
 		b.WriteString("\x1b[2J")
 	}
 	for i, l := range lines {
-		if full || t.prevFrame[i] != l {
+		// Full repaint rewrites every row of a frame that changed; each row
+		// is cleared first, then the whole line is written from column 1.
+		if full || (t.FullRepaint && changed) || t.prevFrame[i] != l {
 			fmt.Fprintf(&b, "\x1b[%d;1H\x1b[2K%s", i+1, l)
 		}
 	}

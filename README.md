@@ -207,6 +207,10 @@ Everything lives in `~/.atto`. Set `ATTO_DIR` to move it.
 | `sessions/` | saved sessions |
 | `images/` | images sent in sessions, by content hash |
 
+### Troubleshooting
+
+If text looks garbled, doubled or leaves fragments behind (seen with wide characters such as Korean in Windows Terminal and other ConPTY hosts), atto can repaint every visible row on each frame instead of only the changed ones. This is on by default on Windows. Set `ATTO_FULL_REPAINT=1` to force it on, or `ATTO_FULL_REPAINT=0` to force it off, on any OS.
+
 ## License
 
 [MIT](LICENSE)
