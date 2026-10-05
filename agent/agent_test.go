@@ -13,6 +13,7 @@ import (
 
 	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/session"
+	"github.com/sebastianrcnt/atto/shell"
 )
 
 // fakeServer replies with the given SSE chunks per request, in order, and
@@ -61,7 +62,7 @@ func newTestAgent(url string) *Agent {
 }
 
 func TestSteerDeliveredAfterToolCall(t *testing.T) {
-	srv, seen := fakeServer(t, toolCall("sleep 0.3"), text("done"))
+	srv, seen := fakeServer(t, toolCall(sleepCmd), text("done"))
 	a := newTestAgent(srv.URL)
 	var committed []string
 	err := a.Run(context.Background(), "go", func(ev any) {
@@ -205,3 +206,12 @@ func TestResponsesModelToolTurnAndRestore(t *testing.T) {
 		t.Fatalf("restored request lost reasoning: %v", inputs[len(inputs)-1])
 	}
 }
+
+// sleepCmd sleeps 300ms in the platform shell (PowerShell's Start-Sleep
+// rounds fractional seconds down to zero).
+var sleepCmd = func() string {
+	if shell.Default().Kind == shell.PowerShell {
+		return "Start-Sleep -Milliseconds 300"
+	}
+	return "sleep 0.3"
+}()
