@@ -1,0 +1,490 @@
+// Package agent runs the model ↔ tool loop. It knows nothing about the UI:
+// progress is reported through an emit callback with the event types below.
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+
+	"atto/config"
+	"atto/provider"
+	"atto/session"
+)
+
+// Events emitted during Run and Compact.
+type (
+	ReasoningDelta struct{ Text string }
+	TextDelta      struct{ Text string }
+	// ToolStart fires when a bash command begins executing.
+	ToolStart struct {
+		ID      string
+		Args    BashArgs
+		Timeout time.Duration
+	}
+	ToolOutput struct {
+		ID    string
+		Chunk string
+	}
+	ToolEnd struct {
+		ID     string
+		Result BashResult
+	}
+	// StepEnd fires after each model response. Context is the estimated
+	// context size afterwards.
+	StepEnd struct {
+		Usage   provider.Usage
+		Context int
+	}
+	// SteerCommitted fires when steering messages are added to the
+	// conversation of the running turn.
+	SteerCommitted struct{ Texts []string }
+	// CompactStart, CompactDelta and CompactEnd bracket a compaction.
+	CompactStart struct{ Auto bool }
+	CompactDelta struct{ Text string }
+	CompactEnd   struct {
+		Notes         string
+		Before, After int // estimated context tokens
+		Elapsed       time.Duration
+	}
+)
+
+type Agent struct {
+	Cwd string
+
+	// Model settings may change from the UI while a turn runs; they are
+	// read once per request.
+	cfgMu  sync.Mutex
+	client *provider.Client
+	model  config.ModelRef
+	effort string
+
+	// Record, if set, receives every change to the conversation, for
+	// persistence. Called on the goroutine running Run/Compact.
+	Record func(session.Entry)
+
+	system   string
+	messages []provider.Message
+	// LastUsage is the usage of the most recent model call.
+	LastUsage provider.Usage
+	// sinceUsage counts characters appended after the last reported usage.
+	sinceUsage int
+
+	steerMu sync.Mutex
+	steers  []string
+}
+
+// Steer queues a message for the running turn. It is added to the
+// conversation at the next step boundary: after the current tool calls
+// finish, or when the model stops (in which case the turn continues).
+// Safe to call from any goroutine.
+func (a *Agent) Steer(text string) {
+	a.steerMu.Lock()
+	a.steers = append(a.steers, text)
+	a.steerMu.Unlock()
+}
+
+// DrainSteers removes and returns steering messages not yet committed.
+func (a *Agent) DrainSteers() []string {
+	a.steerMu.Lock()
+	defer a.steerMu.Unlock()
+	s := a.steers
+	a.steers = nil
+	return s
+}
+
+// commitSteers appends pending steers as a user message.
+func (a *Agent) commitSteers(emit func(any)) bool {
+	s := a.DrainSteers()
+	if len(s) == 0 {
+		return false
+	}
+	a.appendMessage(provider.Message{Role: "user", Content: strings.Join(s, "\n\n")}, session.Entry{})
+	emit(SteerCommitted{s})
+	return true
+}
+
+func New(model config.ModelRef, effort, cwd string) *Agent {
+	a := &Agent{Cwd: cwd, effort: effort}
+	a.SetModel(model)
+	a.system = systemPrompt(cwd)
+	return a
+}
+
+// SetModel switches the model; history is kept. Takes effect on the next
+// request.
+func (a *Agent) SetModel(m config.ModelRef) {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	a.model = m
+	a.client = &provider.Client{
+		BaseURL:        m.Provider.BaseURL,
+		APIKey:         m.Provider.ResolvedAPIKey(),
+		MaxTokensField: m.Provider.MaxTokensField,
+		ExtraBody:      m.Provider.ExtraBody,
+	}
+	if len(m.Model.Efforts) > 0 && !contains(m.Model.Efforts, a.effort) {
+		a.effort = m.Model.Efforts[len(m.Model.Efforts)/2]
+	}
+}
+
+// SetEffort changes the reasoning effort for the next request.
+func (a *Agent) SetEffort(e string) {
+	a.cfgMu.Lock()
+	a.effort = e
+	a.cfgMu.Unlock()
+}
+
+// Current returns the model and effort in use.
+func (a *Agent) Current() (config.ModelRef, string) {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	return a.model, a.effort
+}
+
+// AutoCompactLimit follows codex: 90% of the context window, further capped
+// so the largest possible response still fits.
+func AutoCompactLimit(m config.Model) int {
+	if m.ContextWindow <= 0 {
+		return 0
+	}
+	limit := m.ContextWindow * 9 / 10
+	if m.MaxTokens > 0 {
+		limit = min(limit, m.ContextWindow-m.MaxTokens)
+	}
+	return max(limit, 0)
+}
+
+func contains(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// Reset clears the conversation.
+func (a *Agent) Reset() {
+	a.DrainSteers()
+	a.messages = nil
+	a.LastUsage = provider.Usage{}
+	a.sinceUsage = 0
+}
+
+// Restore rebuilds the conversation from session entries.
+func (a *Agent) Restore(entries []session.Entry) {
+	a.Reset()
+	for _, e := range entries {
+		switch e.Type {
+		case session.TypeMessage:
+			if e.Message == nil {
+				continue
+			}
+			a.messages = append(a.messages, *e.Message)
+			if e.Usage != nil {
+				a.LastUsage, a.sinceUsage = *e.Usage, 0
+			} else {
+				a.sinceUsage += messageChars(*e.Message)
+			}
+		case session.TypeCompaction:
+			a.messages = append([]provider.Message(nil), e.Replacement...)
+			a.LastUsage = provider.Usage{}
+			a.sinceUsage = len(a.system)
+			for _, m := range a.messages {
+				a.sinceUsage += messageChars(m)
+			}
+		}
+	}
+}
+
+func messageChars(m provider.Message) int {
+	n := len(m.Content) + len(m.ReasoningContent)
+	for _, tc := range m.ToolCalls {
+		n += len(tc.Function.Name) + len(tc.Function.Arguments)
+	}
+	return n
+}
+
+// ContextTokens estimates the current context size: the last reported
+// usage plus ~4 characters per token for anything appended since.
+func (a *Agent) ContextTokens() int {
+	return a.LastUsage.PromptTokens + a.LastUsage.CompletionTokens + a.sinceUsage/4
+}
+
+func (a *Agent) needsCompact() bool {
+	m, _ := a.Current()
+	limit := AutoCompactLimit(m.Model)
+	return limit > 0 && len(a.messages) > 0 && a.ContextTokens() >= limit
+}
+
+// appendMessage adds m to the conversation and records it. meta carries
+// extra fields for the session entry.
+func (a *Agent) appendMessage(m provider.Message, meta session.Entry) {
+	a.messages = append(a.messages, m)
+	a.sinceUsage += messageChars(m)
+	if a.Record != nil {
+		meta.Type = session.TypeMessage
+		meta.Message = &m
+		a.Record(meta)
+	}
+}
+
+func (a *Agent) tools() []provider.Tool {
+	return []provider.Tool{{
+		Type: "function",
+		Function: provider.ToolFunction{
+			Name:        "bash",
+			Description: bashDescription,
+			Parameters:  bashSchema,
+		},
+	}}
+}
+
+// request builds a request and returns the client to send it with.
+func (a *Agent) request(extra ...provider.Message) (*provider.Client, provider.Request) {
+	model, effort := a.Current()
+	a.cfgMu.Lock()
+	client := a.client
+	a.cfgMu.Unlock()
+	msgs := make([]provider.Message, 0, len(a.messages)+len(extra)+1)
+	msgs = append(msgs, provider.Message{Role: "system", Content: a.system})
+	msgs = append(msgs, a.messages...)
+	msgs = append(msgs, extra...)
+	return client, provider.Request{
+		Model:     model.Model.ID,
+		Messages:  msgs,
+		Tools:     a.tools(),
+		Effort:    effort,
+		MaxTokens: model.Model.MaxTokens,
+	}
+}
+
+// Run sends input and loops through tool calls until the model stops.
+// Compaction runs automatically before the turn and between tool calls
+// when the context passes AutoCompactLimit.
+func (a *Agent) Run(ctx context.Context, input string, emit func(any)) error {
+	if a.needsCompact() {
+		if err := a.compact(ctx, emit, true); err != nil {
+			return err
+		}
+	}
+	a.appendMessage(provider.Message{Role: "user", Content: input}, session.Entry{})
+
+	for {
+		var thinkStart, thinkEnd time.Time
+		h := provider.Handler{
+			OnReasoning: func(s string) {
+				if thinkStart.IsZero() {
+					thinkStart = time.Now()
+				}
+				emit(ReasoningDelta{s})
+			},
+			OnText: func(s string) {
+				if !thinkStart.IsZero() && thinkEnd.IsZero() {
+					thinkEnd = time.Now()
+				}
+				emit(TextDelta{s})
+			},
+		}
+		client, req := a.request()
+		res, err := client.Stream(ctx, req, h)
+		var thinkMs int64
+		if !thinkStart.IsZero() {
+			if thinkEnd.IsZero() {
+				thinkEnd = time.Now()
+			}
+			thinkMs = thinkEnd.Sub(thinkStart).Milliseconds()
+		}
+		if err != nil {
+			// Keep partial text so the transcript matches what the user saw,
+			// but drop half-formed tool calls.
+			if res.Message.Content != "" {
+				res.Message.ToolCalls = nil
+				a.appendMessage(res.Message, session.Entry{ThinkingMs: thinkMs})
+			}
+			return err
+		}
+		usage := res.Usage
+		a.appendMessage(res.Message, session.Entry{Usage: &usage, ThinkingMs: thinkMs})
+		a.LastUsage, a.sinceUsage = usage, 0
+		emit(StepEnd{Usage: usage, Context: a.ContextTokens()})
+
+		if len(res.Message.ToolCalls) == 0 {
+			if a.commitSteers(emit) {
+				continue
+			}
+			return nil
+		}
+		for _, tc := range res.Message.ToolCalls {
+			var content string
+			var meta session.Entry
+			if ctx.Err() != nil {
+				content = "[canceled by user]"
+				meta.Tool = &session.ToolMeta{Canceled: true, ExitCode: -1}
+			} else {
+				content, meta.Tool = a.runTool(ctx, tc, emit)
+			}
+			a.appendMessage(provider.Message{Role: "tool", ToolCallID: tc.ID, Content: content}, meta)
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		a.commitSteers(emit)
+		if a.needsCompact() {
+			if err := a.compact(ctx, emit, true); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, emit func(any)) (string, *session.ToolMeta) {
+	fail := func(msg string) (string, *session.ToolMeta) {
+		return "error: " + msg, &session.ToolMeta{ExitCode: -1}
+	}
+	if tc.Function.Name != "bash" {
+		return fail(fmt.Sprintf("unknown tool %q; the only tool is bash", tc.Function.Name))
+	}
+	var args BashArgs
+	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+		return fail("invalid arguments: " + err.Error())
+	}
+	if strings.TrimSpace(args.Command) == "" {
+		return fail("command is empty")
+	}
+	if args.Description == "" {
+		args.Description = firstLine(args.Command)
+	}
+	emit(ToolStart{ID: tc.ID, Args: args, Timeout: args.timeout()})
+	res := RunBash(ctx, a.Cwd, args, func(s string) { emit(ToolOutput{ID: tc.ID, Chunk: s}) })
+	emit(ToolEnd{ID: tc.ID, Result: res})
+	return res.ForModel(args), &session.ToolMeta{
+		Description: args.Description,
+		ExitCode:    res.ExitCode,
+		DurationMs:  res.Duration.Milliseconds(),
+		TimedOut:    res.TimedOut,
+		Canceled:    res.Canceled,
+	}
+}
+
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return s
+}
+
+const compactPrompt = `Context checkpoint: the conversation is about to be compacted. Write handoff notes so that you can continue this work with no other context.
+
+If earlier handoff notes appear above, fold them into one updated set: keep what is still relevant, drop what is stale.
+
+Include:
+- The user's goal and any constraints or preferences they stated
+- Progress so far and what was learned: key files, commands, findings, decisions and why
+- Current state: what works, what is broken, open errors
+- Remaining steps
+
+Be specific: exact file paths, function names, commands, error messages. Stay under %d words. Output only the notes, no preamble. Do not call tools.`
+
+// CompactNoteWords bounds the length of handoff notes.
+const CompactNoteWords = 700
+
+// SummaryPrefix introduces handoff notes in the compacted history.
+const SummaryPrefix = "[atto handoff notes] The conversation was compacted. Earlier messages were replaced by these notes, written by you from the full history; the tool state they describe (files, processes) is still in place. Build on them and avoid redoing finished work.\n\n"
+
+// keepUserTokens is how much recent user text survives compaction (codex
+// keeps 20k tokens of user messages).
+const keepUserTokens = 20000
+
+// Compact replaces the conversation with handoff notes written by the model.
+func (a *Agent) Compact(ctx context.Context, emit func(any)) error {
+	return a.compact(ctx, emit, false)
+}
+
+// compact asks the model for handoff notes. The request reuses the full
+// existing prefix (system, tools, history) and appends the instruction at the
+// end, so the prefix cache stays warm. The new history is the most recent
+// user messages (up to keepUserTokens) followed by the notes.
+func (a *Agent) compact(ctx context.Context, emit func(any), auto bool) error {
+	if len(a.messages) == 0 {
+		return fmt.Errorf("nothing to compact")
+	}
+	start := time.Now()
+	before := a.ContextTokens()
+	emit(CompactStart{Auto: auto})
+
+	client, req := a.request(provider.Message{Role: "user", Content: fmt.Sprintf(compactPrompt, CompactNoteWords)})
+	req.ToolChoice = "none"
+	res, err := client.Stream(ctx, req, provider.Handler{
+		OnText: func(s string) { emit(CompactDelta{s}) },
+	})
+	if err != nil {
+		return fmt.Errorf("compaction failed: %w", err)
+	}
+	notes := strings.TrimSpace(res.Message.Content)
+	if notes == "" {
+		notes = "(no notes available)"
+	}
+
+	// Most recent user messages, newest first within the budget, kept in
+	// chronological order. Earlier notes are not kept: the new notes fold
+	// them in.
+	var kept []provider.Message
+	budget := keepUserTokens * 4
+	for i := len(a.messages) - 1; i >= 0 && budget > 0; i-- {
+		m := a.messages[i]
+		if m.Role != "user" || strings.HasPrefix(m.Content, SummaryPrefix) {
+			continue
+		}
+		if len(m.Content) > budget {
+			m.Content = m.Content[len(m.Content)-budget:] + "\n[truncated]"
+		}
+		budget -= len(m.Content)
+		kept = append([]provider.Message{m}, kept...)
+	}
+	replacement := append(kept, provider.Message{Role: "user", Content: SummaryPrefix + notes})
+
+	a.messages = replacement
+	a.LastUsage = provider.Usage{}
+	a.sinceUsage = len(a.system)
+	for _, m := range replacement {
+		a.sinceUsage += messageChars(m)
+	}
+	if a.Record != nil {
+		a.Record(session.Entry{Type: session.TypeCompaction, Replacement: replacement, Notes: notes, TokensBefore: before, Auto: auto})
+	}
+	emit(CompactEnd{Notes: notes, Before: before, After: a.ContextTokens(), Elapsed: time.Since(start)})
+	return nil
+}
+
+func systemPrompt(cwd string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, `You are atto, a coding agent running in the user's terminal.
+
+You have one tool, bash. Use it for everything: exploring (ls, rg, cat, sed -n), editing files (heredocs, sed, python scripts, patch), building, and testing.
+Every bash call needs a short description of what it does, shown to the user, e.g. "JIT compile atto.py", "Run unit tests", "Read main.go".
+Commands time out after 60 seconds by default; set timeout for longer builds or tests.
+
+Work autonomously: investigate, make the change, verify it. Keep replies concise and plain; the user sees your tool calls.
+
+Environment:
+- Working directory: %s
+- Platform: %s/%s
+- Date: %s
+`, cwd, runtime.GOOS, runtime.GOARCH, time.Now().Format("2006-01-02"))
+
+	for _, p := range []string{filepath.Join(config.Dir(), "AGENTS.md"), filepath.Join(cwd, "AGENTS.md")} {
+		if data, err := os.ReadFile(p); err == nil && len(strings.TrimSpace(string(data))) > 0 {
+			fmt.Fprintf(&b, "\n# Instructions from %s\n\n%s\n", p, strings.TrimSpace(string(data)))
+		}
+	}
+	return b.String()
+}

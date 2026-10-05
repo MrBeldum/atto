@@ -1,0 +1,143 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"atto/config"
+	"atto/session"
+)
+
+// fakeServer replies with the given SSE chunks per request, in order, and
+// records request message lists.
+func fakeServer(t *testing.T, replies ...[]string) (*httptest.Server, func() [][]map[string]any) {
+	var mu sync.Mutex
+	var seen [][]map[string]any
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []map[string]any `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		seen = append(seen, body.Messages)
+		i := n
+		n++
+		mu.Unlock()
+		if i >= len(replies) {
+			t.Errorf("unexpected request %d", i)
+			return
+		}
+		for _, c := range replies[i] {
+			fmt.Fprintf(w, "data: %s\n\n", c)
+		}
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() [][]map[string]any { mu.Lock(); defer mu.Unlock(); return seen }
+}
+
+func toolCall(cmd string) []string {
+	args, _ := json.Marshal(map[string]string{"description": "test", "command": cmd})
+	a, _ := json.Marshal(string(args))
+	return []string{
+		fmt.Sprintf(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"bash","arguments":%s}}]},"finish_reason":"tool_calls"}]}`, a),
+	}
+}
+
+func text(s string) []string {
+	return []string{fmt.Sprintf(`{"choices":[{"delta":{"content":%q},"finish_reason":"stop"}]}`, s)}
+}
+
+func newTestAgent(url string) *Agent {
+	return New(config.ModelRef{ProviderName: "t", Provider: config.Provider{BaseURL: url}, Model: config.Model{ID: "m"}}, "", "/tmp")
+}
+
+func TestSteerDeliveredAfterToolCall(t *testing.T) {
+	srv, seen := fakeServer(t, toolCall("sleep 0.3"), text("done"))
+	a := newTestAgent(srv.URL)
+	var committed []string
+	err := a.Run(context.Background(), "go", func(ev any) {
+		switch e := ev.(type) {
+		case ToolStart:
+			go func() { time.Sleep(50 * time.Millisecond); a.Steer("also check X") }()
+		case SteerCommitted:
+			committed = e.Texts
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(committed) != 1 || committed[0] != "also check X" {
+		t.Fatalf("committed %v", committed)
+	}
+	reqs := seen()
+	last := reqs[1][len(reqs[1])-1]
+	if last["role"] != "user" || last["content"] != "also check X" {
+		t.Fatalf("second request ends with %v", last)
+	}
+	if prev := reqs[1][len(reqs[1])-2]; prev["role"] != "tool" {
+		t.Fatalf("steer should follow the tool result, got %v", prev)
+	}
+}
+
+func TestSteerContinuesTurnWhenModelStops(t *testing.T) {
+	srv, seen := fakeServer(t, text("first"), text("second"))
+	a := newTestAgent(srv.URL)
+	a.Steer("one more thing")
+	if err := a.Run(context.Background(), "hi", func(any) {}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(seen()); n != 2 {
+		t.Fatalf("expected the turn to continue with a second request, got %d", n)
+	}
+}
+
+func TestAutoCompactMidTurn(t *testing.T) {
+	tc := toolCall("echo hi")
+	// Report a large prompt so the context crosses the limit after the tool.
+	tc = append(tc, `{"choices":[],"usage":{"prompt_tokens":950,"completion_tokens":10}}`)
+	srv, seen := fakeServer(t, tc, text("NOTES: did echo"), text("finished"))
+	a := New(config.ModelRef{ProviderName: "t", Provider: config.Provider{BaseURL: srv.URL},
+		Model: config.Model{ID: "m", ContextWindow: 1000}}, "", "/tmp")
+	var rec []session.Entry
+	a.Record = func(e session.Entry) { rec = append(rec, e) }
+	var started, ended int
+	err := a.Run(context.Background(), "go", func(ev any) {
+		switch ev.(type) {
+		case CompactStart:
+			started++
+		case CompactEnd:
+			ended++
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started != 1 || ended != 1 {
+		t.Fatalf("compaction events %d/%d", started, ended)
+	}
+	reqs := seen()
+	if len(reqs) != 3 {
+		t.Fatalf("%d requests", len(reqs))
+	}
+	// Third request: system, kept user message, notes.
+	third := reqs[2]
+	if len(third) != 3 || third[1]["content"] != "go" || !strings.HasPrefix(third[2]["content"].(string), SummaryPrefix) {
+		t.Fatalf("post-compaction history: %v", third)
+	}
+
+	// Replaying the recorded entries reproduces the history.
+	b := newTestAgent(srv.URL)
+	b.Restore(rec)
+	if len(b.messages) != len(a.messages) || b.messages[1].Content != a.messages[1].Content {
+		t.Fatalf("restore mismatch:\n%v\n%v", b.messages, a.messages)
+	}
+}
