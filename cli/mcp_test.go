@@ -209,6 +209,7 @@ func TestMCPToolsAndCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { in.Close() }) // Windows cannot remove an open file
 	_, _ = in.WriteString(`{"text": "from stdin"}`)
 	_, _ = in.Seek(0, 0)
 	old := os.Stdin
