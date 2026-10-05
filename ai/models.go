@@ -1,5 +1,8 @@
 package ai
 
+// Ported from pi (https://github.com/earendil-works/pi), Copyright (c) 2025
+// Mario Zechner, MIT License; see THIRD_PARTY_NOTICES.
+
 import "slices"
 
 // Port of the model helpers in src/models.ts. pi's Models/Provider

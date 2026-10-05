@@ -16,7 +16,8 @@ import (
 	"github.com/sebastianrcnt/atto/ai"
 )
 
-// ModelsFile is the contents of models.json. The schema is pi's
+// ModelsFile is the contents of models.json (schema ported from pi, MIT,
+// Copyright (c) 2025 Mario Zechner; see THIRD_PARTY_NOTICES). The schema is pi's
 // (packages/coding-agent/src/core/model-config.ts), so ~/.pi/agent/models.json
 // can be copied to ~/.atto/models.json, plus atto's own fields:
 //

@@ -1,5 +1,8 @@
 package auth
 
+// Ported from pi (https://github.com/earendil-works/pi), Copyright (c) 2025
+// Mario Zechner, MIT License; see THIRD_PARTY_NOTICES.
+
 import "context"
 
 // OAuthProvider is one login method (pi: OAuthAuth, keyed by provider id

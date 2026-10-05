@@ -1,5 +1,8 @@
 package auth
 
+// Ported from pi (https://github.com/earendil-works/pi), Copyright (c) 2025
+// Mario Zechner, MIT License; see THIRD_PARTY_NOTICES.
+
 // Port of pi's src/auth/oauth/openai-chatgpt.ts: "Sign in with ChatGPT",
 // an OAuth 2.0 public-client flow (dynamic client registration, PKCE,
 // loopback redirect) whose access token is sent directly to the OpenAI

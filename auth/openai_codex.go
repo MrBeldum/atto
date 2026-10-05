@@ -1,5 +1,8 @@
 package auth
 
+// Ported from pi (https://github.com/earendil-works/pi), Copyright (c) 2025
+// Mario Zechner, MIT License; see THIRD_PARTY_NOTICES.
+
 // Port of pi's src/auth/oauth/openai-codex.ts and oauth/device-code.ts:
 // the ChatGPT Plus/Pro login used by the Codex backend
 // (openai-codex-responses). Unlike Sign in with ChatGPT it uses the Codex

@@ -1,5 +1,8 @@
 package ai
 
+// Ported from pi (https://github.com/earendil-works/pi), Copyright (c) 2025
+// Mario Zechner, MIT License; see THIRD_PARTY_NOTICES.
+
 import "strings"
 
 // Port of src/utils/text.ts.
