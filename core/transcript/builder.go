@@ -111,6 +111,19 @@ func (b *Builder) Items() []Item {
 	return out
 }
 
+// Open returns copies of the items still in progress (being streamed,
+// running, or a command the model is still writing), in the order they
+// started.
+func (b *Builder) Open() []Item {
+	var out []Item
+	for _, it := range b.items {
+		if it.Status == InProgress || it.Pending {
+			out = append(out, it.clone())
+		}
+	}
+	return out
+}
+
 // Reset forgets every item and starts the IDs over.
 func (b *Builder) Reset() {
 	h, p := b.Handler, b.IDPrefix

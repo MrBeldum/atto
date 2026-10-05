@@ -92,7 +92,12 @@ func (s *Server) watchInbox() {
 }
 
 type thread struct {
-	mu        sync.Mutex
+	mu sync.Mutex
+	// feed is held while the transcript builder takes an event and its
+	// item notifications go out, so a snapshot of the items (see
+	// snapshot) and the event ID to follow them from agree. Take it
+	// before mu.
+	feed      sync.Mutex
 	id        string
 	cwd       string
 	name      string
@@ -263,12 +268,7 @@ func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (
 		if err != nil {
 			return nil, err
 		}
-		t.mu.Lock()
-		defer t.mu.Unlock()
-		info := t.info()
-		info.Items = append([]Item(nil), t.items...)
-		info.EventID = s.eventSeq()
-		return info, nil
+		return s.snapshot(t), nil
 	case "thread/list":
 		return s.listThreads(p)
 	case "thread/setModel":
@@ -396,10 +396,10 @@ func (s *Server) startThread(p threadParams) (any, error) {
 		return nil, err
 	}
 	s.sessionStart(t, "startup")
+	info := s.snapshot(t)
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	info := t.info()
 	loaded := t.loaded
+	t.mu.Unlock()
 	info.Context = &loaded
 	return info, nil
 }
@@ -423,12 +423,7 @@ func (s *Server) resumeThread(id string) (any, error) {
 	existing := s.threads[id]
 	s.mu.Unlock()
 	if existing != nil { // already loaded: same as read
-		existing.mu.Lock()
-		defer existing.mu.Unlock()
-		info := existing.info()
-		info.Items = append([]Item(nil), existing.items...)
-		info.EventID = s.eventSeq()
-		return info, nil
+		return s.snapshot(existing), nil
 	}
 	path, err := session.Find(id)
 	if err != nil {
@@ -460,14 +455,31 @@ func (s *Server) resumeThread(id string) (any, error) {
 	t.name = saved.Name
 	t.restore(saved.Entries)
 	s.sessionStart(t, "resume")
+	info := s.snapshot(t)
+	t.mu.Lock()
+	loaded := t.loaded
+	t.mu.Unlock()
+	info.Context = &loaded
+	return info, nil
+}
+
+// snapshot describes a thread with its items, those still in progress
+// included as they stand, and the event to follow them from: no item
+// notification of the thread goes out while it is taken.
+func (s *Server) snapshot(t *thread) ThreadInfo {
+	t.feed.Lock()
+	defer t.feed.Unlock()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	info := t.info()
 	info.Items = append([]Item(nil), t.items...)
+	if t.busy {
+		for _, it := range t.tr.Open() {
+			info.Items = append(info.Items, wireItem(&it))
+		}
+	}
 	info.EventID = s.eventSeq()
-	loaded := t.loaded
-	info.Context = &loaded
-	return info, nil
+	return info
 }
 
 func (s *Server) listThreads(p threadParams) (any, error) {
@@ -546,7 +558,9 @@ func (s *Server) begin(t *thread, fn func(ctx context.Context, emit func(any)) e
 
 	s.notify(t, "turn/started", map[string]any{"turnId": turnID})
 	m := &itemMapper{s: s, t: t, turnID: turnID}
+	t.feed.Lock()
 	t.tr.Handler = m.handler()
+	t.feed.Unlock()
 	go func() {
 		err := fn(ctx, m.event)
 		m.closeOpen()

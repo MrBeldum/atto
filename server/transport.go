@@ -56,7 +56,7 @@ type broker struct {
 	mu   sync.Mutex
 	seq  int64
 	ring []sseEvent
-	subs map[chan sseEvent]struct{}
+	subs map[chan sseEvent]chan struct{} // each subscriber's kick channel
 	keep int
 }
 
@@ -66,7 +66,7 @@ type sseEvent struct {
 }
 
 func newBroker(keep int) *broker {
-	return &broker{subs: map[chan sseEvent]struct{}{}, keep: keep}
+	return &broker{subs: map[chan sseEvent]chan struct{}{}, keep: keep}
 }
 
 func (b *broker) publish(v any) {
@@ -79,28 +79,43 @@ func (b *broker) publish(v any) {
 	if len(b.ring) > b.keep {
 		b.ring = b.ring[len(b.ring)-b.keep:]
 	}
-	for ch := range b.subs {
+	for ch, kick := range b.subs {
 		select {
 		case ch <- ev:
-		default: // slow client: drop; it can resume from the ring
+		default:
+			// A slow client: rather than skip events it would never know
+			// it missed, end its stream; it reconnects with Last-Event-ID
+			// and resumes from the ring.
+			delete(b.subs, ch)
+			close(kick)
 		}
 	}
 }
 
-// subscribe returns events after lastID (replayed from the ring) and a
-// channel of new ones.
-func (b *broker) subscribe(lastID int64) ([]sseEvent, chan sseEvent) {
+// subscribe returns events after lastID (replayed from the ring), a
+// channel of new ones, and a channel closed when the subscriber fell
+// behind and must reconnect. gap is set when the events after lastID are
+// not known any more: lastID is from before the server started (it
+// restarted) or older than the ring keeps.
+func (b *broker) subscribe(lastID int64) (backlog []sseEvent, ch chan sseEvent, kick chan struct{}, gap bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	var backlog []sseEvent
-	for _, ev := range b.ring {
-		if ev.id > lastID {
-			backlog = append(backlog, ev)
+	switch {
+	case lastID > b.seq:
+		gap = true
+	case lastID > 0 && len(b.ring) > 0 && lastID < b.ring[0].id-1:
+		gap = true
+	default:
+		for _, ev := range b.ring {
+			if ev.id > lastID {
+				backlog = append(backlog, ev)
+			}
 		}
 	}
-	ch := make(chan sseEvent, 1024)
-	b.subs[ch] = struct{}{}
-	return backlog, ch
+	ch = make(chan sseEvent, 1024)
+	kick = make(chan struct{})
+	b.subs[ch] = kick
+	return backlog, ch, kick, gap
 }
 
 func (b *broker) unsubscribe(ch chan sseEvent) {
@@ -150,6 +165,10 @@ func LoadOrCreateToken() (string, error) {
 	return tok, os.WriteFile(TokenPath(), []byte(tok+"\n"), 0o600)
 }
 
+// webCSP is the web client's Content-Security-Policy: its own script
+// and styles, images it attaches (blob: and data: URLs), no frames.
+const webCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+
 // HTTPHandler serves the protocol over HTTP:
 //
 //	POST /rpc      one JSON-RPC request in the body, response in the reply
@@ -182,6 +201,11 @@ func (s *Server) HTTPHandler(token string) http.Handler {
 		// Revalidate: the files change with the binary, and the asset URLs
 		// carry their hash anyway.
 		w.Header().Set("Cache-Control", "no-cache")
+		// The client loads nothing from elsewhere, and no page may frame
+		// it or learn its URL (the token arrives in its fragment).
+		w.Header().Set("Content-Security-Policy", webCSP)
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		files.ServeHTTP(w, r)
 	})
 	mux.HandleFunc("POST /rpc", func(w http.ResponseWriter, r *http.Request) {
@@ -212,11 +236,14 @@ func (s *Server) HTTPHandler(token string) http.Handler {
 			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 			return
 		}
-		last, _ := strconv.ParseInt(r.Header.Get("Last-Event-ID"), 10, 64)
-		if q := r.URL.Query().Get("lastEventId"); q != "" {
-			last, _ = strconv.ParseInt(q, 10, 64)
+		// The query says where a client starts following; the header,
+		// which EventSource sends when it reconnects by itself (to the
+		// same URL), the last event it got since then, so it wins.
+		last, _ := strconv.ParseInt(r.URL.Query().Get("lastEventId"), 10, 64)
+		if h := r.Header.Get("Last-Event-ID"); h != "" {
+			last, _ = strconv.ParseInt(h, 10, 64)
 		}
-		backlog, ch := b.subscribe(last)
+		backlog, ch, kick, gap := b.subscribe(last)
 		clients()
 		defer clients()
 		defer b.unsubscribe(ch)
@@ -225,6 +252,13 @@ func (s *Server) HTTPHandler(token string) http.Handler {
 		w.Header().Set("X-Accel-Buffering", "no")
 		write := func(ev sseEvent) {
 			fmt.Fprintf(w, "id: %d\ndata: %s\n\n", ev.id, ev.data)
+		}
+		if gap {
+			// What happened since is not known: the client reads its
+			// thread again (events/reset, see protocol.go). No id, so
+			// it does not move the client's Last-Event-ID.
+			reset, _ := json.Marshal(rpcNotification{JSONRPC: "2.0", Method: "events/reset", Params: map[string]any{"eventId": b.last()}})
+			fmt.Fprintf(w, "data: %s\n\n", reset)
 		}
 		for _, ev := range backlog {
 			write(ev)
@@ -235,6 +269,8 @@ func (s *Server) HTTPHandler(token string) http.Handler {
 		for {
 			select {
 			case <-r.Context().Done():
+				return
+			case <-kick: // fell behind: reconnect and resume
 				return
 			case ev := <-ch:
 				write(ev)

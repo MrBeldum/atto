@@ -41,6 +41,8 @@ func (m *itemMapper) handler() transcript.Handler {
 // event passes an agent event (or transcript.Input) to the builder, and
 // keeps the usage the turn reports.
 func (m *itemMapper) event(ev any) {
+	m.t.feed.Lock()
+	defer m.t.feed.Unlock()
 	m.t.tr.Event(ev)
 	switch e := ev.(type) {
 	case agent.StepEnd:
@@ -57,7 +59,11 @@ func (m *itemMapper) event(ev any) {
 }
 
 // closeOpen completes everything still open when the turn ends.
-func (m *itemMapper) closeOpen() { m.t.tr.End() }
+func (m *itemMapper) closeOpen() {
+	m.t.feed.Lock()
+	defer m.t.feed.Unlock()
+	m.t.tr.End()
+}
 
 // wireItem is the protocol form of a transcript item.
 func wireItem(it *transcript.Item) Item {

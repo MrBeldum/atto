@@ -43,6 +43,15 @@
 //	extension/notify {extension, message, level}  (ctx.ui.notify; extensions have no other UI here)
 //	turn/completed {turnId, status, error?, usage, contextTokens}
 //
+// Over HTTP, thread/start, thread/resume and thread/read results carry
+// eventId: the items are as of that event (those still streaming
+// included), so follow the thread from there (GET /events?lastEventId=).
+// When the events after the one a client resumes from are not known any
+// more (the server restarted, or the client was away for longer than the
+// server keeps events), the stream starts with
+//
+//	events/reset   {eventId}  (no threadId: read the thread again)
+//
 // Live session (atto's /remote, see Live): the server has one thread, the
 // TUI's session. initialize says {live: true, threadId}; thread/start and
 // thread/rollback are refused; turn/start and turn/steer both send the

@@ -14,6 +14,8 @@ import (
 func (t *thread) restore(entries []session.Entry) {
 	branch := session.Active(entries)
 	t.agent.Restore(branch)
+	t.feed.Lock()
+	defer t.feed.Unlock()
 	t.tr.Handler = transcript.Handler{} // no notifications for the replay
 	t.tr.Reset()
 	t.tr.Replay(branch)
