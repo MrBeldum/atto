@@ -31,6 +31,7 @@ import (
 
 	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/events"
+	"github.com/sebastianrcnt/atto/fsutil"
 	"github.com/sebastianrcnt/atto/shell"
 )
 
@@ -124,11 +125,7 @@ func save(dir string, j Job) error {
 	saveMu.Lock()
 	defer saveMu.Unlock()
 	data, _ := json.MarshalIndent(j, "", "  ")
-	tmp := filepath.Join(dir, ".job.json.tmp")
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, filepath.Join(dir, "job.json"))
+	return fsutil.WriteAtomic(filepath.Join(dir, "job.json"), data, 0o644)
 }
 
 func load(dir string) (Job, error) {

@@ -140,7 +140,7 @@ func Run(opts Options) error {
 		cwd:    cwd,
 		quit:   make(chan struct{}),
 
-		clipboard: images.SystemClipboard().Read,
+		clipboard: images.SystemClipboardImage,
 	}
 	if opts.Inline || settings.Renderer == "inline" || (settings.Renderer == "" && legacyConsole()) {
 		a.ui.Mode = tui.Inline

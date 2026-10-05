@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/fsutil"
 )
 
 type Status string
@@ -83,11 +84,7 @@ func Save(session string, g *Goal) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, p)
+	return fsutil.WriteAtomic(p, data, 0o644)
 }
 
 // Clear removes the session's goal.
