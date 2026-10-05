@@ -67,6 +67,7 @@ type Entry struct {
 	Version       int    `json:"version,omitempty"`
 	Cwd           string `json:"cwd,omitempty"`
 	ParentSession string `json:"parentSession,omitempty"` // path of the session this was forked from
+	GitBranch     string `json:"gitBranch,omitempty"`     // branch checked out in Cwd when the session began ("HEAD" if detached)
 
 	// message
 	Message    *provider.Message `json:"message,omitempty"`
@@ -127,6 +128,7 @@ type Writer struct {
 	cwd     string
 	created time.Time
 	parent  string // ParentSession for the header
+	branch  string // GitBranch for the header
 	leaf    string // ID of the last entry: the parent of the next one
 	hasLeaf bool   // leaf is known; else read from the file on open
 	f       *os.File
@@ -144,7 +146,7 @@ func New(cwd string) *Writer {
 	now := time.Now()
 	id := newID()
 	path := filepath.Join(config.SessionsDir(), now.Format("2006/01/02"), now.Format("20060102-150405")+"-"+id+".jsonl")
-	return &Writer{ID: id, Path: path, cwd: cwd, created: now}
+	return &Writer{ID: id, Path: path, cwd: cwd, created: now, branch: GitBranch(cwd)}
 }
 
 // Resume returns a writer that appends to an existing session file. New
@@ -206,7 +208,7 @@ func (w *Writer) open() error {
 		}
 	}
 	if statErr != nil { // new file: write the header
-		return w.write(Entry{Type: TypeSession, Time: w.created, Version: Version, ID: w.ID, Cwd: w.cwd, ParentSession: w.parent})
+		return w.write(Entry{Type: TypeSession, Time: w.created, Version: Version, ID: w.ID, Cwd: w.cwd, ParentSession: w.parent, GitBranch: w.branch})
 	}
 	return nil
 }
@@ -340,6 +342,8 @@ type Summary struct {
 	Updated  time.Time
 	Preview  string // first user message
 	Messages int    // user + assistant messages
+	Branch   string // git branch when the session began; "" if unknown
+	Size     int64  // file size in bytes
 }
 
 // List returns sessions, newest first. If cwd is non-empty only sessions
@@ -386,7 +390,10 @@ func summarize(path string) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
-	s := Summary{Path: path, ID: h.ID, Cwd: h.Cwd, Created: h.Time, Updated: h.Time}
+	s := Summary{Path: path, ID: h.ID, Cwd: h.Cwd, Created: h.Time, Updated: h.Time, Branch: h.GitBranch}
+	if st, err := os.Stat(path); err == nil {
+		s.Size = st.Size()
+	}
 	for _, e := range entries {
 		s.Updated = e.Time
 		if e.Type == TypeName {
@@ -414,6 +421,22 @@ func summarize(path string) (Summary, error) {
 		}
 	}
 	return s, nil
+}
+
+// Rename gives the session at path a name, as a "name" entry.
+func Rename(path, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("name is empty")
+	}
+	h, _, err := Load(path)
+	if err != nil {
+		return err
+	}
+	w := Resume(path, h)
+	w.Append(Entry{Type: TypeName, Name: name})
+	w.Close()
+	return w.Err()
 }
 
 // Latest returns the most recently updated session for cwd.

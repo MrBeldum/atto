@@ -308,20 +308,10 @@ func sessionsMove(out io.Writer, path string, archive bool) error {
 
 func sessionsRename(out io.Writer, path, name string) error {
 	name = strings.TrimSpace(name)
-	if name == "" {
-		return fmt.Errorf("name is empty")
-	}
-	h, _, err := session.Load(path)
-	if err != nil {
+	if err := session.Rename(path, name); err != nil {
 		return err
 	}
-	w := session.Resume(path, h)
-	w.Append(session.Entry{Type: session.TypeName, Name: name})
-	w.Close()
-	if err := w.Err(); err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "Named session %s %q.\n", h.ID, name)
+	fmt.Fprintf(out, "Named session %s %q.\n", idOf(path), name)
 	return nil
 }
 

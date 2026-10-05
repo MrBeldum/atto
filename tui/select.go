@@ -62,6 +62,9 @@ func (s *SelectList) text() string {
 	return s.query
 }
 
+// Query is the filter text, for callers that draw the filter themselves.
+func (s *SelectList) Query() string { return s.text() }
+
 func (s *SelectList) match(it SelectItem, q string) bool {
 	if s.Match != nil {
 		return s.Match(it, q)
@@ -155,7 +158,11 @@ func (s *SelectList) canFilter() bool { return s.Filterable && s.Source == nil }
 
 // window returns the range of items to show: it keeps the selection centred
 // (pi's getVisibleRange).
-func window(sel, n, maxVis int) (int, int) {
+func window(sel, n, maxVis int) (int, int) { return Window(sel, n, maxVis) }
+
+// Window is the range of n items shown in maxVis rows around sel, for
+// callers that draw the rows themselves.
+func Window(sel, n, maxVis int) (int, int) {
 	start := max(0, min(sel-maxVis/2, n-maxVis))
 	return start, min(start+maxVis, n)
 }
