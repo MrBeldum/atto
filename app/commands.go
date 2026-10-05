@@ -325,7 +325,7 @@ func (a *App) cmdClear(string) {
 		return
 	}
 	a.reset()
-	a.newSession()
+	a.newSession("clear")
 	a.sessionStartHook("clear")
 	a.notice("Started a new conversation.")
 }
@@ -363,6 +363,6 @@ func (a *App) cmdArchive(string) {
 		return
 	}
 	a.reset()
-	a.newSession()
+	a.newSession("other")
 	a.notice("Archived the conversation. Find it with /resume (shift+tab shows archived).")
 }

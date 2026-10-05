@@ -263,4 +263,11 @@ func (a *App) announceGoal(g *goal.Goal) {
 	}
 	c := *g
 	a.tr().Add(transcript.Item{Kind: transcript.GoalStatus, GoalState: &c})
+	if g.Status == goal.Blocked {
+		msg := "The goal is blocked"
+		if g.Note != "" {
+			msg += ": " + g.Note
+		}
+		a.notify("goal_blocked", msg)
+	}
 }

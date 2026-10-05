@@ -28,7 +28,7 @@ func treeApp(t *testing.T) *App {
 		quit:  make(chan struct{}),
 	}
 	a.build()
-	a.newSession()
+	a.newSession("")
 	// Close the session file before the temp dirs go: Windows can't
 	// delete an open file. (Cleanups run last-registered first.)
 	t.Cleanup(func() { a.sess.Close() })

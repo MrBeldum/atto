@@ -79,7 +79,7 @@ func TestLiveBlocksMatchResume(t *testing.T) {
 	b := &App{ui: tui.New(nullTerm{}), agent: agent.New(config.ModelRef{ProviderName: "t", Model: config.Model{ID: "m"}}, "", a.cwd),
 		cwd: a.cwd, quit: make(chan struct{})}
 	b.build()
-	b.newSession()
+	b.newSession("")
 	b.resume(a.sess.Path)
 	t.Cleanup(func() { b.sess.Close() })
 	if got := transcriptLines(b); got != live {

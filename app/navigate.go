@@ -288,7 +288,7 @@ func (a *App) fork(id string) {
 		a.resume(w.Path)
 	} else { // forked before the first message: nothing to copy
 		a.reset()
-		a.newSession()
+		a.newSession("other")
 	}
 	if strings.TrimSpace(a.editor.Text()) == "" {
 		a.editor.SetText(text, editorImages(entries, id)...)
