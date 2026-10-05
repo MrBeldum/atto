@@ -140,7 +140,7 @@ func TestNavigateAndResume(t *testing.T) {
 	a.record("assistant", "a1")
 	a.record("user", "u2")
 	a.record("assistant", "a2")
-	a.goal.g = &goal.Goal{Objective: "x", Status: goal.Active}
+	a.goal.Goal = &goal.Goal{Objective: "x", Status: goal.Active}
 	a.queued = []queuedInput{{text: "queued follow-up"}}
 
 	a.navigateTree(entryID(t, a, "u2"))
@@ -150,7 +150,7 @@ func TestNavigateAndResume(t *testing.T) {
 	if got := userBlocks(a); strings.Join(got, ",") != "u1" {
 		t.Fatalf("transcript %v", got)
 	}
-	if a.goal.g.Status != goal.Paused {
+	if a.goal.Goal.Status != goal.Paused {
 		t.Fatal("goal should pause")
 	}
 	if b := a.agent.Breakdown(); b.Messages != 2 {

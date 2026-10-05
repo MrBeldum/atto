@@ -74,6 +74,8 @@ type Entry struct {
 	Replacement  []provider.Message `json:"replacement,omitempty"`
 	Notes        string             `json:"notes,omitempty"`
 	TokensBefore int                `json:"tokensBefore,omitempty"`
+	TokensAfter  int                `json:"tokensAfter,omitempty"` // the estimate right after
+	ElapsedMs    int64              `json:"elapsedMs,omitempty"`   // how long writing the notes took
 	Auto         bool               `json:"auto,omitempty"`
 
 	// model / effort

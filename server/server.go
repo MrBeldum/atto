@@ -13,6 +13,7 @@ import (
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/core"
+	"github.com/sebastianrcnt/atto/core/transcript"
 	"github.com/sebastianrcnt/atto/events"
 	"github.com/sebastianrcnt/atto/hooks"
 	"github.com/sebastianrcnt/atto/provider"
@@ -71,7 +72,7 @@ func (s *Server) watchInbox() {
 				continue
 			}
 			_, _ = s.begin(t, func(ctx context.Context, emit func(any)) error {
-				emit(eventInput{text})
+				emit(transcript.Input{Text: text})
 				return t.agent.Run(ctx, text, emit)
 			})
 		}
@@ -86,11 +87,11 @@ type thread struct {
 	agent     *agent.Agent
 	sess      *session.Writer
 	hooks     *hooks.Runner
-	items     []Item
+	tr        transcript.Builder // used by the running turn, or by restore while idle
+	items     []Item             // completed items
 	busy      bool
 	turnID    string
 	cancel    context.CancelFunc
-	itemSeq   int
 	turnSeq   int
 	ctxTokens int
 	usage     provider.Usage // totals for the running turn
@@ -115,11 +116,6 @@ func (s *Server) Close() {
 		t.mu.Unlock()
 		t.sess.Close()
 	}
-}
-
-func (t *thread) nextItemID() string {
-	t.itemSeq++
-	return fmt.Sprintf("%s-i%d", t.id, t.itemSeq)
 }
 
 func (t *thread) info() ThreadInfo {
@@ -288,6 +284,7 @@ func (s *Server) newThread(cwd string, model config.ModelRef, effort string, fil
 	}
 	core.Bind(ag, hk, file, start, true)
 	t := &thread{id: file.ID, cwd: cwd, agent: ag, sess: file, hooks: hk}
+	t.tr.IDPrefix = itemPrefix(t.id)
 	s.mu.Lock()
 	s.threads[t.id] = t
 	s.mu.Unlock()
@@ -455,6 +452,7 @@ func (s *Server) begin(t *thread, fn func(ctx context.Context, emit func(any)) e
 
 	s.notify(t, "turn/started", map[string]any{"turnId": turnID})
 	m := &itemMapper{s: s, t: t, turnID: turnID}
+	t.tr.Handler = m.handler()
 	go func() {
 		err := fn(ctx, m.event)
 		m.closeOpen()
@@ -491,7 +489,7 @@ func (s *Server) startTurn(p threadParams) (any, error) {
 	}
 	var turnID string
 	turnID, err = s.begin(t, func(ctx context.Context, emit func(any)) error {
-		emit(userInput{p.Input})
+		emit(transcript.Input{Text: p.Input})
 		return t.agent.Run(ctx, p.Input, emit)
 	})
 	if err != nil {
@@ -511,9 +509,3 @@ func (s *Server) startCompact(id string) (any, error) {
 	}
 	return map[string]any{"turnId": turnID}, nil
 }
-
-// userInput is a synthetic event so the turn's user message becomes an item.
-type userInput struct{ text string }
-
-// eventInput is the inbox counterpart of userInput.
-type eventInput struct{ text string }

@@ -3,7 +3,8 @@
 // app-server: threads (conversations, persisted as sessions) contain turns
 // (one user input and everything it causes), which produce items (user
 // messages, reasoning, assistant messages, command executions,
-// compactions). Items stream as started → delta* → completed
+// compactions, events, goal messages, hook messages; see
+// core/transcript). Items stream as started → delta* → completed
 // notifications.
 //
 // Requests:
@@ -28,7 +29,7 @@
 //	item/started   {turnId, item}
 //	item/delta     {turnId, itemId, delta}
 //	item/completed {turnId, item}
-//	hook           {event, message, blocked}
+//	hook           {event, message, blocked}  (also a hook item during a turn)
 //	event          {title}  (inbox event delivered to the thread)
 //	turn/completed {turnId, status, error?, usage, contextTokens}
 package server
@@ -78,13 +79,19 @@ const (
 	ItemCommand    = "commandExecution"
 	ItemCompaction = "compaction"
 	ItemEvent      = "event" // [atto event]: a job exited, a timer fired, a monitor matched
+	ItemGoal       = "goal"  // [atto goal]: a goal continuation or budget message for the model
+	ItemHook       = "hook"  // a hook's message, or what it blocked
+	ItemNotice     = "notice"
+	ItemGoalStatus = "goalStatus"
 )
 
-// Item is one unit of a turn's output.
+// Item is one unit of a turn's output: the protocol form of a
+// transcript.Item.
 type Item struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"` // message, reasoning, notes
+	ID     string `json:"id"`
+	Type   string `json:"type"`
+	Text   string `json:"text,omitempty"`   // message, reasoning, notes, hook message
+	Status string `json:"status,omitempty"` // inProgress, completed, failed
 
 	// commandExecution
 	Description string `json:"description,omitempty"`
@@ -93,12 +100,18 @@ type Item struct {
 	ExitCode    *int   `json:"exitCode,omitempty"`
 	DurationMs  int64  `json:"durationMs,omitempty"`
 	TimedOut    bool   `json:"timedOut,omitempty"`
-	Status      string `json:"status,omitempty"` // inProgress, completed, failed
 
 	// compaction
 	Auto         bool `json:"auto,omitempty"`
 	TokensBefore int  `json:"tokensBefore,omitempty"`
 	TokensAfter  int  `json:"tokensAfter,omitempty"`
+
+	// hook
+	HookEvent string `json:"hookEvent,omitempty"`
+	Blocked   bool   `json:"blocked,omitempty"`
+
+	// goalStatus: the new status; text is its note
+	GoalStatus string `json:"goalStatus,omitempty"`
 }
 
 // ThreadInfo describes a thread to clients.

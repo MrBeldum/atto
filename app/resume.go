@@ -1,13 +1,10 @@
 package app
 
 import (
-	"encoding/json"
 	"fmt"
 	"github.com/sebastianrcnt/atto/core"
 	"strings"
-	"time"
 
-	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/session"
 	"github.com/sebastianrcnt/atto/tui"
 )
@@ -235,69 +232,4 @@ func (a *App) resume(path string) {
 	}
 	a.notice("Resumed session %s.", label)
 	a.statusTrigger()
-}
-
-// replay rebuilds transcript blocks from session entries: pass the active
-// branch (session.Active), not the whole file.
-func (a *App) replay(entries []session.Entry) {
-	tools := map[string]*toolBlock{}
-	for _, e := range entries {
-		switch e.Type {
-		case session.TypeCompaction:
-			c := &compactBlock{auto: e.Auto, before: e.TokensBefore, expander: expander{d: &a.details}}
-			c.notes.WriteString(e.Notes)
-			a.add(c)
-		case session.TypeMessage:
-			m := e.Message
-			if m == nil {
-				continue
-			}
-			switch m.Role {
-			case "user":
-				a.add(&userBlock{text: m.Content})
-			case "assistant":
-				if strings.TrimSpace(m.ReasoningContent) != "" {
-					t := &thinkingBlock{done: true, dur: time.Duration(e.ThinkingMs) * time.Millisecond, expander: expander{d: &a.details}}
-					t.text.WriteString(m.ReasoningContent)
-					a.add(t)
-				}
-				if strings.TrimSpace(m.Content) != "" {
-					t := &textBlock{}
-					t.text.WriteString(m.Content)
-					a.add(t)
-				}
-				for _, tc := range m.ToolCalls {
-					var args agent.BashArgs
-					_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
-					if args.Description == "" {
-						args.Description = tc.Function.Name
-					}
-					b := &toolBlock{args: args, timeout: agent.DefaultBashTimeout, expander: expander{d: &a.details}}
-					tools[tc.ID] = b
-					a.add(b)
-				}
-			case "tool":
-				b := tools[m.ToolCallID]
-				if b == nil {
-					continue
-				}
-				b.append(m.Content)
-				b.done = true
-				if t := e.Tool; t != nil {
-					b.res = agent.BashResult{
-						ExitCode: t.ExitCode,
-						TimedOut: t.TimedOut,
-						Canceled: t.Canceled,
-						Duration: time.Duration(t.DurationMs) * time.Millisecond,
-					}
-				}
-			}
-		}
-	}
-	// Tool calls with no recorded result were interrupted.
-	for _, b := range tools {
-		if !b.done {
-			b.done, b.res = true, agent.BashResult{Canceled: true, ExitCode: -1}
-		}
-	}
 }

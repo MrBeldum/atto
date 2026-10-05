@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/sebastianrcnt/atto/core"
+	"github.com/sebastianrcnt/atto/core/transcript"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -49,7 +50,7 @@ func (a *App) watchInbox() {
 				return // session switched; leave events for when it is resumed
 			}
 			a.jobCount, a.timerCount = nJobs, nTimers
-			a.pollGoal()
+			a.goal.Poll()
 			a.pendingEvents = append(a.pendingEvents, evs...)
 			a.deliverEvents()
 		})
@@ -82,6 +83,7 @@ func (a *App) deliverEvents() {
 	}
 	a.runKind = "turn"
 	a.recordSettings()
+	a.tr().Event(transcript.Input{Text: text}) // shown above
 	a.start("Thinking", func(ctx context.Context, emit func(any)) error {
 		return a.agent.Run(ctx, text, emit)
 	})
