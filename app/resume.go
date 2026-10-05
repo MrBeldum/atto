@@ -246,6 +246,7 @@ func (a *App) resume(path string) {
 	a.agent.SetSession(h.ID, sessionEnv(h.ID))
 	a.agent.Restore(entries)
 	a.ctxTokens = a.agent.ContextTokens()
+	a.usage.fromEntries(entries)
 	a.recModel, a.recEffort, a.sessName = "", "", ""
 
 	// Restore the name, model and effort last used in the session.

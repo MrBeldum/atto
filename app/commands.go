@@ -23,6 +23,8 @@ func init() {
 		{"model", "[id]", "Switch model", (*App).cmdModel},
 		{"effort", "[level]", "Set reasoning effort (also shift+tab)", (*App).cmdEffort},
 		{"compact", "", "Compact the conversation into handoff notes", (*App).cmdCompact},
+		{"context", "[system]", "Show what fills the context and cache use", (*App).cmdContext},
+		{"request", "", "Save the raw last request to a file", (*App).cmdRequest},
 		{"resume", "", "Resume a saved conversation", (*App).cmdResume},
 		{"name", "<name>", "Name this conversation", (*App).cmdName},
 		{"rename", "<name>", "Rename this conversation", (*App).cmdName},
@@ -198,6 +200,7 @@ func (a *App) reset() {
 	a.agent.Reset()
 	a.queued, a.pendingSteers, a.queuePaused = nil, nil, false
 	a.ctxTokens = 0
+	a.usage = usageStats{}
 	a.ui.Body.Clear()
 	a.ui.Redraw()
 	a.ui.ScrollToBottom()

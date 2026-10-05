@@ -52,6 +52,7 @@ type App struct {
 	// ctxTokens mirrors the agent's context estimate; updated from events so
 	// rendering never reads agent state while a turn runs.
 	ctxTokens int
+	usage     usageStats
 
 	// Codex-style pending input: Enter during a turn steers it (delivered
 	// after the next tool call); Tab queues a follow-up turn.
@@ -429,6 +430,7 @@ func (a *App) onEvent(ev any) {
 	case agent.StepEnd:
 		a.endStream()
 		a.ctxTokens = e.Context
+		a.usage.add(e.Usage)
 		a.statusTrigger()
 	case agent.SteerCommitted:
 		a.pendingSteers = a.pendingSteers[min(len(e.Texts), len(a.pendingSteers)):]

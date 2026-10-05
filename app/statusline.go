@@ -46,6 +46,13 @@ type statusInput struct {
 	Memory    struct {
 		RSSBytes int64 `json:"rss_bytes"`
 	} `json:"memory"`
+	Cache struct {
+		LastInputTokens  int `json:"last_input_tokens"`
+		LastCachedTokens int `json:"last_cached_tokens"`
+		InputTokens      int `json:"input_tokens"`  // session total
+		CachedTokens     int `json:"cached_tokens"` // session total
+		OutputTokens     int `json:"output_tokens"` // session total
+	} `json:"cache"`
 }
 
 func (a *App) statusInput() statusInput {
@@ -72,6 +79,9 @@ func (a *App) statusInput() statusInput {
 	in.GitBranch = a.gitBranch
 	in.Busy = a.busy
 	in.Memory.RSSBytes = rssBytes.Load()
+	in.Cache.LastInputTokens = a.usage.last.PromptTokens
+	in.Cache.LastCachedTokens = a.usage.last.CachedTokens
+	in.Cache.InputTokens, in.Cache.CachedTokens, in.Cache.OutputTokens = a.usage.input, a.usage.cached, a.usage.output
 	return in
 }
 
@@ -192,7 +202,7 @@ func runStatusCommand(command string, input []byte, cwd string) ([]string, error
 // renderStatus draws the custom status line if configured, otherwise the
 // built-in one:
 //
-//	◆ Orca Local · medium  ━━─────── 12% 31k/262k        name · ~/proj (main) · 18MB
+//	◆ Orca Local · medium  ━━─────── 12% 31k/262k · cache 93%    name · ~/proj (main) · 18MB
 //
 // Only characters with an unambiguous width (box drawing renders as one
 // column everywhere the editor rules do) so CJK terminals line up.
@@ -241,6 +251,9 @@ func (a *App) builtinStatus(width int) string {
 			bar = tui.Dim(bar)
 		}
 		left += "  " + bar
+	}
+	if c := a.usage.cacheLabel(); c != "" {
+		left += sep + tui.Dim(c)
 	}
 
 	lw := tui.VisibleWidth(left) + 1

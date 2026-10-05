@@ -66,12 +66,13 @@ type Agent struct {
 
 	// Model settings may change from the UI while a turn runs; they are
 	// read once per request.
-	cfgMu  sync.Mutex
-	client *provider.Client
-	model  config.ModelRef
-	effort string
-	env    []string // extra environment for bash commands
-	sessID string   // sent to providers that route by session
+	cfgMu   sync.Mutex
+	client  *provider.Client
+	model   config.ModelRef
+	effort  string
+	env     []string // extra environment for bash commands
+	lastReq []byte   // most recent request body, for inspection
+	sessID  string   // sent to providers that route by session
 
 	// Record, if set, receives every change to the conversation, for
 	// persistence. Called on the goroutine running Run/Compact.
@@ -161,6 +162,11 @@ func (a *Agent) SetModel(m config.ModelRef) {
 		ExtraBody:      m.RequestBody(),
 		EffortMap:      m.Model.WireEfforts(),
 		Headers:        m.Provider.Headers,
+		OnRequest: func(b []byte) {
+			a.cfgMu.Lock()
+			a.lastReq = b
+			a.cfgMu.Unlock()
+		},
 	}
 	if lv := m.Model.Levels(); len(lv) > 0 && !contains(lv, a.effort) {
 		a.effort = lv[len(lv)/2]
@@ -173,6 +179,53 @@ func (a *Agent) SetEffort(e string) {
 	a.effort = e
 	a.cfgMu.Unlock()
 }
+
+// LastRequest returns the body of the most recent request sent.
+func (a *Agent) LastRequest() []byte {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	return a.lastReq
+}
+
+// Breakdown sizes the parts of the context, in characters. Call only while
+// no turn is running.
+type Breakdown struct {
+	System, Tools, User, Notes, Assistant, Reasoning, ToolCalls, ToolResults int
+	Messages                                                                 int
+}
+
+func (b Breakdown) Total() int {
+	return b.System + b.Tools + b.User + b.Notes + b.Assistant + b.Reasoning + b.ToolCalls + b.ToolResults
+}
+
+func (a *Agent) Breakdown() Breakdown {
+	b := Breakdown{System: len(a.system), Messages: len(a.messages)}
+	for _, t := range a.tools() {
+		b.Tools += len(t.Function.Name) + len(t.Function.Description) + len(t.Function.Parameters)
+	}
+	for _, m := range a.messages {
+		switch m.Role {
+		case "user":
+			if strings.HasPrefix(m.Content, SummaryPrefix) {
+				b.Notes += len(m.Content)
+			} else {
+				b.User += len(m.Content)
+			}
+		case "assistant":
+			b.Assistant += len(m.Content)
+			b.Reasoning += len(m.ReasoningContent)
+			for _, tc := range m.ToolCalls {
+				b.ToolCalls += len(tc.Function.Name) + len(tc.Function.Arguments)
+			}
+		case "tool":
+			b.ToolResults += len(m.Content)
+		}
+	}
+	return b
+}
+
+// SystemPrompt returns the system prompt in use.
+func (a *Agent) SystemPrompt() string { return a.system }
 
 // Effort returns the effort in use.
 func (a *Agent) Effort() string {

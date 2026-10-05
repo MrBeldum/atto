@@ -91,6 +91,8 @@ type Client struct {
 	// Headers are added to every request; "$session" becomes the session ID.
 	Headers map[string]string
 	HTTP    *http.Client
+	// OnRequest, if set, receives every request body before it is sent.
+	OnRequest func(body []byte)
 }
 
 // substitute resolves placeholders in v. keep is false when the value
@@ -206,6 +208,9 @@ func (c *Client) Stream(ctx context.Context, req Request, h Handler) (Result, er
 	body, err := c.body(req)
 	if err != nil {
 		return res, err
+	}
+	if c.OnRequest != nil {
+		c.OnRequest(body)
 	}
 	hr, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(c.BaseURL, "/")+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
