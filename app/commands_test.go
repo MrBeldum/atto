@@ -16,12 +16,13 @@ func TestSuggestionList(t *testing.T) {
 	}
 
 	a.suggestionKey("up") // wraps to the last command
-	m, sel := a.suggestion()
+	l := a.suggestions()
+	m, sel := l.Visible(), l.Selected
 	if sel != len(m)-1 {
 		t.Fatalf("up from the top selects the last, got %d", sel)
 	}
 	lines = a.renderSuggestions(80)
-	if !strings.Contains(tui.StripEscapes(lines[maxSuggestions-1]), "/"+m[sel].name) {
+	if !strings.Contains(tui.StripEscapes(lines[maxSuggestions-1]), "/"+m[sel].Value) {
 		t.Fatalf("the window follows the selection: %q", lines)
 	}
 

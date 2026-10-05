@@ -18,6 +18,34 @@ type Timer struct {
 	Due     time.Time `json:"due"`
 	Message string    `json:"message"`
 	Created time.Time `json:"created"`
+
+	// Recurring timers (`atto timer every`). Old one-shot files have none
+	// of these and load as before.
+	Every time.Duration `json:"every,omitempty"` // interval; 0 = one-shot
+	Left  int           `json:"left,omitempty"`  // firings remaining; 0 = unlimited
+	Until *time.Time    `json:"until,omitempty"` // stop once the next firing would pass this
+}
+
+// MinEvery is the shortest recurring interval, so a model cannot create a
+// busy loop that floods its own inbox.
+const MinEvery = time.Minute
+
+// Recurring reports whether the timer repeats.
+func (t Timer) Recurring() bool { return t.Every > 0 }
+
+// Schedule describes a recurring timer for listings ("" for one-shots).
+func (t Timer) Schedule() string {
+	if !t.Recurring() {
+		return ""
+	}
+	s := "every " + t.Every.String()
+	if t.Left > 0 {
+		s += fmt.Sprintf(", %d left", t.Left)
+	}
+	if t.Until != nil {
+		s += ", until " + t.Until.Format("15:04")
+	}
+	return s
 }
 
 func timerDir(session string) string { return filepath.Join(Dir(session), "timers") }
@@ -28,6 +56,30 @@ func AddTimer(session string, due time.Time, message string) (Timer, error) {
 		return Timer{}, fmt.Errorf("no session")
 	}
 	t := Timer{ID: randID()[:6], Due: due, Message: message, Created: time.Now()}
+	data, _ := json.Marshal(t)
+	return t, writeAtomic(filepath.Join(timerDir(session), t.ID+".json"), data)
+}
+
+// AddRecurringTimer schedules a timer that fires every interval, first at
+// now+every. count > 0 limits the number of firings; a non-zero until stops
+// it once the next firing would fall after that time.
+func AddRecurringTimer(session string, now time.Time, every time.Duration, count int, until time.Time, message string) (Timer, error) {
+	if session == "" {
+		return Timer{}, fmt.Errorf("no session")
+	}
+	if every < MinEvery {
+		return Timer{}, fmt.Errorf("interval %s is too short: the minimum is %s", every, MinEvery)
+	}
+	if count < 0 {
+		return Timer{}, fmt.Errorf("count must be positive")
+	}
+	t := Timer{ID: randID()[:6], Due: now.Add(every), Message: message, Created: now, Every: every, Left: count}
+	if !until.IsZero() {
+		if until.Before(t.Due) {
+			return Timer{}, fmt.Errorf("until %s is before the first firing at %s", until.Format("15:04"), t.Due.Format("15:04"))
+		}
+		t.Until = &until
+	}
 	data, _ := json.Marshal(t)
 	return t, writeAtomic(filepath.Join(timerDir(session), t.ID+".json"), data)
 }
@@ -60,16 +112,62 @@ func CancelTimer(session, id string) error {
 }
 
 // FireDue moves due timers into the inbox and returns how many fired.
+//
+// A recurring timer is rescheduled from its scheduled time, not from now,
+// so it does not drift. If several intervals passed while nothing was
+// running it fires once and reports how many it skipped; skipped intervals
+// still count against -count, since they were scheduled firings.
 func FireDue(session string, now time.Time) int {
 	n := 0
 	for _, t := range Timers(session) {
 		if t.Due.After(now) {
 			continue
 		}
-		if CancelTimer(session, t.ID) != nil {
-			continue // another consumer took it
+		path := filepath.Join(timerDir(session), t.ID+".json")
+		if !t.Recurring() {
+			if CancelTimer(session, t.ID) != nil {
+				continue // another consumer took it
+			}
+			text := fmt.Sprintf("Timer %s fired: %s (set %s ago)", t.ID, t.Message, now.Sub(t.Created).Round(time.Second))
+			_ = Push(session, Event{Source: "timer", Text: text, Title: "⏱ " + t.Message})
+			n++
+			continue
 		}
-		text := fmt.Sprintf("Timer %s fired: %s (set %s ago)", t.ID, t.Message, now.Sub(t.Created).Round(time.Second))
+		// Claim by renaming: only one consumer wins, and Timers ignores
+		// dot files, so the timer is invisible until we write it back.
+		claim := filepath.Join(timerDir(session), "."+t.ID+".claim")
+		if os.Rename(path, claim) != nil {
+			continue
+		}
+		if t.Until != nil && t.Due.After(*t.Until) {
+			os.Remove(claim) // expired while nothing was running
+			continue
+		}
+		skipped := int(now.Sub(t.Due) / t.Every)
+		next := t.Due.Add(time.Duration(skipped+1) * t.Every)
+		done := t.Until != nil && next.After(*t.Until)
+		if t.Left > 0 {
+			t.Left -= 1 + skipped
+			done = done || t.Left <= 0
+		}
+		text := fmt.Sprintf("Timer %s fired: %s (%s", t.ID, t.Message, t.Schedule())
+		if skipped > 0 {
+			text += fmt.Sprintf("; skipped %d missed", skipped)
+		}
+		if done {
+			text += "; last firing, timer finished"
+		} else {
+			t.Due = next
+		}
+		text += ")"
+		if done {
+			os.Remove(claim)
+		} else {
+			data, _ := json.Marshal(t)
+			if writeAtomic(path, data) == nil {
+				os.Remove(claim)
+			}
+		}
 		_ = Push(session, Event{Source: "timer", Text: text, Title: "⏱ " + t.Message})
 		n++
 	}

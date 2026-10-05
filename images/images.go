@@ -22,6 +22,7 @@ import (
 	_ "golang.org/x/image/webp" // decoder
 
 	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/fsutil"
 	"github.com/sebastianrcnt/atto/provider"
 )
 
@@ -124,21 +125,8 @@ func Save(im provider.Image) error {
 	if err := os.MkdirAll(Dir(), 0o755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(Dir(), ".tmp-*")
-	if err != nil {
-		return err
-	}
-	_, err = tmp.Write(im.Data)
-	if cerr := tmp.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		err = os.Rename(tmp.Name(), path)
-	}
-	if err != nil {
-		os.Remove(tmp.Name())
-	}
-	return err
+	// CreateTemp used 0600; keep that mode for image files.
+	return fsutil.WriteAtomic(path, im.Data, 0o600)
 }
 
 // Load fills in im.Data from its file.

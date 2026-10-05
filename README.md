@@ -33,18 +33,26 @@ They don't need root. Two environment variables change what gets installed:
 | Variable | Effect |
 | --- | --- |
 | `ATTO_VERSION=v0.1.0` | installs that release |
+| `ATTO_VERSION=edge` | installs the edge build (see below) |
 | `ATTO_INSTALL_DIR=...` | installs somewhere else |
 
 Running the script again is safe. It installs the latest release over the old one.
+
+**Edge builds.** Every push to `main` that passes the tests replaces the [`edge` prerelease](https://github.com/sebastianrcnt/atto/releases/tag/edge), named like `v0.0.3-dev.14+abc1234` (the next patch version, 14 commits after the last tag, at commit `abc1234`). It's unreleased code and may break. Install it with `ATTO_VERSION=edge` (`$env:ATTO_VERSION = "edge"` in PowerShell), or build from source with `go install github.com/sebastianrcnt/atto/cmd/atto@main`.
 
 ### Update
 
 ```sh
 atto update          # install the latest release
 atto update -check   # only check
+atto channel         # show which channel this binary follows
+atto channel edge    # switch to edge builds
+atto channel stable  # go back to tagged releases
 ```
 
-Once a day atto asks the GitHub API whether a newer release exists, and mentions it when you start atto. It never updates itself on its own. To turn the check off, set `"updateCheck": false` in `~/.atto/settings.json`.
+The channel is part of the binary: release builds are `stable`, edge builds are `edge`, and `atto -version` shows which (`atto v0.0.3-dev.14+abc1234 (edge)`). `atto update` stays on the channel you're on. `atto channel <name>` installs the latest binary of that channel, which then follows it. Nothing is saved in settings. Going from edge back to stable installs the latest stable release even though its version number is lower, and says so: `Switched to stable: atto v0.0.3-dev.14 → v0.0.2`. Only `atto channel` does that. Builds from `go install` or a local `go build` have no channel (they report `dev`) and get no update notices.
+
+Once a day atto asks the GitHub API whether a newer release exists on your channel, and mentions it when you start atto. It never updates itself on its own. To turn the check off, set `"updateCheck": false` in `~/.atto/settings.json`.
 
 If you installed with `go install` or Homebrew, update that way instead.
 
@@ -91,6 +99,7 @@ A model can set:
 
 ```sh
 atto                                  # interactive session
+atto "fix the build"                  # interactive, starting with this message
 atto -m local/my-model                # pick the model
 atto -c                               # continue the last session here
 atto -resume                          # pick a saved session
@@ -142,8 +151,8 @@ Pastes over 1000 characters show as `[Pasted Content 1234 chars]` and are sent i
 **One tool.** The model works through a single shell tool: bash on macOS and Linux, PowerShell on Windows. Everything else is a command it can run:
 
 - `atto history grep` searches the session transcript, including turns that were compacted away.
-- `atto job start` runs a command in the background.
-- `atto monitor` and `atto timer` wake the agent when something happens.
+- `atto job start` runs a command in the background. With `-notify REGEXP` (and `-notify-limit N`, default 50) each matching output line wakes the agent while the job keeps running; matches within a second are batched.
+- `atto monitor` and `atto timer` wake the agent when something happens. `atto timer every 30m [-count N] [-until HH:MM|duration] <message>` repeats (minimum 1m, no drift; missed intervals fire once).
 - `atto goal complete` reports that a goal is done.
 
 **Prefix-cache friendly.**

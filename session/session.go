@@ -23,6 +23,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -328,7 +329,7 @@ func List(cwd string, archived bool) ([]Summary, error) {
 			return nil
 		}
 		s, err := summarize(path)
-		if err != nil || (cwd != "" && s.Cwd != cwd) || s.Preview == "" {
+		if err != nil || (cwd != "" && !SameDir(s.Cwd, cwd)) || s.Preview == "" {
 			return nil
 		}
 		s.Archived = archived
@@ -340,6 +341,17 @@ func List(cwd string, archived bool) ([]Summary, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
 	return out, nil
+}
+
+// SameDir compares two directory paths the way the OS does: Windows paths
+// are case-insensitive, so "C:\\Users\\me\\desktop" (as cmd's "cd desktop"
+// leaves it) is the same directory as "...\\Desktop".
+func SameDir(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 func summarize(path string) (Summary, error) {

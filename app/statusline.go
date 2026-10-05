@@ -229,9 +229,6 @@ func (a *App) renderStatus(width int) []string {
 	if a.timerCount > 0 {
 		flags = append(flags, tui.FG(4, fmt.Sprintf("⏱ %d timer%s (/timers)", a.timerCount, plural(a.timerCount))))
 	}
-	if a.details.on {
-		flags = append(flags, tui.FG(3, "details on (ctrl+t)"))
-	}
 	if len(flags) > 0 {
 		out = append(out, tui.Truncate(" "+strings.Join(flags, tui.Dim(" · ")), width, "…"))
 	}
