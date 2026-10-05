@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sebastianrcnt/atto/ai"
 	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/images"
 	"github.com/sebastianrcnt/atto/provider"
@@ -1096,7 +1097,8 @@ func (a *Agent) compact(ctx context.Context, emit func(any), auto bool) error {
 	est := before + messageChars(prompt)/4
 	var res provider.Result
 	var err error
-	for try := 0; ; try++ {
+	try := 0
+	for ; ; try++ {
 		// The conversation is at its limit by now, and one large tool result
 		// can take it past the point where the request plus a full-size
 		// answer fits: give the notes the room that is left, and when that
@@ -1113,6 +1115,9 @@ func (a *Agent) compact(ctx context.Context, emit func(any), auto bool) error {
 			break
 		}
 	}
+	// For /debug: the compaction request(s) and the turn's request before,
+	// to check that the compaction kept the server's prefix cache.
+	ai.PinRecentRequests("compaction", try+2)
 	if err != nil {
 		return fmt.Errorf("compaction failed: %w", err)
 	}

@@ -93,6 +93,7 @@ func postJSON(ctx context.Context, client *http.Client, url string, body []byte,
 	if client == nil {
 		client = http.DefaultClient
 	}
+	recordRequest(url, body)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
