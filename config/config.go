@@ -98,6 +98,12 @@ type Settings struct {
 	// BranchSummary configures what going back in the session tree (/tree)
 	// does with the branch being left, as pi's setting of the same name.
 	BranchSummary *BranchSummary `json:"branchSummary,omitempty"`
+	// ToolOutputTokenLimit caps how much of a command's output goes back to
+	// the model, in tokens (about 4 bytes each), as codex's
+	// tool_output_token_limit. 0 means the default, 10000. The cut is in
+	// the middle, and the full output is saved to a file the model is told
+	// about.
+	ToolOutputTokenLimit int `json:"toolOutputTokenLimit,omitempty"`
 	// BackgroundExit: false turns off the exit menu that offers "Run in
 	// background" while a turn is running (experimental; default on).
 	BackgroundExit *bool `json:"backgroundExit,omitempty"`

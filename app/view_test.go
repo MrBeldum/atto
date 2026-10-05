@@ -85,14 +85,17 @@ func TestClickTogglesOnlyHeaderAndDisclosure(t *testing.T) {
 	b.args.Description = "list"
 	b.args.Command = "ls"
 	b.append("1\n2\n3\n4\n5\n6\n")
-	out := b.Render(60) // header, $ ls, 3 output lines, "+ 3 lines"
-	if b.Click(1) || b.Click(2) || b.expanded() {
+	out := b.Render(60) // header, $ ls, 1, 2, "… +2 lines", 5, 6
+	if got := StripLine(out[4]); got != "    … +2 lines (click or ctrl+t to expand)" || StripLine(out[6]) != "    6" {
+		t.Fatalf("preview %q", out)
+	}
+	if b.Click(1) || b.Click(2) || b.Click(len(out)-1) || b.expanded() {
 		t.Fatal("a click on the command or the output toggled")
 	}
-	if !b.Click(len(out)-1) || !b.expanded() {
+	if !b.Click(4) || !b.expanded() {
 		t.Fatal("the disclosure line expands")
 	}
-	out = b.Render(60)
+	b.Render(60)
 	if b.Click(3) || !b.expanded() {
 		t.Fatal("a click in the expanded output toggled")
 	}

@@ -37,6 +37,7 @@ func Load() (config.Settings, config.ModelsFile, error) {
 	if err != nil {
 		return settings, config.ModelsFile{}, fmt.Errorf("%s: %w", config.SettingsPath(), err)
 	}
+	agent.SetToolOutputTokenLimit(settings.ToolOutputTokenLimit)
 	models, err := config.LoadModels()
 	if err != nil {
 		return settings, models, fmt.Errorf("%s: %w", config.ModelsPath(), err)
