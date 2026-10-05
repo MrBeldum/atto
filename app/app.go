@@ -89,6 +89,11 @@ type App struct {
 
 	goal goalState
 
+	// Slash command list: selection, the text it belongs to, and the text
+	// for which Esc closed it.
+	sugSel               int
+	sugFor, sugDismissed string
+
 	// Status line state.
 	gitBranch   string
 	statusCmd   bool     // a custom statusLine command is configured
@@ -306,6 +311,9 @@ func (a *App) onInput(data string) bool {
 	if a.modal != nil {
 		return false // the focused modal handles everything
 	}
+	if a.suggestionKey(tui.Key(data)) {
+		return true
+	}
 	switch tui.Key(data) {
 	case "shift+tab":
 		a.cycleEffort()
@@ -341,10 +349,6 @@ func (a *App) onInput(data string) bool {
 		a.ui.Redraw()
 		return true
 	case "tab":
-		if m := a.matchingCommands(); len(m) > 0 {
-			a.editor.SetText("/" + m[0].name + " ")
-			return true
-		}
 		if strings.TrimSpace(a.editor.Text()) != "" {
 			a.queueFromEditor()
 			return true
