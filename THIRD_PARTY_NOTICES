@@ -4,8 +4,9 @@ atto's model API layer is a port of pi (https://github.com/earendil-works/pi),
 packages/ai (pi-ai) and parts of packages/coding-agent. The ported Go files say
 so at the top: ai/*.go, auth/types.go, auth/oauth.go, auth/openai_chatgpt.go,
 auth/openai_codex.go, config/resolve_config_value.go, config/models.go (the
-models.json schema) and app/login.go (the /login flow). See provider/PORTING.md
-for the file mapping.
+models.json schema), app/login.go (the /login flow), and tui/fuzzy.go and
+tui/autocomplete.go (the "@" file mention rules, from packages/tui). See
+provider/PORTING.md for the file mapping.
 
 The extension API (extensions/) follows the shape of pi's extension API
 (packages/coding-agent/src/core/extensions: a default-exported factory, on()

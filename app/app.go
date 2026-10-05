@@ -152,6 +152,8 @@ type App struct {
 	// for which Esc closed it.
 	sugList      *tui.SelectList
 	sugDismissed string
+	// mention is the "@" file list (mention.go).
+	mention mentions
 
 	// Status line state.
 	gitBranch   string
