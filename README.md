@@ -91,6 +91,7 @@ A model can set:
 
 ```sh
 atto                                  # interactive session
+atto "fix the build"                  # interactive, starting with this message
 atto -m local/my-model                # pick the model
 atto -c                               # continue the last session here
 atto -resume                          # pick a saved session
