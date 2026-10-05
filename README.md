@@ -33,18 +33,25 @@ They don't need root. Two environment variables change what gets installed:
 | Variable | Effect |
 | --- | --- |
 | `ATTO_VERSION=v0.1.0` | installs that release |
+| `ATTO_VERSION=edge` | installs the edge build (see below) |
 | `ATTO_INSTALL_DIR=...` | installs somewhere else |
 
 Running the script again is safe. It installs the latest release over the old one.
+
+**Edge builds.** Every push to `main` that passes the tests replaces the [`edge` prerelease](https://github.com/sebastianrcnt/atto/releases/tag/edge), named like `v0.0.3-dev.14+abc1234` (the next patch version, 14 commits after the last tag, at commit `abc1234`). It's unreleased code and may break. Install it with `ATTO_VERSION=edge` (`$env:ATTO_VERSION = "edge"` in PowerShell), or build from source with `go install github.com/sebastianrcnt/atto/cmd/atto@main`.
 
 ### Update
 
 ```sh
 atto update          # install the latest release
 atto update -check   # only check
+atto update -channel edge     # follow edge builds from now on
+atto update -channel stable   # back to tagged releases
 ```
 
-Once a day atto asks the GitHub API whether a newer release exists, and mentions it when you start atto. It never updates itself on its own. To turn the check off, set `"updateCheck": false` in `~/.atto/settings.json`.
+`-channel` saves your choice as `"updateChannel": "edge"` (or `"stable"`, the default) in `~/.atto/settings.json`; the daily check and plain `atto update` follow it. Going from edge back to stable installs the latest stable release even though its version number is lower, and says so: `Switched to stable: atto v0.0.3-dev.14 → v0.0.2`. That only happens with an explicit `-channel stable`.
+
+Once a day atto asks the GitHub API whether a newer release exists on your channel, and mentions it when you start atto. It never updates itself on its own. To turn the check off, set `"updateCheck": false` in `~/.atto/settings.json`.
 
 If you installed with `go install` or Homebrew, update that way instead.
 
@@ -178,7 +185,7 @@ Everything lives in `~/.atto`. Set `ATTO_DIR` to move it.
 
 | Path | Contents |
 | --- | --- |
-| `settings.json` | default model and effort, renderer, status line, hooks, `updateCheck`, `doubleEscapeAction` (`tree`, `fork` or `none`) |
+| `settings.json` | default model and effort, renderer, status line, hooks, `updateCheck`, `updateChannel` (`stable` or `edge`), `doubleEscapeAction` (`tree`, `fork` or `none`) |
 | `models.json` | your providers and models |
 | `auth.json` | keys and logins (mode 0600) |
 | `sessions/` | saved sessions |

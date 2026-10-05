@@ -86,6 +86,9 @@ type Settings struct {
 	// UpdateCheck: false stops the once-a-day release check (a GET to the
 	// GitHub API). atto never installs updates by itself either way.
 	UpdateCheck *bool `json:"updateCheck,omitempty"`
+	// UpdateChannel is "stable" (default, tagged releases) or "edge" (a
+	// build of every push to main). `atto update -channel` sets it.
+	UpdateChannel string `json:"updateChannel,omitempty"`
 	// DoubleEscapeAction is what Esc twice on an empty prompt opens, as in
 	// pi: "tree" (default, the session tree), "fork" (pick a message to
 	// fork a new session from) or "none".

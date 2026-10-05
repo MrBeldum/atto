@@ -3,7 +3,8 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/sebastianrcnt/atto/main/install.sh | sh
 #
-# ATTO_VERSION=v0.1.0 picks a release (default: the latest);
+# ATTO_VERSION=v0.1.0 picks a release (default: the latest; "edge" is the
+# unstable build of main);
 # ATTO_INSTALL_DIR picks the directory (default: ~/.local/bin).
 # Running it again installs the latest release over the old one.
 set -eu
