@@ -465,7 +465,7 @@ func (a *App) cmdResume(string) {
 			_, err = session.Archive(s.Path)
 			if err == nil && s.Path == a.sess.Path && !a.busy {
 				a.reset()
-				a.newSession()
+				a.newSession("other")
 				a.notice("Archived the current conversation and started a new one.")
 			}
 		}
@@ -514,7 +514,7 @@ func (a *App) resume(path string) {
 		return
 	}
 	h := saved.Header
-	a.leaveSession()
+	a.leaveSession("resume")
 	a.reset()
 	a.sess.Close()
 	a.sess = file

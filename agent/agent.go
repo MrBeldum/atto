@@ -59,6 +59,10 @@ var ErrPromptBlocked = errors.New("prompt blocked by hook")
 // keep working.
 const StopHookPrefix = "[Stop hook] "
 
+// MaxStopBlocks caps how often Stop hooks may keep one turn going. A hook
+// that ignores stop_hook_active would otherwise loop forever.
+const MaxStopBlocks = 8
+
 // ErrStoppedByHook is returned when a hook asks to stop the turn.
 var ErrStoppedByHook = errors.New("stopped by hook")
 
@@ -670,7 +674,7 @@ func (a *Agent) RunWithImages(ctx context.Context, input string, imgs []provider
 		}
 	}
 	a.appendMessage(provider.Message{Role: "user", Content: input, Images: imgs}, session.Entry{})
-	stopHookActive := false
+	stopBlocks := 0 // Stop hook continuations in this turn
 
 	for step := 1; ; step++ {
 		if a.MaxSteps > 0 && step > a.MaxSteps {
@@ -724,12 +728,21 @@ func (a *Agent) RunWithImages(ctx context.Context, input string, imgs []provider
 				continue
 			}
 			if a.Hooks != nil {
+				// An interrupted turn does not run Stop hooks, as in Claude Code.
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				// A Stop hook may block stopping and give the model a reason
-				// to keep working (once per turn, as in Claude Code).
-				o := a.Hooks.Stop(ctx, stopHookActive)
+				// to keep working. stop_hook_active tells the hook it already
+				// did; after MaxStopBlocks the turn ends anyway.
+				o := a.Hooks.Stop(ctx, stopBlocks > 0)
+				if o.Block && !o.Stop && stopBlocks >= MaxStopBlocks {
+					o.Block = false
+					o.Notices = append(o.Notices, fmt.Sprintf("Stop hooks blocked %d times in a row; stopping anyway", MaxStopBlocks))
+				}
 				emitHook(emit, "Stop", o)
-				if o.Block && o.Reason != "" && !stopHookActive && !o.Stop {
-					stopHookActive = true
+				if o.Block && !o.Stop {
+					stopBlocks++
 					a.appendMessage(provider.Message{Role: "user", Content: StopHookPrefix + o.Reason}, session.Entry{})
 					continue
 				}

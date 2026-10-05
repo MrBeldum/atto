@@ -7,6 +7,9 @@ import (
 	"syscall"
 )
 
+// ownConsole is a no-op: only Windows shares a console's code pages.
+func ownConsole(*exec.Cmd) {}
+
 // Tree kills a command's whole process group on cancel.
 type Tree struct{ cmd *exec.Cmd }
 

@@ -185,7 +185,7 @@ func Run(opts Options) error {
 		// First run: start anyway and say how to get a model, like pi.
 		a.notice("%s", core.NoModelsHint())
 	}
-	a.newSession() // its "Loaded" block lists skill files that were skipped
+	a.newSession("") // its "Loaded" block lists skill files that were skipped
 	a.sessionStartHook("startup")
 	a.statusCmd = settings.StatusLine != nil && settings.StatusLine.Command != ""
 	a.startStatusLine(settings.StatusLine)
@@ -239,6 +239,11 @@ func Run(opts Options) error {
 	if n := core.Leave(a.sess.ID); n > 0 {
 		fmt.Printf("atto: stopped %d background job(s)\n", n)
 	}
+	if a.hooks != nil {
+		for _, n := range a.hooks.SessionEnd(context.Background(), "exit") {
+			fmt.Fprintln(os.Stderr, n)
+		}
+	}
 	return nil
 }
 
@@ -260,12 +265,14 @@ func (a *App) build() {
 	a.addHeader()
 }
 
-// leaveSession stops the jobs of the session being left (/clear,
-// /resume): like codex, background processes belong to their session.
-func (a *App) leaveSession() {
+// leaveSession ends the session being left (/clear, /resume): its
+// SessionEnd hooks run with reason, and like codex, its background
+// processes stop, as they belong to their session.
+func (a *App) leaveSession(reason string) {
 	if a.sess == nil {
 		return
 	}
+	a.sessionEndHook(reason)
 	if n := core.Leave(a.sess.ID); n > 0 {
 		a.notice("Stopped %d background job(s) of the previous conversation.", n)
 	}
@@ -273,8 +280,8 @@ func (a *App) leaveSession() {
 }
 
 // newSession starts recording into a fresh session file.
-func (a *App) newSession() {
-	a.leaveSession()
+func (a *App) newSession(reason string) {
+	a.leaveSession(reason)
 	a.sess.Close()
 	a.sess = session.New(a.cwd)
 	core.Bind(a.agent, a.hooks, a.sess, time.Now(), true)
@@ -283,6 +290,38 @@ func (a *App) newSession() {
 	a.recModel, a.recEffort, a.sessName = "", "", ""
 	a.showLoaded()
 	a.statusTrigger()
+}
+
+// sessionEndHook runs SessionEnd hooks and waits for them (they are bounded
+// by a short timeout): the hooks must see the session being left, which the
+// next Bind replaces.
+func (a *App) sessionEndHook(reason string) {
+	if a.hooks == nil {
+		return
+	}
+	for _, n := range a.hooks.SessionEnd(context.Background(), reason) {
+		a.notice("%s", n)
+	}
+}
+
+// notifyAfter is how long a turn must have run for atto to notify the user
+// when it finishes; shorter turns end while the user is likely still looking.
+var notifyAfter = 15 * time.Second
+
+// notify runs Notification hooks in the background, for when atto needs
+// the user's attention (kind is the notification type).
+func (a *App) notify(kind, message string) {
+	if a.hooks == nil {
+		return
+	}
+	go func() {
+		notices := a.hooks.Notification(context.Background(), kind, message)
+		a.ui.Do(func() {
+			for _, n := range notices {
+				a.notice("%s", n)
+			}
+		})
+	}()
 }
 
 // sessionStartHook runs SessionStart hooks in the background.

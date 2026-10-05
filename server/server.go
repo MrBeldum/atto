@@ -113,6 +113,7 @@ func (s *Server) Close() {
 	default:
 		close(s.stop)
 	}
+	var ending sync.WaitGroup
 	for _, t := range s.threads {
 		core.Leave(t.id)
 		t.mu.Lock()
@@ -121,7 +122,15 @@ func (s *Server) Close() {
 		}
 		t.mu.Unlock()
 		t.sess.Close()
+		if t.hooks != nil { // threads end together, so one slow hook costs little
+			ending.Add(1)
+			go func() {
+				defer ending.Done()
+				t.hooks.SessionEnd(context.Background(), "other")
+			}()
+		}
 	}
+	ending.Wait()
 }
 
 func (t *thread) info() ThreadInfo {

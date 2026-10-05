@@ -109,9 +109,10 @@ func (s Shell) ToolName() string {
 	return "bash"
 }
 
-// utf8Prelude makes Windows PowerShell write UTF-8 to pipes; by default it
-// uses the OEM code page (e.g. CP949 on Korean Windows), garbling output.
-const utf8Prelude = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; "
+// utf8Prelude makes Windows PowerShell read and write UTF-8 on pipes; by
+// default it uses the OEM code page (e.g. CP949 on Korean Windows),
+// garbling output and any JSON a hook reads from stdin.
+const utf8Prelude = "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; "
 
 // Args returns the argv that runs script with this shell.
 func (s Shell) Args(script string) []string {
@@ -124,11 +125,21 @@ func (s Shell) Args(script string) []string {
 	return []string{s.Path, "-c", script}
 }
 
-// Command builds an exec.Cmd running script with this shell.
+// Command builds an exec.Cmd running script with this shell. On Windows
+// it runs on a console of its own (see PrivateConsole).
 func (s Shell) Command(ctx context.Context, script string) *exec.Cmd {
 	argv := s.Args(script)
-	return exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	ownConsole(cmd)
+	return cmd
 }
+
+// PrivateConsole says this process's console is not the user's terminal
+// (the shell host runs on a hidden one), so the commands it starts can
+// share it. Otherwise each command gets a hidden console of its own on
+// Windows: utf8Prelude sets the console's code pages, and on the user's
+// terminal that would outlast atto.
+var PrivateConsole bool
 
 // Command runs script with the default shell.
 func Command(ctx context.Context, script string) *exec.Cmd { return Default().Command(ctx, script) }

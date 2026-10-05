@@ -13,6 +13,11 @@
 //	    "updatedInput": {"command": "..."},              PreToolUse
 //	    "additionalContext": "..."}}                     UserPromptSubmit, PostToolUse
 //
+// Stop blocks with {"decision":"block"} or exit code 2: its reason goes
+// to the model and the turn continues. SessionEnd and Notification cannot
+// block. The matcher of SessionEnd is tested against the reason and the
+// one of Notification against the notification type.
+//
 // atto has no approval prompt, so "ask" is treated as "deny".
 package hooks
 
@@ -37,6 +42,9 @@ import (
 
 const (
 	defaultTimeout = 60 * time.Second
+	// sessionEndTimeout is the default for SessionEnd hooks, which run while
+	// atto is exiting; a hook's own "timeout" overrides it.
+	sessionEndTimeout = 5 * time.Second
 	// toolName is what hooks see for the bash tool; Claude Code calls its
 	// shell tool "Bash", so existing matchers and scripts keep working.
 	toolName = "Bash"
@@ -109,6 +117,10 @@ func matches(pattern, tool string) bool {
 
 // run executes every hook registered for event whose matcher fits tool.
 func (r *Runner) run(ctx context.Context, event, tool string, payload map[string]any) []result {
+	return r.runTimeout(ctx, event, tool, payload, defaultTimeout)
+}
+
+func (r *Runner) runTimeout(ctx context.Context, event, tool string, payload map[string]any, def time.Duration) []result {
 	if r == nil {
 		return nil
 	}
@@ -126,14 +138,15 @@ func (r *Runner) run(ctx context.Context, event, tool string, payload map[string
 			continue
 		}
 		for _, h := range m.Hooks {
-			out = append(out, r.exec(ctx, h, input))
+			out = append(out, r.execTimeout(ctx, h, input, def))
 		}
 	}
 	return out
 }
 
-func (r *Runner) exec(ctx context.Context, h config.HookSpec, input []byte) result {
-	timeout := defaultTimeout
+// execTimeout runs one hook; def applies when the hook sets no timeout.
+func (r *Runner) execTimeout(ctx context.Context, h config.HookSpec, input []byte, def time.Duration) result {
+	timeout := def
 	if h.Timeout > 0 {
 		timeout = time.Duration(h.Timeout) * time.Second
 	}
@@ -167,6 +180,8 @@ func (r *Runner) exec(ctx context.Context, h config.HookSpec, input []byte) resu
 	default: // "command"
 		cmd := shell.Command(ctx, h.Command) // same shell as the agent: bash, or PowerShell on Windows
 		cmd.Dir = r.cwd
+		killTreeOnCancel(cmd)
+		cmd.WaitDelay = 2 * time.Second // a child that escaped must not hold the output pipes open
 		cmd.Stdin = bytes.NewReader(input)
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -326,4 +341,27 @@ func (r *Runner) SessionStart(ctx context.Context, source string) []string {
 		return nil
 	}
 	return fold(r.run(ctx, "SessionStart", "", map[string]any{"source": source}), "SessionStart").Notices
+}
+
+// SessionEnd runs when a session ends. reason is "exit" (atto quits),
+// "clear" (/new, /clear), "resume" (switching to another session) or
+// "other". It cannot block and runs synchronously with a short default
+// timeout, so exiting never waits long. Returned notices are for display.
+func (r *Runner) SessionEnd(ctx context.Context, reason string) []string {
+	if r == nil {
+		return nil
+	}
+	res := r.runTimeout(ctx, "SessionEnd", reason, map[string]any{"reason": reason}, sessionEndTimeout)
+	return fold(res, "SessionEnd").Notices
+}
+
+// Notification runs when atto wants the user's attention. kind is the
+// notification type ("idle_prompt", "background_event", "goal_blocked"),
+// message what to tell the user. It cannot block.
+func (r *Runner) Notification(ctx context.Context, kind, message string) []string {
+	if r == nil {
+		return nil
+	}
+	res := r.run(ctx, "Notification", kind, map[string]any{"message": message, "notification_type": kind})
+	return fold(res, "Notification").Notices
 }

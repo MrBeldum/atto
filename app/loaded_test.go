@@ -61,7 +61,7 @@ func loadedApp(t *testing.T) *App {
 		modelFrom: core.FromSettings, effortFrom: core.FromDefault,
 		tools: map[string]*toolBlock{}, cwd: cwd, quit: make(chan struct{})}
 	a.build()
-	a.ui.Do(a.newSession)
+	a.ui.Do(func() { a.newSession("") })
 	t.Cleanup(func() { a.sess.Close() })
 	return a
 }

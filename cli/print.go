@@ -302,6 +302,11 @@ func RunPrint(o PrintOptions) error {
 	if n := core.Leave(sess.ID); n > 0 { // jobs end with the run
 		fmt.Fprintf(os.Stderr, "atto: stopped %d background job(s)\n", n)
 	}
+	if hk != nil { // the run is the whole session
+		for _, n := range hk.SessionEnd(context.Background(), "other") {
+			fmt.Fprintln(os.Stderr, n)
+		}
+	}
 	p.flushStep()
 	res.DurationMs = time.Since(began).Milliseconds()
 	res.Result = strings.TrimSpace(p.lastText)

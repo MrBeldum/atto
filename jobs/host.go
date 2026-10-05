@@ -298,7 +298,8 @@ func (h *host) kill() {
 // ServeHost is the shell host process (`atto _shell`), serving the
 // protocol described at the top of this file on its standard streams.
 func ServeHost(in io.Reader, out, status *os.File) error {
-	ignoreSIGPIPE() // atto may go away; writes to it must fail, not kill us
+	ignoreSIGPIPE()             // atto may go away; writes to it must fail, not kill us
+	shell.PrivateConsole = true // StartHost put us on a hidden console
 	br := bufio.NewReader(in)
 	line, err := br.ReadBytes('\n')
 	var spec hostSpec

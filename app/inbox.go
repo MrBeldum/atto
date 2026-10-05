@@ -84,6 +84,9 @@ func (a *App) deliverEvents() {
 		a.add(&eventBlock{title: title})
 	}
 	text := events.Format(evs)
+	if !a.busy { // a steer reaches a running turn; idle, the user may be away
+		a.notify("background_event", firstTitle(evs))
+	}
 	if a.busy {
 		a.agent.Steer(text) // shown above; not a user steer
 		return
@@ -94,6 +97,18 @@ func (a *App) deliverEvents() {
 	a.start("Thinking", func(ctx context.Context, emit func(any)) error {
 		return a.agent.Run(ctx, text, emit)
 	})
+}
+
+// firstTitle describes the first of evs (and how many more follow).
+func firstTitle(evs []events.Event) string {
+	title := evs[0].Title
+	if title == "" {
+		title = evs[0].Text
+	}
+	if len(evs) > 1 {
+		title += fmt.Sprintf(" (+%d more)", len(evs)-1)
+	}
+	return title
 }
 
 // isEvent reports whether a committed steer came from the inbox.
