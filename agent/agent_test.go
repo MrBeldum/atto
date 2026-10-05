@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -58,7 +59,7 @@ func text(s string) []string {
 }
 
 func newTestAgent(url string) *Agent {
-	return New(config.ModelRef{ProviderName: "t", Provider: config.Provider{BaseURL: url}, Model: config.Model{ID: "m"}}, "", "/tmp")
+	return New(config.ModelRef{ProviderName: "t", Provider: config.Provider{BaseURL: url}, Model: config.Model{ID: "m"}}, "", os.TempDir())
 }
 
 func TestSteerDeliveredAfterToolCall(t *testing.T) {
@@ -107,7 +108,7 @@ func TestAutoCompactMidTurn(t *testing.T) {
 	tc = append(tc, `{"choices":[],"usage":{"prompt_tokens":950,"completion_tokens":10}}`)
 	srv, seen := fakeServer(t, tc, text("NOTES: did echo"), text("finished"))
 	a := New(config.ModelRef{ProviderName: "t", Provider: config.Provider{BaseURL: srv.URL},
-		Model: config.Model{ID: "m", ContextWindow: 1000}}, "", "/tmp")
+		Model: config.Model{ID: "m", ContextWindow: 1000}}, "", os.TempDir())
 	var rec []session.Entry
 	a.Record = func(e session.Entry) { rec = append(rec, e) }
 	var started, ended int
