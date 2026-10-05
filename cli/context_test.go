@@ -145,7 +145,7 @@ func TestStreamJSONInitContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(errOut.Name())
-	if s := string(data); !strings.HasPrefix(s, "◇ Loaded\n  AGENTS.md  ") || !strings.Contains(s, "AGENTS.md (9 B)") || !strings.Contains(s, "\n  Model      m · medium (") {
+	if s := string(data); !strings.HasPrefix(s, "◇ Loaded\n  AGENTS.md   ") || !strings.Contains(s, "AGENTS.md (9 B)") || !strings.Contains(s, "\n  Model       m · medium (") {
 		t.Fatalf("stderr:\n%s", s)
 	}
 }

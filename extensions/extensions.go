@@ -11,7 +11,8 @@
 // one script (see Bundle); goja runs it, one runtime and one goroutine per
 // extension (see ext). They are found in ~/.atto/extensions and in the
 // project's .atto/extensions (see Discover); project extensions run only
-// once approved (see Approve). atto.d.ts declares the API (Types).
+// once approved (see Approve). Some ship inside atto (see builtin.go).
+// atto.d.ts declares the API (Types).
 //
 // Extensions run inside the hooks: PreToolUse hooks, then tool_call
 // handlers, the command, tool_result handlers, then PostToolUse hooks (see
@@ -61,7 +62,7 @@ const TypesFile = "atto.d.ts"
 type Info struct {
 	Name     string   `json:"name"`
 	Path     string   `json:"path"`
-	Source   string   `json:"source"` // User or Project
+	Source   string   `json:"source"` // User, Project or Builtin
 	Status   string   `json:"status"`
 	Error    string   `json:"error,omitempty"`
 	Commands []string `json:"commands,omitempty"`
@@ -193,7 +194,7 @@ func check(cwd string, disabled []string) []candidate {
 			out = append(out, c)
 			continue
 		}
-		code, err := Bundle(s.Path)
+		code, err := bundleSpec(s)
 		switch {
 		case err != nil:
 			c.status, c.err = Failed, err.Error()
@@ -230,7 +231,9 @@ func (m *Manager) load() {
 	var exts []*ext
 	typesFor := map[string]bool{}
 	for _, c := range check(m.cwd, disabled) {
-		typesFor[filepath.Dir(entryDir(c.Spec))] = true
+		if c.Source != Builtin {
+			typesFor[filepath.Dir(entryDir(c.Spec))] = true
+		}
 		if c.status != Ready {
 			exts = append(exts, stub(m, c.Spec, c.code, c.status, c.err))
 			continue

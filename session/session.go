@@ -57,6 +57,9 @@ const (
 	// assistant message's text or reasoning block: a status suffix and a
 	// replacement text the block shows. It never reaches the model.
 	TypeBlockDisplay = "block_display"
+	// TypeExtText is a block of text an extension added to the transcript
+	// (ctx.ui.showText): display only, it never reaches the model.
+	TypeExtText = "ext_text"
 )
 
 // Blocks of an assistant message, as TypeBlockDisplay entries name them.
@@ -138,6 +141,13 @@ type Entry struct {
 	Ext     string `json:"ext,omitempty"`
 	Status  string `json:"status,omitempty"`
 	Display string `json:"display,omitempty"`
+
+	// ext_text: extension Ext showed the text in Display under Title;
+	// Lang says how to colour it ("diff") and Preview how many lines show
+	// while it is collapsed (0: the default).
+	Title   string `json:"title,omitempty"`
+	Lang    string `json:"lang,omitempty"`
+	Preview int    `json:"preview,omitempty"`
 }
 
 // BashExec is a command the user ran with "!" (or "!!", which keeps it

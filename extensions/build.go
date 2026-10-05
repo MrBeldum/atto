@@ -25,21 +25,24 @@ func Bundle(entry string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Dir(abs)
-	res := api.Build(api.BuildOptions{
-		EntryPoints:   []string{abs},
-		AbsWorkingDir: dir,
-		Bundle:        true,
-		Write:         false,
-		Format:        api.FormatCommonJS,
-		Platform:      api.PlatformNeutral,
-		Target:        target,
-		Sourcemap:     api.SourceMapInline,
-		// The maps only need lines; the sources are on disk.
-		SourcesContent: api.SourcesContentExclude,
-		LogLevel:       api.LogLevelSilent,
-		Charset:        api.CharsetUTF8,
-	})
+	return bundle(api.BuildOptions{EntryPoints: []string{abs}, AbsWorkingDir: filepath.Dir(abs)}, entry)
+}
+
+// bundle runs esbuild with the entry in o; the rest of the options are
+// the same for every extension.
+func bundle(o api.BuildOptions, entry string) (string, error) {
+	dir := o.AbsWorkingDir
+	o.Bundle = true
+	o.Write = false
+	o.Format = api.FormatCommonJS
+	o.Platform = api.PlatformNeutral
+	o.Target = target
+	o.Sourcemap = api.SourceMapInline
+	// The maps only need lines; the sources are on disk.
+	o.SourcesContent = api.SourcesContentExclude
+	o.LogLevel = api.LogLevelSilent
+	o.Charset = api.CharsetUTF8
+	res := api.Build(o)
 	if len(res.Errors) > 0 {
 		var lines []string
 		for _, m := range res.Errors {

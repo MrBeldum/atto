@@ -165,7 +165,7 @@ func toolCommand(args string) string {
 // settingsEntry reports bookkeeping entries that the default view hides.
 func settingsEntry(e session.Entry) bool {
 	switch e.Type {
-	case session.TypeLabel, session.TypeModel, session.TypeEffort, session.TypeName, session.TypeGoal, session.TypeBranch, session.TypeBlockDisplay:
+	case session.TypeLabel, session.TypeModel, session.TypeEffort, session.TypeName, session.TypeGoal, session.TypeBranch, session.TypeBlockDisplay, session.TypeExtText:
 		return true
 	}
 	return false
@@ -561,6 +561,8 @@ func (p *treePicker) searchText(n *session.Node) string {
 		parts = append(parts, "branch")
 	case session.TypeBlockDisplay:
 		parts = append(parts, "display", e.Ext)
+	case session.TypeExtText:
+		parts = append(parts, "display", e.Ext, e.Title)
 	}
 	return strings.Join(parts, " ")
 }
@@ -646,6 +648,8 @@ func (p *treePicker) entryText(n *session.Node) string {
 		return tui.Dim("[branch]")
 	case session.TypeBlockDisplay:
 		return tui.Dim("[display: " + e.Ext + "]")
+	case session.TypeExtText:
+		return tui.Dim("[" + e.Ext + ": " + clip(oneLine(e.Title), 80) + "]")
 	case session.TypeLabel:
 		if e.Label == "" {
 			return tui.Dim("[label: (cleared)]")

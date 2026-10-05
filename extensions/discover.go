@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -19,6 +20,9 @@ import (
 const (
 	User    = "user"    // ~/.atto/extensions
 	Project = "project" // <project root>/.atto/extensions; needs approval
+	// Builtin extensions are part of atto (see builtin.go); a user or project
+	// extension of the same name replaces one.
+	Builtin = "builtin"
 )
 
 // Spec is an extension found on disk.
@@ -42,14 +46,20 @@ func Dirs(cwd string) []Dir {
 // Dir is a directory extensions are loaded from.
 type Dir struct{ Path, Source string }
 
-// Discover lists the extensions for a session in cwd, user ones first,
-// each directory in name order: <dir>/<name>.ts or .js, and
+// Discover lists the extensions for a session in cwd: user ones first,
+// then the project's, then the built-in ones that no other extension of
+// the same name replaces; each directory in name order: <dir>/<name>.ts or .js, and
 // <dir>/<name>/index.ts or index.js. Declaration files (.d.ts) and names
 // starting with "." are not extensions.
 func Discover(cwd string) []Spec {
 	var out []Spec
 	for _, d := range Dirs(cwd) {
 		out = append(out, scan(d)...)
+	}
+	for _, b := range builtinSpecs() {
+		if !slices.ContainsFunc(out, func(s Spec) bool { return s.Name == b.Name }) {
+			out = append(out, b)
+		}
 	}
 	return out
 }
@@ -146,7 +156,7 @@ func Approve(cwd, name string) (Spec, error) {
 			continue
 		}
 		if s.Source != Project {
-			return s, fmt.Errorf("%s is a user extension (%s); those need no approval", name, s.Path)
+			return s, fmt.Errorf("%s is a %s extension (%s); those need no approval", name, s.Source, s.Path)
 		}
 		code, err := Bundle(s.Path)
 		if err != nil {

@@ -36,6 +36,10 @@ const (
 
 	// Shell is a command the user ran with "!" or "!!" in the prompt.
 	Shell Kind = "shell"
+
+	// ExtText is a block of text an extension showed (ctx.ui.showText):
+	// display only, never sent to the model.
+	ExtText Kind = "extText"
 )
 
 // Status is where an item stands. Messages are complete when they start;
@@ -98,6 +102,13 @@ type Item struct {
 	Excluded   bool
 	Truncated  bool
 	FullOutput string
+
+	// ExtText: Text under Title, shown by extension Ext; Lang says how to
+	// colour it and Preview how many lines show collapsed (0: default).
+	Ext     string
+	Title   string
+	Lang    string
+	Preview int
 
 	// Hook
 	HookEvent string // UserPromptSubmit, PreToolUse, Stop...

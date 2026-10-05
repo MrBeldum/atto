@@ -102,6 +102,8 @@ func (a *App) itemStarted(it *transcript.Item) {
 		a.summaryItem(it, true, "")
 	case transcript.Shell:
 		a.shellItemStarted(it)
+	case transcript.ExtText:
+		a.extTextStarted(it)
 	}
 }
 

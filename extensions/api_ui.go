@@ -53,6 +53,13 @@ func (e *ext) uiObject() *goja.Object {
 	_ = ui.Set("setBlockDisplay", func(id string, s goja.Value) {
 		e.m.host().SetBlockDisplay(e.spec.Name, id, text(s))
 	})
+	_ = ui.Set("showText", func(title, body string, opts *goja.Object) {
+		o := TextOptions{Lang: optString(opts, "lang")}
+		if n := optNumber(opts, "preview"); n > 0 {
+			o.Preview = int(n)
+		}
+		e.m.host().ShowText(e.spec.Name, title, body, o)
+	})
 	_ = ui.Set("select", func(title string, options []string) goja.Value {
 		return e.ask(Question{Kind: "select", Title: title, Options: options})
 	})

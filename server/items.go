@@ -98,6 +98,8 @@ func wireItem(it *transcript.Item) Item {
 			code := r.ExitCode
 			w.ExitCode, w.DurationMs = &code, it.Duration.Milliseconds()
 		}
+	case transcript.ExtText:
+		w.Type, w.Text = ItemNotice, it.Title+"\n"+it.Text
 	case transcript.BranchSummary:
 		w.Type, w.DurationMs = ItemBranchSummary, it.Duration.Milliseconds()
 	case transcript.Compaction:

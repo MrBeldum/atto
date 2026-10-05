@@ -16,6 +16,7 @@ and runs it in an embedded JavaScript engine (goja); there is no Node.js, so
 | `~/.atto/extensions/<name>.ts` or `.js` | user |
 | `~/.atto/extensions/<name>/index.ts` or `index.js` | user (a folder: other files in it can be imported) |
 | `<project>/.atto/extensions/...` (same shapes) | project |
+| inside atto (`extensions/builtin/<name>.ts` in the source) | builtin |
 
 `<project>` is the nearest directory above the working directory that holds
 `.git`. The name is the file or folder name. Files ending in `.d.ts` and
@@ -26,6 +27,17 @@ names starting with `.` are ignored.
 The approval covers the code as it is (the bundle's hash, including the
 files it imports); any change needs approval again. An agent cannot approve
 from its shell. User extensions need no approval.
+
+**Built-in extensions** ship inside the atto binary and are written against
+this same public API. Today there is one: `/diff`, which shows what changed
+in the session's working tree (`/diff [--staged] [path]`). It needs no
+approval, is listed as `builtin` in the Loaded block and in `atto extensions`,
+and can be turned off like any other (`"disabled": ["diff"]`). A user or
+project extension with the same name replaces it, so the way to change
+`/diff` is to copy its source,
+[`extensions/builtin/diff.ts`](../extensions/builtin/diff.ts), to
+`~/.atto/extensions/diff.ts`. It is a good small example: it runs `git` with
+`atto.exec`, parses the output, and shows it with `ctx.ui.showText`.
 
 To turn one off, add its name to `settings.json`:
 
@@ -177,6 +189,14 @@ p/m (1 failed)" per extension, and every call is a line in
 - `ctx.ui.setWidget(key, lines[] | null)`: lines shown above the input.
 - `ctx.ui.setBlockStatus(blockId, text | null)` and
   `ctx.ui.setBlockDisplay(blockId, text | null)`: see above.
+- `ctx.ui.showText(title, text, {lang?, preview?})`: a collapsible block in
+  the transcript for longer output, such as a diff or a report. It is display
+  only (the model never sees it) and saved in the session, so a resumed
+  session shows it again. While collapsed it shows the first `preview` lines
+  (default 10) and a "+N lines" row; click it or press ctrl+t to expand.
+  `lang: "diff"` colours added lines green, removed lines red, `@@` lines
+  cyan and file headers dim; any other value is plain text. In `atto -p` and
+  the server the title and text arrive as a notice.
 - `ctx.ui.select(title, options)`: `Promise<string | undefined>`.
 - `ctx.ui.confirm(text)`: `Promise<boolean>`.
 - `ctx.ui.input(prompt)`: `Promise<string | undefined>`.

@@ -200,7 +200,9 @@ export default function (atto: any) {
 	// Counted per model, failures too.
 	var calls []CompleteStat
 	for _, in := range m.Report() {
-		calls = in.Completes
+		if in.Name != "diff" {
+			calls = in.Completes
+		}
 	}
 	got := map[string]CompleteStat{}
 	for _, c := range calls {

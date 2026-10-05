@@ -80,7 +80,7 @@ func TestExtensionsCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"bad  failed: ", "bad.js:1:", "mine  ok · user", "local  needs approval · project", "atto extensions approve local"} {
+	for _, want := range []string{"bad  failed: ", "bad.js:1:", "mine  ok · user", "diff  ok · builtin · builtin/diff.ts", "local  needs approval · project", "atto extensions approve local"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("list lacks %q:\n%s", want, out)
 		}

@@ -32,10 +32,22 @@ type Host interface {
 	// place of its own text: display only, the model and the session's
 	// messages never change. A block that does not exist is ignored.
 	SetBlockDisplay(ext, id, text string)
+	// ShowText adds a display-only block with title and text to the
+	// transcript, saved in the session; see TextOptions.
+	ShowText(ext, title, text string, o TextOptions)
 	// ClearUI removes every status item and widget of ext.
 	ClearUI(ext string)
 	// SendMessage queues text as a user message for the model.
 	SendMessage(text string)
+}
+
+// TextOptions shape the block ShowText adds.
+type TextOptions struct {
+	// Lang says how to colour the text: "diff", or "" for plain text.
+	Lang string
+	// Preview is how many lines show while the block is collapsed; 0 is the
+	// front end's default.
+	Preview int
 }
 
 // Question is a dialog an extension asks: Kind is "select" (Options),
@@ -84,6 +96,11 @@ func (h *Headless) SetWidget(string, string, []string) {}
 func (h *Headless) SetBlockStatus(string, string, string)  {}
 func (h *Headless) SetBlockDisplay(string, string, string) {}
 func (h *Headless) ClearUI(string)                         {}
+
+// ShowText prints the text as a notice, under its title.
+func (h *Headless) ShowText(ext, title, text string, _ TextOptions) {
+	h.Notify(ext, title+"\n"+text, "info")
+}
 
 func (h *Headless) Ask(_ string, q Question, answer func(any)) {
 	if q.Kind == "confirm" {

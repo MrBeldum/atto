@@ -158,6 +158,7 @@ To use the terminal's own selection instead, hold the key that bypasses mouse re
 | `/context` | show what fills the context and how much is cached |
 | `/reload` | read AGENTS.md, skills, hooks, extensions, MCP servers, `settings.json` and `models.json` again, keeping the conversation |
 | `/extensions [approve <name>]` | list extensions, or approve a project extension |
+| `/diff [--staged] [path]` | show what changed in the working tree: a summary, then the diff (a built-in extension, see `extensions/builtin/diff.ts`) |
 | `/resume` | resume a saved session |
 | `/tree` | go back to any point of the session; earlier branches are kept |
 | `/fork` | start a new session from an earlier message |

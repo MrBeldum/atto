@@ -38,6 +38,15 @@ interface AttoUI {
    * change. Saved in the session file; TUI only.
    */
   setBlockDisplay(blockId: string, text: string | null): void;
+  /**
+   * Add a collapsible block to the transcript that shows text under a title.
+   * Display only: the model never sees it, and it is saved in the session
+   * file, so a resumed session shows it again. Long text shows its first
+   * `preview` lines and a "+N lines" row that expands it (click or ctrl+t).
+   * The TUI shows a block; atto -p prints the title and text as a notice.
+   * See the built-in /diff extension (extensions/builtin/diff.ts).
+   */
+  showText(title: string, text: string, options?: AttoShowTextOptions): void;
   /** Show a notice in the transcript (stderr in atto -p). */
   notify(text: string, level?: "info" | "warning" | "error"): void;
   /** Set (or with null, remove) an item of the status line. TUI only. */
@@ -50,6 +59,16 @@ interface AttoUI {
   confirm(text: string): Promise<boolean>;
   /** Ask for a line of text; undefined when canceled, and always without a UI. */
   input(prompt: string): Promise<string | undefined>;
+}
+
+interface AttoShowTextOptions {
+  /**
+   * How to colour the text: "diff" (+ green, - red, @@ cyan, file headers
+   * dim). Anything else, or nothing, is plain text.
+   */
+  lang?: string;
+  /** Lines shown while collapsed (default 10). */
+  preview?: number;
 }
 
 interface AttoSessionEvent {

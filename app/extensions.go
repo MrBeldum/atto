@@ -143,6 +143,10 @@ func (h *tuiHost) SetBlockDisplay(ext, id, text string) {
 	h.do(func() { h.a.blockText(ext, id, text) })
 }
 
+func (h *tuiHost) ShowText(ext, title, text string, o extensions.TextOptions) {
+	h.do(func() { h.a.showText(ext, title, text, o) })
+}
+
 func (h *tuiHost) ClearUI(ext string) {
 	h.do(func() { h.a.extUI.clear(ext) })
 }
