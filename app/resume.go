@@ -64,6 +64,14 @@ func (p *resumePicker) load() {
 	switch {
 	case len(sums) == 0 && p.archived:
 		p.list.Empty = "  No archived sessions"
+	case len(sums) == 0 && !p.all:
+		// The default filter is this directory; say when other places have
+		// sessions, rather than looking like there are none.
+		if all, _ := session.List("", false); len(all) > 0 {
+			p.list.Empty = fmt.Sprintf("  No sessions in this directory · tab shows all %d", len(all))
+		} else {
+			p.list.Empty = "  No saved sessions"
+		}
 	case len(sums) == 0:
 		p.list.Empty = "  No saved sessions"
 	default:

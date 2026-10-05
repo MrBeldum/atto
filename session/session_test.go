@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -101,5 +102,14 @@ func TestArchiveAndName(t *testing.T) {
 	back, err := Unarchive(p)
 	if err != nil || back != w.Path {
 		t.Fatalf("unarchive %s %v", back, err)
+	}
+}
+
+func TestSameDir(t *testing.T) {
+	if !SameDir("/a/b/", "/a/b") || SameDir("/a/b", "/a/c") {
+		t.Fatal("clean paths compare")
+	}
+	if got := SameDir(`C:\Users\me\Desktop`, `C:\Users\me\desktop`); got != (runtime.GOOS == "windows") {
+		t.Fatalf("case-insensitive only on Windows, got %v", got)
 	}
 }
