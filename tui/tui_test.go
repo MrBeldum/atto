@@ -221,7 +221,7 @@ func TestFullscreen(t *testing.T) {
 	body.l = []string{"a", "b", "c", "d", "e"}
 	ui.RenderNow()
 	want = []string{"c", "d", "e", "> in", "status"}
-	if got := v.screenRows(); !slices.Equal(got, want) {
+	if got := noBar(v.screenRows()); !slices.Equal(got, want) {
 		t.Fatalf("overflow: got %q want %q", got, want)
 	}
 
@@ -231,13 +231,13 @@ func TestFullscreen(t *testing.T) {
 	body.l = append(body.l, "f", "g")
 	ui.RenderNow()
 	want = []string{"b", "c", "d", "> in", "status"}
-	if got := v.screenRows(); !slices.Equal(got, want) {
+	if got := noBar(v.screenRows()); !slices.Equal(got, want) {
 		t.Fatalf("anchored: got %q want %q", got, want)
 	}
 	ui.ScrollToBottom()
 	ui.RenderNow()
 	want = []string{"e", "f", "g", "> in", "status"}
-	if got := v.screenRows(); !slices.Equal(got, want) {
+	if got := noBar(v.screenRows()); !slices.Equal(got, want) {
 		t.Fatalf("bottom: got %q want %q", got, want)
 	}
 	if ui.FullRedraws != 1 {
@@ -377,12 +377,12 @@ func TestFooterClickAndNewBelow(t *testing.T) {
 	ui.Footer.Add(pill{ui}, &lines{l: []string{"> in", "status"}})
 
 	ui.RenderNow()
-	if got := v.screenRows(); got[3] != "h" || strings.Contains(strings.Join(got, "|"), "JUMP") {
+	if got := noBar(v.screenRows()); got[3] != "h" || strings.Contains(strings.Join(got, "|"), "JUMP") {
 		t.Fatalf("at the bottom there is no pill: %q", got)
 	}
 	ui.ScrollBy(2)
 	ui.RenderNow()
-	got := v.screenRows()
+	got := noBar(v.screenRows())
 	if got[len(got)-3] != "JUMP" {
 		t.Fatalf("scrolled up shows the pill above the input: %q", got)
 	}
@@ -392,7 +392,7 @@ func TestFooterClickAndNewBelow(t *testing.T) {
 
 	body.l = append(body.l, "i")
 	ui.RenderNow()
-	got = v.screenRows()
+	got = noBar(v.screenRows())
 	if got[len(got)-3] != "NEW" || !ui.NewBelow() {
 		t.Fatalf("new output while scrolled up is flagged: %q", got)
 	}
@@ -400,7 +400,7 @@ func TestFooterClickAndNewBelow(t *testing.T) {
 	// A click on the pill row scrolls to the bottom and removes it.
 	ui.handleScroll("\x1b[<0;3;4M") // row 4 of 6 is the pill
 	ui.RenderNow()
-	got = v.screenRows()
+	got = noBar(v.screenRows())
 	if ui.ScrollOffset() != 0 || ui.NewBelow() || got[len(got)-3] == "NEW" || got[len(got)-3] == "JUMP" {
 		t.Fatalf("click did not jump to the bottom: %q", got)
 	}

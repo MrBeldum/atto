@@ -399,7 +399,7 @@ func TestPinnedRowClick(t *testing.T) {
 	r := newSelRig(t, 20, 6, body...)
 	r.ui.Pin = func(int, int) string { return "PIN" }
 	r.ui.RenderNow()
-	if r.v.screenRows()[0] != "PIN" {
+	if noBar(r.v.screenRows())[0] != "PIN" {
 		t.Fatalf("pin %q", r.v.screenRows())
 	}
 	r.later()
@@ -409,7 +409,7 @@ func TestPinnedRowClick(t *testing.T) {
 	}
 	// While selecting, the row shows the line under it.
 	r.drag(1, 1, 3, 2)
-	if r.v.screenRows()[0] == "PIN" {
+	if noBar(r.v.screenRows())[0] == "PIN" {
 		t.Fatal("pin shown over a selection")
 	}
 }

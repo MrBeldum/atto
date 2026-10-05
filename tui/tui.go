@@ -89,6 +89,7 @@ type TUI struct {
 	footerTop   int  // first screen row of the footer
 	newBelow    bool // output arrived below the view while scrolled up
 	prevFrame   []string
+	bar         scrollbar // see scrollbar.go
 
 	// FullRepaint rewrites every visible row, from column 1, on every frame
 	// that changes anything, instead of only the rows that differ. It trades
@@ -597,7 +598,7 @@ func (t *TUI) positionCursor(b *strings.Builder, cur *cursorPos, total int) {
 // rewrites only the screen rows that changed (every row with FullRepaint).
 func (t *TUI) doRenderFullscreen() {
 	width, height := t.term.Size()
-	inner := t.innerWidth(width)
+	inner := t.fullscreenWidth(width)
 	body := t.pad(t.Body.Render(inner))
 
 	// Keep the view anchored while scrolled up and new output arrives.
@@ -650,6 +651,7 @@ func (t *TUI) doRenderFullscreen() {
 	for len(frame) < avail+2*gap {
 		frame = append(frame, "")
 	}
+	t.decorate(frame, gap, start, end-start, len(body), width)
 	frame = append(frame, footer...)
 	lines, cur := prepareLines(frame, width, height)
 

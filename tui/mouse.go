@@ -80,6 +80,8 @@ type mouseState struct {
 	line     int  // body line pressed: output may arrive before the release
 	autoDir  int  // -1 or +1 while dragging past the top or bottom edge
 	autoOn   bool // the auto-scroll ticker runs
+	bar      bool // dragging the scrollbar thumb
+	barGrab  int  // thumb row held by the pointer
 }
 
 // multiClickTime is how soon a press must follow the last one, on the
@@ -114,11 +116,15 @@ func (t *TUI) handleMouse(m mouseEvent) {
 	case m.btn == 65:
 		t.ScrollBy(-3)
 	case m.motion:
-		if t.mouse.down {
+		if t.mouse.bar {
+			t.dragBar(m.y)
+		} else if t.mouse.down {
 			t.drag(m.x, m.y)
 		}
 	case m.press && m.btn == 0:
 		t.press(m.x, m.y)
+	case !m.press && t.mouse.bar:
+		t.mouse.bar = false
 	case !m.press && t.mouse.down:
 		t.release(m.x, m.y)
 	}
@@ -140,6 +146,10 @@ func (t *TUI) press(x, y int) {
 		t.sel = selection{}
 		t.mouse.down = false
 		t.Footer.Click(row - t.footerTop)
+		return
+	}
+	if t.onBar(x, y) {
+		t.pressBar(y) // never a selection
 		return
 	}
 	now := t.clock()
