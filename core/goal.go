@@ -42,6 +42,7 @@ type GoalDriver struct {
 	Error func(error)
 
 	turnStart  time.Time
+	running    bool // a turn is in progress (BeginTurn..EndTurn)
 	tools      int  // tool calls in the current turn
 	budgetSent bool // budget message already steered into this turn
 }
@@ -94,7 +95,21 @@ func (d *GoalDriver) Active() bool { return d.Goal != nil && d.Goal.Status == go
 
 // BeginTurn starts counting a turn.
 func (d *GoalDriver) BeginTurn() {
-	d.turnStart, d.tools, d.budgetSent = time.Now(), 0, false
+	d.turnStart, d.tools, d.budgetSent, d.running = time.Now(), 0, false, true
+}
+
+// Elapsed is the goal's time in seconds including the running turn, as
+// codex's indicator counts it: the turn in progress adds to an active goal.
+func (d *GoalDriver) Elapsed() int64 {
+	g := d.Goal
+	if g == nil {
+		return 0
+	}
+	n := g.Seconds
+	if d.running && g.Status == goal.Active {
+		n += int64(time.Since(d.turnStart).Seconds())
+	}
+	return n
 }
 
 // Event follows the running turn: tool calls count as progress, and each
@@ -130,6 +145,7 @@ func (d *GoalDriver) step(input, cached, output int) {
 // EndTurn applies the stop conditions after a turn that ended with err.
 // An interrupt pauses the goal. Returns true if the goal is still active.
 func (d *GoalDriver) EndTurn(err error) bool {
+	d.running = false
 	d.Poll()
 	g := d.Goal
 	if g == nil {

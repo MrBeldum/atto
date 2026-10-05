@@ -63,8 +63,8 @@ func (a *App) itemStarted(it *transcript.Item) {
 			a.add(&eventBlock{title: goalMessageTitle(it.Text)})
 		}
 	case transcript.GoalStatus:
-		if t := goalStatusTitle(it.GoalState); t != "" {
-			a.add(&eventBlock{title: t})
+		if b := goalStatusBlock(it.GoalState); b != nil {
+			a.add(b)
 		}
 	case transcript.Hook:
 		style := tui.Dim
@@ -194,28 +194,18 @@ func goalMessageTitle(text string) string {
 	return "◎ " + tui.FirstLine(strings.TrimPrefix(text, goal.Prefix))
 }
 
-// goalStatusTitle announces a goal status; "" for none worth showing.
-func goalStatusTitle(g *goal.Goal) string {
-	if g == nil {
-		return ""
+// goalStatusBlock announces a goal status change, as codex words it: "Goal
+// stalled" with the goal's usage summary (and the model's note); nil for
+// an active goal.
+func goalStatusBlock(g *goal.Goal) *infoBlock {
+	if g == nil || g.Status == goal.Active {
+		return nil
 	}
-	var title string
-	switch g.Status {
-	case goal.Complete:
-		title = "◎ Goal achieved"
-	case goal.Blocked:
-		title = "◎ Goal blocked (/goal resume to retry)"
-	case goal.BudgetLimited:
-		title = "◎ Goal budget used (/goal budget <n> to extend)"
-	case goal.Paused:
-		title = "◎ Goal paused (/goal resume)"
-	default:
-		return ""
-	}
+	hint := g.Summary()
 	if g.Note != "" {
-		title += ": " + g.Note
+		hint += "\nNote: " + g.Note
 	}
-	return title + tui.Dim(" · "+g.Usage())
+	return &infoBlock{title: "Goal " + g.Status.Label(), hint: hint}
 }
 
 // onEvent handles an event of the running agent: the transcript builder
@@ -265,7 +255,7 @@ func (a *App) onEvent(ev any) {
 
 // announceGoal shows a goal status change in the transcript.
 func (a *App) announceGoal(g *goal.Goal) {
-	if g == nil || goalStatusTitle(g) == "" {
+	if g == nil || g.Status == goal.Active {
 		return
 	}
 	c := *g

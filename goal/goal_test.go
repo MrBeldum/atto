@@ -2,9 +2,13 @@ package goal
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sebastianrcnt/atto/ai"
 )
 
 func TestBudgetCountsOnlyNewTokens(t *testing.T) {
@@ -22,18 +26,19 @@ func TestBudgetCountsOnlyNewTokens(t *testing.T) {
 
 func TestStopConditions(t *testing.T) {
 	g, _ := New("x", 0)
-	for i := 0; i < 2; i++ {
-		g.TurnEnded(time.Second, errors.New("boom"), 0)
-	}
+	g.TurnEnded(time.Second, nil, 2)
 	if g.Status != Active {
-		t.Fatal("two failures should not block")
+		t.Fatal("a good turn keeps the goal going")
 	}
-	g.TurnEnded(time.Second, nil, 2) // success resets
-	for i := 0; i < 3; i++ {
-		g.TurnEnded(time.Second, errors.New("boom"), 0)
-	}
+	g.TurnEnded(time.Second, errors.New("boom"), 0) // codex: a failed turn stalls the goal
 	if g.Status != Blocked || !strings.Contains(g.Note, "failed") {
-		t.Fatalf("three failures block: %+v", g)
+		t.Fatalf("a failure blocks: %+v", g)
+	}
+
+	g, _ = New("x", 0)
+	g.TurnEnded(time.Second, errors.New("429: You have hit your ChatGPT usage limit (plus plan)."), 1)
+	if g.Status != UsageLimited || !strings.Contains(g.Note, "usage limit") {
+		t.Fatalf("a usage limit is not a failure: %+v", g)
 	}
 
 	g, _ = New("x", 0)
@@ -102,5 +107,150 @@ func TestAdoptOnlyTakesStatusReports(t *testing.T) {
 	a, _ := New("x", 0)
 	if a.Adopt(&Goal{Status: Active}) || a.Adopt(nil) {
 		t.Fatal("only complete or blocked are reports")
+	}
+}
+
+func TestFormatElapsedMatchesCodex(t *testing.T) {
+	for sec, want := range map[int64]string{
+		-5: "0s", 0: "0s", 59: "59s", 60: "1m", 30 * 60: "30m", 90 * 60: "1h 30m", 2 * 3600: "2h",
+		24*3600 - 1: "23h 59m", 24 * 3600: "1d 0h 0m", 2*86400 + 23*3600 + 42*60: "2d 23h 42m",
+	} {
+		if got := FormatElapsed(sec); got != want {
+			t.Errorf("FormatElapsed(%d) = %q, want %q", sec, got, want)
+		}
+	}
+}
+
+func TestTokensMatchCodex(t *testing.T) {
+	for n, want := range map[int]string{
+		-1: "0", 0: "0", 999: "999", 1000: "1K", 1234: "1.23K", 9990: "9.99K", 12500: "12.5K", 40000: "40K", 50000: "50K",
+		63876: "63.9K", 125000: "125K", 999999: "1000K", 1_500_000: "1.5M", 12_345_678: "12.3M", 2_000_000_000: "2B", 3_000_000_000_000: "3T",
+	} {
+		if got := Tokens(n); got != want {
+			t.Errorf("Tokens(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
+
+func TestSummaryAndLabels(t *testing.T) {
+	g := &Goal{Objective: "Complete the task described in ../gameboy-long-running-prompt5.txt", Status: BudgetLimited, Budget: 50000, TokensUsed: 63876, Seconds: 120}
+	if got, want := g.Summary(), "Objective: Complete the task described in ../gameboy-long-running-prompt5.txt Time: 2m. Tokens: 63.9K/50K."; got != want {
+		t.Fatalf("summary %q", got)
+	}
+	g.Budget, g.Seconds = 0, 0
+	if got := g.Summary(); got != "Objective: "+g.Objective {
+		t.Fatalf("no time, no budget: %q", got)
+	}
+	for st, want := range map[Status]string{
+		Active: "active", Paused: "paused", Blocked: "stalled", UsageLimited: "usage limited", BudgetLimited: "limited by budget", Complete: "complete",
+	} {
+		if got := st.Label(); got != want {
+			t.Errorf("%s label %q, want %q", st, got, want)
+		}
+	}
+}
+
+func TestIndicatorText(t *testing.T) {
+	for _, c := range []struct {
+		g       Goal
+		seconds int64
+		want    string
+	}{
+		{Goal{Status: Active, Budget: 50000, TokensUsed: 12500}, 90, "Pursuing goal (12.5K / 50K)"},
+		{Goal{Status: Active, TokensUsed: 12500}, 120, "Pursuing goal (2m)"},
+		{Goal{Status: Paused}, 0, "Goal paused (/goal resume)"},
+		{Goal{Status: Blocked}, 0, "Goal stalled (/goal resume)"},
+		{Goal{Status: UsageLimited}, 0, "Goal hit usage limits (/goal resume)"},
+		{Goal{Status: BudgetLimited, Budget: 50000, TokensUsed: 63876}, 0, "Goal unmet (63.9K / 50K tokens)"},
+		{Goal{Status: BudgetLimited}, 0, "Goal abandoned"},
+		{Goal{Status: Complete, Budget: 50000, TokensUsed: 40000}, 120, "Goal achieved (40K tokens)"},
+		{Goal{Status: Complete, TokensUsed: 40000}, 36720, "Goal achieved (10h 12m)"},
+	} {
+		if got := c.g.Indicator(c.seconds); got != c.want {
+			t.Errorf("%+v: %q, want %q", c.g, got, c.want)
+		}
+	}
+}
+
+func TestUsageLimitDetection(t *testing.T) {
+	for _, msg := range []string{
+		"429: You have hit your ChatGPT usage limit (plus plan). Try again in ~5 min.",
+		`429: {"error":{"type":"usage_limit_reached"}}`,
+		"You exceeded your current quota, please check your plan and billing details.",
+		"Monthly usage limit reached",
+	} {
+		if !IsUsageLimit(errors.New(msg)) {
+			t.Errorf("%q is a usage limit", msg)
+		}
+	}
+	for _, msg := range []string{"boom", "429: Rate limit exceeded, retry later", "context deadline exceeded", "500: internal error"} {
+		if IsUsageLimit(errors.New(msg)) {
+			t.Errorf("%q is an ordinary failure", msg)
+		}
+	}
+	if IsUsageLimit(nil) || !IsUsageLimit(&ai.ProviderError{Status: 402, Body: "pay up"}) {
+		t.Error("nil is not a limit; 402 is")
+	}
+}
+
+func TestContinuationFollowsCodex(t *testing.T) {
+	g, _ := New("ship it", 50000)
+	g.TokensUsed, g.Turns = 12000, 2
+	c := g.Continuation()
+	for _, want := range []string{
+		"Continue working toward the active goal.", "<objective>\nship it\n</objective>",
+		"- Tokens used: 12000", "- Token budget: 50000", "- Tokens remaining: 38000",
+		"No-progress check:", "Completion audit:", "Blocked audit:", "at least three consecutive goal turns",
+		`atto goal complete "<the evidence>"`, `atto goal blocked "<what is needed>"`, "atto goal pause",
+	} {
+		if !strings.Contains(c, want) {
+			t.Errorf("continuation lacks %q", want)
+		}
+	}
+	g.Budget = 0
+	if c := g.Continuation(); !strings.Contains(c, "- Token budget: none") || !strings.Contains(c, "- Tokens remaining: unbounded") {
+		t.Errorf("no budget:\n%s", c)
+	}
+	g.Budget = 100
+	for _, m := range []string{g.BudgetMessage(), g.ObjectiveUpdatedMessage()} {
+		if !strings.HasPrefix(m, Prefix) {
+			t.Errorf("goal messages are marked: %q", m)
+		}
+	}
+	if m := g.BudgetMessage(); !strings.Contains(m, "reached its token budget") || !strings.Contains(m, "do not start new substantive work") {
+		t.Errorf("budget message:\n%s", m)
+	}
+}
+
+func TestAdoptPause(t *testing.T) {
+	g, _ := New("x", 0)
+	if !g.Adopt(&Goal{Status: Paused, Note: "the user asked"}) || g.Status != Paused || g.Note != "the user asked" {
+		t.Fatalf("an active goal takes the model's pause: %+v", g)
+	}
+	b, _ := New("x", 10)
+	b.Status = BudgetLimited
+	if b.Adopt(&Goal{Status: Paused}) || b.Status != BudgetLimited {
+		t.Fatal("a budget limit takes precedence over a pause")
+	}
+	if !b.Adopt(&Goal{Status: Complete, Note: "done"}) || b.Status != Complete {
+		t.Fatalf("a budget limited goal can still be completed: %+v", b)
+	}
+}
+
+func TestOldGoalFilesLoad(t *testing.T) {
+	t.Setenv("ATTO_DIR", t.TempDir())
+	old := `{"objective":"keep going","status":"budget_limited","budget":5000,"tokensUsed":5100,"seconds":42,"note":"token budget of 5.0k used","turns":3,"created":"2026-01-01T00:00:00Z","updated":"2026-01-01T00:00:00Z"}`
+	if err := os.MkdirAll(filepath.Dir(Path("s")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(Path("s"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g, err := Load("s")
+	if err != nil || g.Status != BudgetLimited || g.Budget != 5000 || g.TokensUsed != 5100 || g.Seconds != 42 || g.Turns != 3 {
+		t.Fatalf("%+v %v", g, err)
+	}
+	if g.Status.Label() != "limited by budget" || g.Indicator(0) != "Goal unmet (5.1K / 5K tokens)" {
+		t.Fatalf("%q %q", g.Status.Label(), g.Indicator(0))
 	}
 }

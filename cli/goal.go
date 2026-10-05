@@ -13,7 +13,8 @@ import (
 const goalUsage = `usage:
   atto goal                         show the session's goal
   atto goal complete "<evidence>"   the goal is achieved (after verifying it)
-  atto goal blocked "<reason>"      no further progress is possible without the user
+  atto goal blocked "<reason>"      stalled: the same blocker for three goal turns in a row, needs the user
+  atto goal pause "<why>"           only when the user explicitly asked to pause the goal
   atto goal set [-budget 50k] "<objective>"   set a goal (users only; refused inside atto)`
 
 // RunGoal implements "atto goal". The model uses complete/blocked from its
@@ -54,28 +55,25 @@ func RunGoal(args []string, out io.Writer) error {
 			fmt.Fprintln(out, "no goal")
 			return nil
 		}
-		fmt.Fprintf(out, "status: %s\nusage: %s, %d turns\nobjective:\n%s\n", g.Status, g.Usage(), g.Turns, g.Objective)
+		fmt.Fprintf(out, "status: %s\nusage: %s, %d turns\nobjective:\n%s\n", g.Status.Label(), g.Usage(), g.Turns, g.Objective)
 		if g.Note != "" {
 			fmt.Fprintf(out, "note: %s\n", g.Note)
 		}
-	case "complete", "blocked":
+	case "complete", "blocked", "pause":
 		if g == nil {
 			return fmt.Errorf("there is no goal")
 		}
-		if g.Status != goal.Active && g.Status != goal.BudgetLimited {
-			return fmt.Errorf("the goal is %s, not active", g.Status)
+		if g.Status != goal.Active && (g.Status != goal.BudgetLimited || sub == "pause") {
+			return fmt.Errorf("the goal is %s, not active", g.Status.Label())
 		}
 		if text == "" {
-			return fmt.Errorf("give the %s: atto goal %s \"...\"", map[string]string{"complete": "evidence", "blocked": "reason"}[sub], sub)
+			return fmt.Errorf("give the %s: atto goal %s \"...\"", map[string]string{"complete": "evidence", "blocked": "reason", "pause": "reason"}[sub], sub)
 		}
-		g.Status, g.Note = goal.Complete, text
-		if sub == "blocked" {
-			g.Status = goal.Blocked
-		}
+		g.Status, g.Note = map[string]goal.Status{"complete": goal.Complete, "blocked": goal.Blocked, "pause": goal.Paused}[sub], text
 		if err := goal.Save(*session, g); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "goal marked %s. End your turn with a short summary for the user.\n", g.Status)
+		fmt.Fprintf(out, "goal marked %s. End your turn with a short summary for the user.\n", g.Status.Label())
 	case "set":
 		b := 0
 		if *budget != "" {

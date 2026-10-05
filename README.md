@@ -163,7 +163,7 @@ To use the terminal's own selection instead, hold the key that bypasses mouse re
 | `/name` | name the session |
 | `/archive` | archive the session and start a new one |
 | `/clear` | start a new session |
-| `/goal <objective>` | keep working until the objective is done; also `pause`, `resume`, `clear`, `budget <n>` |
+| `/goal [<objective>\|clear\|edit\|pause\|resume]` | set or view the goal for a long-running task, as in codex: bare `/goal` shows it, `edit` opens a prompt, a new objective asks before replacing an unfinished goal; `budget <n>` caps its tokens. The status shows at the right of the status line ("Pursuing goal (12.5K / 50K)"), Esc pauses it, and opening a session with a paused or stalled goal asks whether to resume |
 | `/jobs`, `/stop` | list or stop background jobs |
 | `/timer`, `/timers` | wake the agent later, or list pending timers |
 | `/quit` | exit atto |
@@ -175,7 +175,7 @@ To use the terminal's own selection instead, hold the key that bypasses mouse re
 - `atto history grep` searches the session transcript, including turns that were compacted away.
 - `atto job start` runs a command in the background. With `-notify REGEXP` (and `-notify-limit N`, default 50) each matching output line wakes the agent while the job keeps running; matches within a second are batched.
 - `atto monitor` and `atto timer` wake the agent when something happens. `atto timer every 30m [-count N] [-until HH:MM|duration] <message>` repeats (minimum 1m, no drift; missed intervals fire once).
-- `atto goal complete` reports that a goal is done.
+- `atto goal complete|blocked|pause "<why>"` reports on the goal (done; stalled on the same blocker for three goal turns; paused at the user's request). A turn that fails stalls the goal, and one that hits the provider's usage limit marks it usage limited; `/goal resume` continues either.
 - `atto reload` reloads the session's AGENTS.md files, skills, hooks and settings after the agent edited them; the result comes back as an `[atto event]`.
 
 **Nothing loads unseen.** When a session starts, resumes or forks, the conversation opens with a dim "Loaded" block: the AGENTS.md (or AGENTS.override.md, CLAUDE.md) files in the system prompt with their sizes (and whether the 32 KiB cap cut them), files that were found but skipped and why, the skills and where they came from, the hooks, the settings and models files read, and the model and effort with where each came from (`-m`, the session, `settings.json`). Click its header or press `Ctrl+T` for the full list. `/reload` shows it again with what changed. The same report:

@@ -208,21 +208,38 @@ func runStatusCommand(command string, input []byte, cwd string) ([]string, error
 // Only characters with an unambiguous width (box drawing renders as one
 // column everywhere the editor rules do) so CJK terminals line up.
 func (a *App) renderStatus(width int) []string {
+	// The goal indicator goes at the right end of the first row, as codex's
+	// footer shows it; the row gives up room for it. On a terminal too narrow
+	// for both, it takes a row of its own.
+	ind := a.goalIndicator()
+	rowWidth, own := width, false
+	if ind != "" {
+		if rowWidth = width - tui.VisibleWidth(ind) - 2; rowWidth < minStatusWithGoal {
+			rowWidth, own = width, true
+		}
+	}
 	var out []string
 	if a.statusCmd {
-		for _, l := range a.statusLines {
-			out = append(out, tui.Truncate(" "+l, width, "…"))
+		for i, l := range a.statusLines {
+			w := width
+			if i == 0 {
+				w = rowWidth
+			}
+			out = append(out, tui.Truncate(" "+l, w, "…"))
 		}
 	} else {
-		out = append(out, a.builtinStatus(width))
+		out = append(out, a.builtinStatus(rowWidth))
 	}
 	if len(out) > 0 {
-		out[0] = a.withToast(out[0], width)
+		out[0] = a.withToast(out[0], rowWidth)
+		if ind != "" && !own {
+			out[0] += strings.Repeat(" ", max(1, width-1-tui.VisibleWidth(out[0])-tui.VisibleWidth(ind))) + ind
+		}
 	}
 	// Transient indicators go on their own line so custom output is untouched.
 	var flags []string
-	if p := a.goalPill(); p != "" {
-		flags = append(flags, p)
+	if ind != "" && own {
+		flags = append(flags, ind)
 	}
 	if a.jobCount > 0 {
 		flags = append(flags, tui.FG(2, fmt.Sprintf("● %d job%s running (/jobs)", a.jobCount, plural(a.jobCount))))
@@ -235,6 +252,10 @@ func (a *App) renderStatus(width int) []string {
 	}
 	return out
 }
+
+// minStatusWithGoal is the room the status row needs to share it with the
+// goal indicator (the model, the context bar).
+const minStatusWithGoal = 24
 
 func contextBar(pct, cells int) string {
 	filled := min(cells, (pct*cells+50)/100)
