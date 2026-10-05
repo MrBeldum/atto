@@ -652,6 +652,30 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(any)) error {
 	return a.RunWithImages(ctx, input, nil, emit)
 }
 
+// modelChangeNote tells the model that the conversation's last reply came
+// from another model, so it doesn't take that reply's words or habits for
+// its own. It goes with the next user message only: once this model has
+// replied, the last reply is its own.
+func (a *Agent) modelChangeNote() string {
+	a.cfgMu.Lock()
+	cur := a.model.ProviderName + "/" + a.model.Model.ID
+	a.cfgMu.Unlock()
+	for i := len(a.messages) - 1; i >= 0; i-- {
+		m := a.messages[i]
+		if m.Role != "assistant" {
+			continue
+		}
+		if m.Model == "" { // written before atto recorded models
+			return ""
+		}
+		if prev := m.Provider + "/" + m.Model; prev != cur {
+			return fmt.Sprintf("[atto] The model changed from %s to %s. Earlier assistant messages were written by %s.", prev, cur, prev)
+		}
+		return ""
+	}
+	return ""
+}
+
 // RunWithImages is Run with images attached to the user message. Their
 // bytes must be loaded, and saved with images.Save for the session to
 // resume with them.
@@ -667,6 +691,9 @@ func (a *Agent) RunWithImages(ctx context.Context, input string, imgs []provider
 		case o.Context != "":
 			input += "\n\n" + o.Context
 		}
+	}
+	if note := a.modelChangeNote(); note != "" {
+		input += "\n\n" + note
 	}
 	if a.needsCompact() {
 		if err := a.compact(ctx, emit, true); err != nil {
