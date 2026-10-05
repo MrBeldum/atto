@@ -1,11 +1,15 @@
 package config
 
 import (
+	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/sebastianrcnt/atto/ai"
 )
 
 const fixture = `{"opencode-go":{"models":{
@@ -88,5 +92,94 @@ func TestEffortMapLikePi(t *testing.T) {
 	}
 	if *m.EffortMap["xhigh"] != "max" {
 		t.Fatalf("wire %v", m.EffortMap)
+	}
+}
+
+// costFixture has models.dev's cost fields: dollars per million tokens,
+// tiers above a context size, and the older context_over_200k.
+const costFixture = `{
+"openai":{"models":{
+ "gpt-5.4":{"id":"gpt-5.4","tool_call":true,"limit":{"context":1050000,"output":128000},
+  "cost":{"input":2.5,"output":15,"cache_read":0.25,"tiers":[{"input":5,"output":22.5,"tier":{"type":"context","size":272000}}],"context_over_200k":{"input":5,"output":22.5,"cache_read":0.5}}},
+ "gpt-4.1":{"id":"gpt-4.1","tool_call":true,"limit":{"context":1000000,"output":32768},"cost":{"input":2,"output":8,"cache_read":0.5}}
+}},
+"opencode":{"models":{
+ "glm-5":{"id":"glm-5","tool_call":true,"limit":{"context":200000,"output":100},"cost":{"input":1,"output":3.2,"cache_read":0.2,"cache_write":0}}
+}},
+"opencode-go":{"models":{
+ "qwen3.6-plus":{"id":"qwen3.6-plus","tool_call":true,"limit":{"context":1000000,"output":100},
+  "cost":{"input":0.5,"output":3,"cache_read":0.05,"cache_write":0.625,"context_over_200k":{"input":2,"output":6}}},
+ "nocost":{"id":"nocost","tool_call":true,"limit":{"context":1000,"output":100}}
+}}}`
+
+func TestCatalogCost(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ATTO_DIR", dir)
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("OPENCODE_API_KEY", "k")
+	os.MkdirAll(filepath.Join(dir, "cache"), 0o755)
+	os.WriteFile(filepath.Join(dir, "cache", "catalog.json"), []byte(costFixture), 0o644)
+
+	cat := CatalogProviders()
+	find := func(p, id string) Model {
+		t.Helper()
+		for _, m := range cat[p].Models {
+			if m.ID == id {
+				return m
+			}
+		}
+		t.Fatalf("%s/%s missing: %+v", p, id, cat[p].Models)
+		return Model{}
+	}
+	want := ai.ModelCost{
+		ModelCostRates: ai.ModelCostRates{Input: 2.5, Output: 15, CacheRead: 0.25},
+		// The tier lists no cache read: it keeps the base price.
+		Tiers: []ai.ModelCostTier{{InputTokensAbove: 272000, ModelCostRates: ai.ModelCostRates{Input: 5, Output: 22.5, CacheRead: 0.25}}},
+	}
+	if c := find("openai", "gpt-5.4").Cost; c == nil || !reflect.DeepEqual(*c, want) {
+		t.Fatalf("openai gpt-5.4 cost %+v", c)
+	}
+	// ChatGPT models are priced as OpenAI's API.
+	if c := find("openai-codex", "gpt-5.4").Cost; c == nil || !reflect.DeepEqual(*c, want) {
+		t.Fatalf("codex gpt-5.4 cost %+v", c)
+	}
+	if c := find("opencode", "glm-5").Cost; c == nil || c.Input != 1 || c.Output != 3.2 || c.CacheRead != 0.2 || c.Tiers != nil {
+		t.Fatalf("zen glm-5 cost %+v", c)
+	}
+	q := find("opencode-go", "qwen3.6-plus").Cost
+	if q == nil || len(q.Tiers) != 1 || q.Tiers[0] != (ai.ModelCostTier{InputTokensAbove: 200000, ModelCostRates: ai.ModelCostRates{Input: 2, Output: 6, CacheRead: 0.05, CacheWrite: 0.625}}) {
+		t.Fatalf("context_over_200k becomes a tier: %+v", q)
+	}
+	if c := find("opencode-go", "nocost").Cost; c != nil {
+		t.Fatalf("a model without prices has no cost: %+v", c)
+	}
+	for p, sub := range map[string]bool{"openai": false, "openai-codex": true, "opencode": false, "opencode-go": true} {
+		if cat[p].Subscription != sub {
+			t.Errorf("%s subscription = %v", p, cat[p].Subscription)
+		}
+	}
+
+	// The tier applies above its size.
+	am := (ModelRef{ProviderName: "openai", Provider: cat["openai"], Model: find("openai", "gpt-5.4")}).AIModel()
+	u := ai.Usage{Input: 300000, Output: 1000}
+	if got := ai.CalculateCost(&am, &u).Total; math.Abs(got-(300000*5+1000*22.5)/1e6) > 1e-9 {
+		t.Fatalf("tiered cost %v", got)
+	}
+
+	// models.json wins: a cost replaces the catalog's, a modelOverrides
+	// entry changes the prices it names.
+	os.WriteFile(ModelsPath(), []byte(`{"providers":{
+	 "opencode":{"models":[{"id":"glm-5","cost":{"input":9,"output":9}}]},
+	 "opencode-go":{"modelOverrides":{"qwen3.6-plus":{"cost":{"output":7}}}}}}`), 0o644)
+	m, err := LoadModels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := m.Find("opencode", "glm-5"); r.Model.Cost == nil || !reflect.DeepEqual(*r.Model.Cost, ai.ModelCost{ModelCostRates: ai.ModelCostRates{Input: 9, Output: 9}}) {
+		t.Fatalf("models.json cost: %+v", r.Model.Cost)
+	}
+	r, _ := m.Find("opencode-go", "qwen3.6-plus")
+	if c := r.Model.Cost; c == nil || c.Output != 7 || c.Input != 0.5 || len(c.Tiers) != 1 || !r.Provider.Subscription {
+		t.Fatalf("override cost: %+v %+v", c, r.Provider)
 	}
 }

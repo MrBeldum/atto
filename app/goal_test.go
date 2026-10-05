@@ -291,8 +291,9 @@ func TestGoalIndicatorPlacement(t *testing.T) {
 		g := c.g
 		g.Objective = "x"
 		a.goal.Goal = &g
+		// The status takes two rows beside the indicator; it ends the first.
 		r := row(120)
-		if len(r) != 1 || !strings.HasSuffix(r[0], c.want) || tui.VisibleWidth(r[0]) != 119 {
+		if len(r) != 2 || !strings.HasSuffix(r[0], c.want) || tui.VisibleWidth(r[0]) != 119 || strings.Contains(r[1], "oal") {
 			t.Errorf("%s: %q", c.want, r)
 			continue
 		}
@@ -307,7 +308,7 @@ func TestGoalIndicatorPlacement(t *testing.T) {
 	// A narrow terminal gives the indicator a row of its own.
 	a.goal.Goal = &goal.Goal{Objective: "x", Status: goal.Paused}
 	r := row(40)
-	if len(r) != 2 || !strings.Contains(r[1], "Goal paused (/goal resume)") || strings.Contains(r[0], "goal") {
+	if len(r) != 3 || !strings.Contains(r[2], "Goal paused (/goal resume)") || strings.Contains(r[0]+r[1], "oal") {
 		t.Fatalf("narrow: %q", r)
 	}
 	for _, l := range r {
@@ -318,7 +319,7 @@ func TestGoalIndicatorPlacement(t *testing.T) {
 
 	// Jobs and timers keep their own row.
 	a.jobCount = 2
-	if r := row(120); len(r) != 2 || !strings.Contains(r[1], "2 jobs running") || !strings.HasSuffix(r[0], "Goal paused (/goal resume)") {
+	if r := row(120); len(r) != 3 || !strings.Contains(r[2], "2 jobs running") || !strings.HasSuffix(r[0], "Goal paused (/goal resume)") {
 		t.Fatalf("jobs: %q", r)
 	}
 

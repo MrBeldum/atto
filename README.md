@@ -88,12 +88,14 @@ A provider can also set:
 - `headers`: extra request headers
 - `extraBody`: extra fields for the request body
 - `api`: `"openai-completions"` (the default) or `"openai-responses"`
+- `subscription`: `true` for a flat-rate plan, so the status line marks its cost as an estimate
 
 A model can set:
 
 - `efforts`: the reasoning levels it supports
 - `effortMap`: how atto's effort levels translate into what the server expects
 - `input`: `["text", "image"]` if it accepts images (default: text only; catalog models know this already)
+- `cost`: prices in dollars per million tokens (`input`, `output`, `cacheRead`, `cacheWrite`), shown as the session's cost in the status line. Catalog models take theirs from models.dev; on a subscription (ChatGPT login, OpenCode Go) the figure is what the same usage would cost over the API, shown as `≈$0.123`
 
 ## Use
 
