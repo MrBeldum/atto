@@ -39,6 +39,9 @@ type catalogProvider struct {
 	source string
 	// only keeps models whose ID has this prefix.
 	only string
+	// subscription marks a flat-rate plan: models.dev's per-token prices
+	// then only estimate what the usage would cost over the API.
+	subscription bool
 }
 
 func (cp catalogProvider) sourceName() string {
@@ -66,6 +69,7 @@ var catalogProviders = []catalogProvider{
 		// family to Plus/Pro subscribers logged in with /login (no API key).
 		name: "openai-codex", display: "OpenAI Codex (ChatGPT Plus/Pro)", baseURL: "https://chatgpt.com/backend-api",
 		api: "openai-codex-responses", env: []string{}, source: "openai", only: "gpt-5",
+		subscription: true,
 	},
 	{
 		name: "opencode", display: "OpenCode Zen", baseURL: "https://opencode.ai/zen/v1",
@@ -73,7 +77,7 @@ var catalogProviders = []catalogProvider{
 	},
 	{
 		name: "opencode-go", display: "OpenCode Go", baseURL: "https://opencode.ai/zen/go/v1",
-		env: []string{"OPENCODE_API_KEY"},
+		env: []string{"OPENCODE_API_KEY"}, subscription: true,
 	},
 }
 
@@ -96,6 +100,61 @@ type modelsDevModel struct {
 	Provider *struct {
 		NPM string `json:"npm"`
 	} `json:"provider"`
+	Cost *modelsDevCost `json:"cost"`
+}
+
+// modelsDevCost is a model's price in US dollars per million tokens, as
+// ai.ModelCost has it. Tiers apply above a context size; entries without
+// them may list only context_over_200k.
+type modelsDevCost struct {
+	modelsDevRates
+	Tiers []struct {
+		modelsDevRates
+		Tier struct {
+			Type string `json:"type"`
+			Size int    `json:"size"`
+		} `json:"tier"`
+	} `json:"tiers"`
+	Over200k *modelsDevRates `json:"context_over_200k"`
+}
+
+type modelsDevRates struct {
+	Input      *float64 `json:"input"`
+	Output     *float64 `json:"output"`
+	CacheRead  *float64 `json:"cache_read"`
+	CacheWrite *float64 `json:"cache_write"`
+}
+
+// over returns base with the prices r lists.
+func (r modelsDevRates) over(base ai.ModelCostRates) ai.ModelCostRates {
+	set := func(dst *float64, v *float64) {
+		if v != nil {
+			*dst = *v
+		}
+	}
+	set(&base.Input, r.Input)
+	set(&base.Output, r.Output)
+	set(&base.CacheRead, r.CacheRead)
+	set(&base.CacheWrite, r.CacheWrite)
+	return base
+}
+
+// modelCost converts the prices; a tier keeps the base prices it does not
+// list.
+func (c *modelsDevCost) modelCost() *ai.ModelCost {
+	if c == nil {
+		return nil
+	}
+	out := &ai.ModelCost{ModelCostRates: c.over(ai.ModelCostRates{})}
+	for _, t := range c.Tiers {
+		if t.Tier.Type == "context" && t.Tier.Size > 0 {
+			out.Tiers = append(out.Tiers, ai.ModelCostTier{InputTokensAbove: t.Tier.Size, ModelCostRates: t.over(out.ModelCostRates)})
+		}
+	}
+	if len(c.Tiers) == 0 && c.Over200k != nil {
+		out.Tiers = []ai.ModelCostTier{{InputTokensAbove: 200000, ModelCostRates: c.Over200k.over(out.ModelCostRates)}}
+	}
+	return out
 }
 
 type modelsDevProvider struct {
@@ -164,6 +223,7 @@ func CatalogProviders() map[string]Provider {
 		p := Provider{
 			Name: cp.display, BaseURL: cp.baseURL, API: cp.api,
 			Env: cp.env, Headers: cp.headers, MaxTokensField: "max_tokens",
+			Subscription: cp.subscription,
 		}
 		if p.API == "" {
 			p.API = "openai-completions"
@@ -219,6 +279,7 @@ func catalogModel(cp catalogProvider, id string, m modelsDevModel) (Model, bool)
 	mod := Model{
 		ID: id, Name: m.Name, ContextWindow: ctx,
 		MaxTokens: min(max(m.Limit.Output, 0), catalogMaxTokens),
+		Cost:      m.Cost.modelCost(),
 	}
 	for _, in := range m.Modalities.Input {
 		if in == "text" || in == "image" { // the ones atto can send

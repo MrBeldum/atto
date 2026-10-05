@@ -35,7 +35,8 @@ import (
 //	  }
 //	}
 //
-// atto-only fields: provider "env", "maxTokensField", "extraBody"; model
+// atto-only fields: provider "env", "maxTokensField", "extraBody",
+// "subscription"; model
 // "efforts", "extraBody". "effortMap" is read as pi's "thinkingLevelMap".
 // JSON comments are allowed, as in pi.
 type ModelsFile struct {
@@ -63,6 +64,9 @@ type Provider struct {
 	Env            []string       `json:"env,omitempty"` // env vars to read the key from
 	MaxTokensField string         `json:"maxTokensField,omitempty"`
 	ExtraBody      map[string]any `json:"extraBody,omitempty"`
+	// Subscription marks a flat-rate plan (ChatGPT login, OpenCode Go):
+	// the models' prices then only estimate the usage at API rates.
+	Subscription bool `json:"subscription,omitempty"`
 }
 
 type Model struct {
@@ -485,6 +489,9 @@ func mergeProvider(base, over Provider) Provider {
 	}
 	if over.AuthHeader != nil {
 		base.AuthHeader = over.AuthHeader
+	}
+	if over.Subscription {
+		base.Subscription = true
 	}
 	for k, v := range over.Headers {
 		if base.Headers == nil {

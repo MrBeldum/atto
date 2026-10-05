@@ -205,7 +205,8 @@ func runStatusCommand(command string, input []byte, cwd string) ([]string, error
 //
 //	◆ Orca Local · medium  ━━─────── 12% 31k/262k · cache 93%    name · ~/proj (main) · 18MB
 //
-// Only characters with an unambiguous width (box drawing renders as one
+// The built-in line takes a second row when one is too narrow (see
+// builtinStatus). Only characters with an unambiguous width (box drawing renders as one
 // column everywhere the editor rules do) so CJK terminals line up.
 func (a *App) renderStatus(width int) []string {
 	// The goal indicator goes at the right end of the first row, as codex's
@@ -228,7 +229,7 @@ func (a *App) renderStatus(width int) []string {
 			out = append(out, tui.Truncate(" "+l, w, "…"))
 		}
 	} else {
-		out = append(out, a.builtinStatus(rowWidth))
+		out = a.builtinStatus(rowWidth, width)
 	}
 	if len(out) > 0 {
 		out[0] = a.withToast(out[0], rowWidth)
@@ -287,13 +288,35 @@ func priced(m config.Model) bool {
 }
 
 // statusItem is one piece of the built-in status line. Items are dropped
-// as the terminal narrows, lowest drop level first (see the drop levels
-// below); level 0 is never dropped.
+// when even two rows cannot hold them, lowest drop level first (see the
+// drop levels below); level 0 is never dropped.
 type statusItem struct {
 	text  string
-	pre   string // separator before it; a dot by default
+	pre   string // separator before it (spaces); a dot by default
 	drop  int
 	right bool
+	w     int // visible width of text
+}
+
+// statusRun is the width of items joined with their separators.
+func statusRun(its []statusItem, sepW int) int {
+	w := 0
+	for i, it := range its {
+		if i > 0 {
+			w += cmp.Or(len(it.pre), sepW)
+		}
+		w += it.w
+	}
+	return w
+}
+
+func joinStatus(b *strings.Builder, its []statusItem, sep string) {
+	for i, it := range its {
+		if i > 0 {
+			b.WriteString(cmp.Or(it.pre, sep))
+		}
+		b.WriteString(it.text)
+	}
 }
 
 // Drop levels, least important first, as pi's footer gives way: memory,
@@ -319,7 +342,16 @@ const minPath = 14
 //	◆ model · effort  ━━─── 12% 31k/262k · cache 93% · ↑12k ↓3.4k · R80k W2k · $0.123   ~/proj (main) · 18MB
 //
 // The left side is the model and the usage, the right side where we are.
-func (a *App) builtinStatus(width int) string {
+// The first row is first columns wide (the goal indicator takes the rest
+// of width). When one row cannot hold everything, the right side moves to
+// a second row, still at the right, and the left items that do not fit the
+// first row start the second:
+//
+//	◆ model · effort  ━━─── 12% 31k/262k · cache 93% · ↑12k ↓3.4k
+//	R80k W2k · $0.123                          ~/proj (main) · 18MB
+//
+// Items are dropped only when two rows cannot hold them.
+func (a *App) builtinStatus(first, width int) []string {
 	m, effort := a.agent.Current()
 	sep := tui.Dim(" · ")
 	u := &a.usage
@@ -361,60 +393,116 @@ func (a *App) builtinStatus(width int) string {
 		items = append(items, statusItem{text: tui.Dim(strings.Join(rw, " ")), drop: dropCacheTotals})
 	}
 	// Only a model with prices has a cost; a local model's session is free.
+	// On a subscription the prices only estimate what the usage would cost
+	// over the API.
 	if priced(m.Model) || u.cost > 0 {
-		items = append(items, statusItem{text: tui.Dim(fmt.Sprintf("$%.3f", u.cost)), drop: dropCost})
+		cost := fmt.Sprintf("$%.3f", u.cost)
+		if m.Provider.Subscription {
+			cost = "≈" + cost
+		}
+		items = append(items, statusItem{text: tui.Dim(cost), drop: dropCost})
 	}
 	if a.sessName != "" {
 		items = append(items, statusItem{text: tui.FG(5, a.sessName), drop: dropName, right: true})
 	}
 	items = append(items, statusItem{text: tui.Dim(fmtBytes(rssBytes.Load())), drop: dropMem, right: true})
+	for i := range items {
+		items[i].w = tui.VisibleWidth(items[i].text)
+	}
 
 	branch := ""
 	if a.gitBranch != "" {
 		branch = " (" + a.gitBranch + ")"
 	}
 	where := shortPath(a.cwd)
+	whereW, branchW, sepW := tui.VisibleWidth(where+branch), tui.VisibleWidth(branch), tui.VisibleWidth(sep)
 
-	join := func(cut int, right bool) string {
+	// row lays out one row w wide: l at the left, the directory (when
+	// path) and r at the right. ok is false when they do not fit; the
+	// directory is shortened from the front to the room that remains.
+	row := func(l, r []statusItem, w int, path bool) (s string, ok bool) {
+		lw, rw := statusRun(l, sepW), statusRun(r, sepW)
+		gapMin := 0
+		if len(l) > 0 {
+			gapMin = 2
+		}
+		dir := ""
+		if path {
+			room := w - 1 - lw - gapMin
+			if len(r) > 0 {
+				room -= sepW + rw
+			}
+			if room < min(minPath, whereW) {
+				return "", false
+			}
+			dir = tui.Dim(compressPath(where, room-branchW) + branch)
+			if len(r) > 0 {
+				dir += sep
+			}
+			rw += tui.VisibleWidth(dir)
+		}
+		if len(l) == 0 && rw == 0 {
+			return "", true
+		}
 		var b strings.Builder
-		for _, it := range items {
-			if it.right != right || (it.drop != 0 && it.drop <= cut) {
-				continue
-			}
-			if b.Len() > 0 {
-				b.WriteString(cmp.Or(it.pre, sep))
-			}
-			b.WriteString(it.text)
+		b.WriteByte(' ')
+		joinStatus(&b, l, sep)
+		gap := w - 1 - lw - rw
+		if rw == 0 {
+			return tui.Truncate(b.String(), w, "…"), gap >= 0
 		}
-		return b.String()
+		if gap < gapMin {
+			return tui.Truncate(b.String(), w, "…"), false
+		}
+		b.WriteString(strings.Repeat(" ", gap))
+		b.WriteString(dir)
+		joinStatus(&b, r, sep)
+		return b.String(), true
 	}
 
-	var left, right string
-	for cut := 0; cut <= dropEffort; cut++ {
-		left, right = join(cut, false), join(cut, true)
-		if cut < dropPath {
-			// The directory takes what room remains, shortened from the front.
-			room := width - 1 - tui.VisibleWidth(left) - 2
-			if right != "" {
-				room -= tui.VisibleWidth(sep) + tui.VisibleWidth(right)
-			}
-			if room >= min(minPath, tui.VisibleWidth(where+branch)) {
-				p := tui.Dim(compressPath(where, room-tui.VisibleWidth(branch)) + branch)
-				if right != "" {
-					p += sep
-				}
-				right = p + right
+	var left, right []statusItem
+	keep := func(cut int) {
+		left, right = left[:0], right[:0]
+		for _, it := range items {
+			switch {
+			case it.drop != 0 && it.drop <= cut:
+			case it.right:
+				right = append(right, it)
+			default:
+				left = append(left, it)
 			}
 		}
-		if 1+tui.VisibleWidth(left)+2+tui.VisibleWidth(right) <= width {
-			break
+	}
+
+	keep(0)
+	if s, ok := row(left, right, first, true); ok {
+		return []string{s}
+	}
+	for cut := 0; ; cut++ {
+		keep(cut)
+		// The first row takes the left items in order while they fit (the
+		// model always); the rest start the second.
+		n, w := 1, left[0].w
+		for ; n < len(left); n++ {
+			add := cmp.Or(len(left[n].pre), sepW) + left[n].w
+			if 1+w+add > first {
+				break
+			}
+			w += add
 		}
+		second, ok := row(left[n:], right, width, cut < dropPath)
+		if !ok && cut < dropEffort {
+			continue
+		}
+		var b strings.Builder
+		b.WriteByte(' ')
+		joinStatus(&b, left[:n], sep)
+		out := []string{tui.Truncate(b.String(), first, "…")}
+		if second != "" {
+			out = append(out, second)
+		}
+		return out
 	}
-	gap := width - 1 - tui.VisibleWidth(left) - tui.VisibleWidth(right)
-	if gap < 2 {
-		return tui.Truncate(" "+left, width, "…")
-	}
-	return " " + left + strings.Repeat(" ", gap) + right
 }
 
 // compressPath shortens p to at most w columns by dropping leading

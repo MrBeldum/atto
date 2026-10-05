@@ -32,27 +32,62 @@ func TestBuiltinStatusWidths(t *testing.T) {
 	price := &ai.ModelCost{ModelCostRates: ai.ModelCostRates{Input: 1, Output: 2}}
 	a := statusApp(t, price)
 
-	row := func(width int) string { return tui.StripEscapes(a.builtinStatus(width)) }
-	wide := row(160)
-	for _, want := range []string{"Orca", "11%", "31.0k/262.0k", "cache 85%", "↑12k", "↓3.4k", "R80k", "W2k", "$0.123", "/work/proj (main)", "fix"} {
-		if !strings.Contains(wide, want) {
-			t.Errorf("wide status lacks %q: %q", want, wide)
+	rows := func(width int) []string {
+		var out []string
+		for _, l := range a.builtinStatus(width, width) {
+			out = append(out, tui.StripEscapes(l))
+		}
+		return out
+	}
+	all := []string{"Orca", "11%", "31.0k/262.0k", "cache 85%", "↑12k", "↓3.4k", "R80k", "W2k", "$0.123", "/work/proj (main)", "fix"}
+	hasAll := func(width int) {
+		t.Helper()
+		s := strings.Join(rows(width), "\n")
+		for _, want := range all {
+			if !strings.Contains(s, want) {
+				t.Errorf("width %d lacks %q: %q", width, want, s)
+			}
 		}
 	}
 
-	// Narrower terminals lose the least important items first.
-	order := []string{"fix", "R80k", "cache 85%", "↑12k", "$0.123", "/work/proj"}
+	// Wide: one row. Narrower: two rows that still hold everything, the
+	// usage on the first and where we are at the right of the second.
+	if r := rows(160); len(r) != 1 {
+		t.Fatalf("width 160 takes one row: %q", r)
+	}
+	hasAll(160)
+	r := rows(100)
+	if len(r) != 2 || !strings.HasSuffix(r[0], "$0.123") || !strings.HasSuffix(r[1], "/work/proj (main) · fix · "+fmtBytes(rssBytes.Load())) || tui.VisibleWidth(r[1]) != 100 {
+		t.Fatalf("width 100: %q", r)
+	}
+	hasAll(100)
+	// The left items that do not fit the first row start the second.
+	r = rows(70)
+	if len(r) != 2 || !strings.HasPrefix(r[1], " R80k W2k · $0.123 ") || strings.Contains(r[0], "R80k") {
+		t.Fatalf("width 70: %q", r)
+	}
+	hasAll(70)
+
+	// Only when two rows cannot hold them are items dropped, least
+	// important first.
+	order := []string{"fix", "R80k", "cache 85%", "↑12k", "$0.123", "proj (main)"}
 	prev := len(order)
-	for width := 160; width >= 20; width -= 4 {
-		s := row(width)
-		if w := tui.VisibleWidth(s); w > width {
-			t.Fatalf("width %d: row is %d wide: %q", width, w, s)
+	for width := 160; width >= 20; width -= 2 {
+		r := rows(width)
+		if len(r) > 2 {
+			t.Fatalf("width %d: more than two rows: %q", width, r)
 		}
-		if !strings.Contains(s, "Orca") {
-			t.Fatalf("width %d: the model is always shown: %q", width, s)
+		for _, l := range r {
+			if w := tui.VisibleWidth(l); w > width {
+				t.Fatalf("width %d: row is %d wide: %q", width, w, l)
+			}
+		}
+		if !strings.Contains(r[0], "Orca") {
+			t.Fatalf("width %d: the model is always first: %q", width, r)
 		}
 		// Count how many of the items in drop order are still there; it
 		// must never grow as the terminal narrows.
+		s := strings.Join(r, "\n")
 		n := 0
 		for _, it := range order {
 			if strings.Contains(s, it) {
@@ -64,22 +99,64 @@ func TestBuiltinStatusWidths(t *testing.T) {
 		}
 		prev = n
 	}
-	if s := row(60); strings.Contains(s, "R80k") || strings.Contains(s, "fix") || !strings.Contains(s, "11%") {
-		t.Errorf("width 60 keeps the bar and drops cache totals and the name: %q", s)
+	if s := strings.Join(rows(50), "\n"); strings.Contains(s, "fix") || !strings.Contains(s, "R80k") || !strings.Contains(s, "proj") {
+		t.Errorf("width 50 drops the name before cache totals and the directory: %q", s)
 	}
-	if s := row(40); strings.Contains(s, "proj") || !strings.Contains(s, "Orca") {
-		t.Errorf("width 40: %q", s)
+	if s := strings.Join(rows(24), "\n"); strings.Contains(s, "proj") || !strings.Contains(s, "11%") {
+		t.Errorf("width 24 keeps the bar over the directory: %q", s)
+	}
+}
+
+// A goal indicator narrows only the first row.
+func TestBuiltinStatusFirstRowNarrower(t *testing.T) {
+	a := statusApp(t, &ai.ModelCost{ModelCostRates: ai.ModelCostRates{Output: 1}})
+	r := a.builtinStatus(60, 120)
+	if len(r) != 2 || tui.VisibleWidth(r[0]) > 60 || tui.VisibleWidth(r[1]) != 120 {
+		t.Fatalf("%q", r)
+	}
+	if s := tui.StripEscapes(strings.Join(r, "\n")); !strings.Contains(s, "$0.123") || !strings.Contains(s, "fix") {
+		t.Fatalf("both rows hold everything: %q", s)
+	}
+}
+
+// Wide characters are measured by their columns.
+func TestBuiltinStatusCJK(t *testing.T) {
+	a := statusApp(t, nil)
+	a.sessName = "버그수정"
+	a.cwd = "/work/프로젝트"
+	for _, width := range []int{120, 80, 60, 40, 30} {
+		for _, l := range a.builtinStatus(width, width) {
+			if w := tui.VisibleWidth(l); w > width {
+				t.Fatalf("width %d: row is %d wide: %q", width, w, tui.StripEscapes(l))
+			}
+		}
+	}
+	if s := tui.StripEscapes(strings.Join(a.builtinStatus(80, 80), "\n")); !strings.Contains(s, "버그수정") || !strings.Contains(s, "프로젝트") {
+		t.Fatalf("width 80 shows the name and directory: %q", s)
+	}
+}
+
+func TestStatusSubscriptionCostIsEstimate(t *testing.T) {
+	a := statusApp(t, &ai.ModelCost{ModelCostRates: ai.ModelCostRates{Output: 5}})
+	if s := tui.StripEscapes(strings.Join(a.builtinStatus(160, 160), "\n")); !strings.Contains(s, " $0.123") {
+		t.Errorf("pay-per-use cost: %q", s)
+	}
+	ref := config.ModelRef{ProviderName: "opencode-go", Provider: config.Provider{Subscription: true},
+		Model: config.Model{ID: "m", Name: "Orca", ContextWindow: 262000, Cost: &ai.ModelCost{ModelCostRates: ai.ModelCostRates{Output: 5}}}}
+	a.agent = agent.New(ref, "", t.TempDir())
+	if s := tui.StripEscapes(strings.Join(a.builtinStatus(160, 160), "\n")); !strings.Contains(s, "≈$0.123") {
+		t.Errorf("subscription cost is an estimate: %q", s)
 	}
 }
 
 func TestStatusCostOnlyWithPrices(t *testing.T) {
 	a := statusApp(t, nil)
 	a.usage.cost = 0
-	if s := tui.StripEscapes(a.builtinStatus(160)); strings.Contains(s, "$") {
+	if s := tui.StripEscapes(strings.Join(a.builtinStatus(160, 160), "\n")); strings.Contains(s, "$") {
 		t.Errorf("a model without prices shows no cost: %q", s)
 	}
 	a = statusApp(t, &ai.ModelCost{ModelCostRates: ai.ModelCostRates{Output: 5}})
-	if s := tui.StripEscapes(a.builtinStatus(160)); !strings.Contains(s, "$0.123") {
+	if s := tui.StripEscapes(strings.Join(a.builtinStatus(160, 160), "\n")); !strings.Contains(s, "$0.123") {
 		t.Errorf("a priced model shows the cost: %q", s)
 	}
 }
@@ -87,7 +164,7 @@ func TestStatusCostOnlyWithPrices(t *testing.T) {
 func TestStatusNoUsageYet(t *testing.T) {
 	a := statusApp(t, nil)
 	a.usage = usageStats{}
-	s := tui.StripEscapes(a.builtinStatus(100))
+	s := tui.StripEscapes(strings.Join(a.builtinStatus(100, 100), "\n"))
 	for _, no := range []string{"↑", "↓", "R0", "W0", "$"} {
 		if strings.Contains(s, no) {
 			t.Errorf("fresh session shows %q: %q", no, s)
