@@ -27,7 +27,7 @@ func contextDir(t *testing.T) string {
 		filepath.Join(proj, ".git", "HEAD"):                       "x",
 		filepath.Join(proj, "AGENTS.md"):                          "Run go test.",
 		filepath.Join(home, ".atto", "skills", "pdf", "SKILL.md"): "---\nname: pdf\ndescription: PDFs\n---\nx",
-		filepath.Join(home, ".atto", "settings.json"):             `{"defaultEffort":"low"}`,
+		filepath.Join(home, ".atto", "settings.json"):             `{"skills":{"disabled":["atto-extensions"]},"defaultEffort":"low"}`,
 		filepath.Join(home, ".atto", "models.json"):               `{"providers":{"t":{"baseUrl":"http://127.0.0.1:9/v1","models":[{"id":"m"}]}}}`,
 		filepath.Join(proj, ".atto", "settings.json"):             `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}`,
 	} {
@@ -165,5 +165,32 @@ func TestReloadCommandPostsRequest(t *testing.T) {
 	reload, rest := events.SplitReload(events.Drain("s1"))
 	if !reload || len(rest) != 0 {
 		t.Fatal("the request is in the session's inbox")
+	}
+}
+
+// The built-in skills show up in atto context, marked as such, and
+// settings.json can turn them off.
+func TestContextBuiltinSkills(t *testing.T) {
+	dir, _ := filepath.EvalSymlinks(t.TempDir())
+	t.Setenv("ATTO_DIR", dir)
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	t.Chdir(dir)
+	var out strings.Builder
+	if err := RunContext(nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "atto-extensions") || !strings.Contains(out.String(), "· builtin") {
+		t.Fatalf("atto context:\n%s", out.String())
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"skills":{"disabled":["atto-extensions"]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := RunContext(nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "atto-extensions") {
+		t.Fatalf("disabled:\n%s", out.String())
 	}
 }

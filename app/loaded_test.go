@@ -43,7 +43,7 @@ func loadedApp(t *testing.T) *App {
 	writeTestFile(t, filepath.Join(dir, "AGENTS.md"), "Global rules.")
 	writeTestFile(t, filepath.Join(dir, "skills", "pdf", "SKILL.md"), "---\nname: pdf\ndescription: Work with PDFs\n---\nx")
 	writeTestFile(t, filepath.Join(dir, "skills", "broken", "SKILL.md"), "---\nname: broken\n---\nx")
-	writeTestFile(t, filepath.Join(dir, "settings.json"), `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"./check.sh"}]}]}}`)
+	writeTestFile(t, filepath.Join(dir, "settings.json"), `{"skills":{"disabled":["atto-extensions"]},"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"./check.sh"}]}]}}`)
 	writeTestFile(t, filepath.Join(cwd, ".git", "HEAD"), "x")
 	writeTestFile(t, filepath.Join(cwd, "AGENTS.md"), "Project rules.")
 	writeTestFile(t, filepath.Join(cwd, "CLAUDE.md"), "Claude rules.")
@@ -178,7 +178,7 @@ func TestReloadCommand(t *testing.T) {
 	}
 
 	writeTestFile(t, filepath.Join(a.cwd, "AGENTS.md"), "Project rules, revised.")
-	writeTestFile(t, filepath.Join(config.Dir(), "settings.json"), `{"doubleEscapeAction":"none"}`)
+	writeTestFile(t, filepath.Join(config.Dir(), "settings.json"), `{"skills":{"disabled":["atto-extensions"]},"doubleEscapeAction":"none"}`)
 	a.ui.Do(func() { a.runCommand("/reload") })
 	bs = loadedBlocks(a)
 	got = plainLines(bs[len(bs)-1].Render(80))

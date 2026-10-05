@@ -11,6 +11,7 @@ import (
 func TestReloadRebuildsPromptOnlyOnChange(t *testing.T) {
 	repo, cwd, dir := project(t)
 	write(t, filepath.Join(repo, ".git", "HEAD"), "x")
+	write(t, filepath.Join(dir, "settings.json"), `{"skills":{"disabled":["atto-extensions"]}}`)
 	write(t, filepath.Join(repo, "AGENTS.md"), "first rules")
 	a := New(newTestAgent("http://x").model, "", cwd)
 	a.SetStart(time.Date(2026, 1, 2, 3, 0, 0, 0, time.Local))

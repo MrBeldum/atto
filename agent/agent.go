@@ -390,6 +390,12 @@ func (a *Agent) scan(start time.Time) (Sources, string) {
 	home, _ := os.UserHomeDir()
 	dirs := skills.Dirs(config.SkillsDir(), projectRoot(a.Cwd), home)
 	sk, issues := skills.LoadIssues(dirs)
+	var disabled []string
+	if st, _ := config.LoadSettings(); st.Skills != nil {
+		disabled = st.Skills.Disabled
+	}
+	sk, bissues := skills.WithBuiltin(sk, config.SkillsCacheDir(), disabled)
+	issues = append(issues, bissues...)
 	files, skipped := scanInstructions(a.Cwd)
 	var mcp []string
 	if a.MCP != nil {

@@ -6,7 +6,7 @@ add slash commands, and show things in the TUI. atto compiles it with esbuild
 and runs it in an embedded JavaScript engine (goja); there is no Node.js, so
 `require`, `process` and npm modules that need Node are not available.
 
-`atto extensions docs` prints this file; `atto extensions types` prints
+`atto extensions docs` prints this file; `atto extensions source diff` prints the source of the built-in `/diff`, a small example; `atto extensions types` prints
 `atto.d.ts`, the API's type declarations.
 
 ## Where they live

@@ -59,8 +59,12 @@ func ImagesDir() string     { return filepath.Join(Dir(), "images") }
 func ExtensionsDir() string { return filepath.Join(Dir(), "extensions") }
 func PromptsDir() string    { return filepath.Join(Dir(), "prompts") }
 func SkillsDir() string     { return filepath.Join(Dir(), "skills") }
-func ThemesDir() string     { return filepath.Join(Dir(), "themes") }
-func BinDir() string        { return filepath.Join(Dir(), "bin") }
+
+// SkillsCacheDir is where the built-in skills are written, so the model
+// can read them as files (see package skills).
+func SkillsCacheDir() string { return filepath.Join(Dir(), "cache", "skills") }
+func ThemesDir() string      { return filepath.Join(Dir(), "themes") }
+func BinDir() string         { return filepath.Join(Dir(), "bin") }
 
 // Ensure creates the root and its subdirectories if missing.
 func Ensure() error {
@@ -102,6 +106,8 @@ type Settings struct {
 	BranchSummary *BranchSummary `json:"branchSummary,omitempty"`
 	// Extensions configures JavaScript extensions (package extensions).
 	Extensions *ExtensionSettings `json:"extensions,omitempty"`
+	// Skills configures skills.
+	Skills *SkillSettings `json:"skills,omitempty"`
 	// ToolOutputTokenLimit caps how much of a command's output goes back to
 	// the model, in tokens (about 4 bytes each), as codex's
 	// tool_output_token_limit. 0 means the default, 10000. The cut is in
@@ -120,6 +126,12 @@ type Settings struct {
 type RemoteSettings struct {
 	// Port is where /remote listens (all interfaces); default 7879.
 	Port int `json:"port,omitempty"`
+}
+
+// SkillSettings is settings.json's "skills".
+type SkillSettings struct {
+	// Disabled names built-in skills not to load.
+	Disabled []string `json:"disabled,omitempty"`
 }
 
 // ExtensionSettings is settings.json's "extensions".
