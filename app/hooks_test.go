@@ -1,5 +1,3 @@
-//go:build !windows
-
 package app
 
 import (
@@ -19,6 +17,7 @@ import (
 	"github.com/sebastianrcnt/atto/events"
 	"github.com/sebastianrcnt/atto/goal"
 	"github.com/sebastianrcnt/atto/hooks"
+	"github.com/sebastianrcnt/atto/hooks/hooktest"
 )
 
 // hookedApp is a treeApp whose session has command hooks that append
@@ -29,7 +28,7 @@ func hookedApp(t *testing.T, baseURL string, hookEvents ...string) (*App, string
 	log := filepath.Join(t.TempDir(), "hooks.log")
 	cfg := map[string][]config.HookMatcher{}
 	for _, ev := range hookEvents {
-		cfg[ev] = []config.HookMatcher{{Hooks: []config.HookSpec{{Type: "command", Command: "cat >> " + log + "; echo >> " + log}}}}
+		cfg[ev] = []config.HookMatcher{{Hooks: []config.HookSpec{{Type: "command", Command: hooktest.LogStdin(log)}}}}
 	}
 	a.hooks = hooks.New(cfg, a.cwd)
 	if baseURL != "" {

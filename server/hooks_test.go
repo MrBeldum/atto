@@ -1,5 +1,3 @@
-//go:build !windows
-
 package server
 
 import (
@@ -10,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/sebastianrcnt/atto/hooks/hooktest"
 )
 
 // A Stop hook that blocks once keeps the thread's turn going and shows as
@@ -19,9 +19,9 @@ func TestServerStopAndSessionEndHooks(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "end.log")
 	settings := map[string]any{"hooks": map[string]any{
 		"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command",
-			"command": `grep -q '"stop_hook_active":true' && exit 0; echo "run the tests" >&2; exit 2`}}}},
+			"command": hooktest.StopOnce("run the tests")}}}},
 		"SessionEnd": []any{map[string]any{"hooks": []any{map[string]any{"type": "command",
-			"command": "cat >> " + log}}}},
+			"command": hooktest.LogStdinNoNewline(log)}}}},
 	}}
 	raw, _ := json.Marshal(settings)
 	if err := os.MkdirAll(filepath.Join(work, ".atto"), 0o755); err != nil {

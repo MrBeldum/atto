@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/sebastianrcnt/atto/shell"
 )
 
 // pieces streams a chat completions tool call: the first piece starts it
@@ -137,7 +139,7 @@ func TestDraftsEndWhenCallsDoNotRun(t *testing.T) {
 		}
 	}
 	wantEnded := []string{
-		`draftend 0 "unknown tool \"frobnicate\"; the only tool is bash"`,
+		`draftend 0 "unknown tool \"frobnicate\"; the only tool is ` + shell.Default().ToolName() + `"`,
 		`draftend 1 "command is empty"`,
 	}
 	if !reflect.DeepEqual(ended, wantEnded) {

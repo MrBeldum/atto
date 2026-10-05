@@ -1,5 +1,3 @@
-//go:build !windows
-
 package cli
 
 import (
@@ -8,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sebastianrcnt/atto/hooks/hooktest"
 )
 
 // atto -p runs Stop hooks at the end of each turn (a block continues it)
@@ -21,8 +21,8 @@ func TestRunPrintStopAndSessionEndHooks(t *testing.T) {
 		return []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command}}}}
 	}
 	raw, _ := json.Marshal(map[string]any{"hooks": map[string]any{
-		"Stop":       hook(`grep -q '"stop_hook_active":true' && exit 0; echo "run the tests" >&2; exit 2`),
-		"SessionEnd": hook("cat >> " + log + "; echo >> " + log),
+		"Stop":       hook(hooktest.StopOnce("run the tests")),
+		"SessionEnd": hook(hooktest.LogStdin(log)),
 	}})
 	if err := os.MkdirAll(filepath.Join(cwd, ".atto"), 0o755); err != nil {
 		t.Fatal(err)

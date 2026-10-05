@@ -1,5 +1,3 @@
-//go:build !windows
-
 package hooks
 
 import (
@@ -17,12 +15,38 @@ import (
 
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/hooks/hooktest"
 )
+
+// Non-ASCII text survives the trip into a hook's stdin and out of its stdout.
+func TestHookUTF8(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "in.json")
+	r := New(cmd("UserPromptSubmit", "", hooktest.WriteStdinThenEchoText(out, "안녕 세계 héllo")), dir)
+	o := r.UserPromptSubmit(context.Background(), "테스트 ✓ café")
+	if o.Context != "안녕 세계 héllo" {
+		t.Fatalf("hook output garbled: %q (%+v)", o.Context, o)
+	}
+	if got := readLines(t, out); len(got) != 1 || got[0]["prompt"] != "테스트 ✓ café" {
+		t.Fatalf("hook input garbled: %v", got)
+	}
+}
+
+// A timeout returns promptly even when the hook left a child holding its output.
+func TestHookTimeoutWithChildProcess(t *testing.T) {
+	cfg := map[string][]config.HookMatcher{"SessionEnd": {{Hooks: []config.HookSpec{{Type: "command", Command: hooktest.SpawnSleeper(), Timeout: 1}}}}}
+	r := New(cfg, t.TempDir())
+	start := time.Now()
+	n := r.SessionEnd(context.Background(), "exit")
+	if time.Since(start) > 10*time.Second || len(n) != 1 || !strings.Contains(n[0], "timed out") {
+		t.Fatalf("hook should time out quickly: %v after %s", n, time.Since(start))
+	}
+}
 
 // Tests for Stop continuation, SessionEnd and Notification.
 
 func logHook(event, matcher, log string) map[string][]config.HookMatcher {
-	return cmd(event, matcher, "cat >> "+log+"; echo >> "+log)
+	return cmd(event, matcher, hooktest.LogStdin(log))
 }
 
 func readLines(t *testing.T, path string) []map[string]any {
@@ -67,11 +91,11 @@ func TestSessionEndInputAndMatcher(t *testing.T) {
 }
 
 func TestSessionEndCannotBlockAndNilRunner(t *testing.T) {
-	r := New(cmd("SessionEnd", "", `echo '{"decision":"block","reason":"no"}'; echo bye >&2; exit 2`), t.TempDir())
+	r := New(cmd("SessionEnd", "", hooktest.BlockedByDecisionAndExit2()), t.TempDir())
 	if n := r.SessionEnd(context.Background(), "exit"); len(n) != 0 {
 		t.Fatalf("blocking output is ignored, got notices %v", n)
 	}
-	r = New(cmd("SessionEnd", "", "exit 1"), t.TempDir())
+	r = New(cmd("SessionEnd", "", hooktest.Exit1()), t.TempDir())
 	if n := r.SessionEnd(context.Background(), "exit"); len(n) != 1 {
 		t.Fatalf("errors are notices: %v", n)
 	}
@@ -81,7 +105,7 @@ func TestSessionEndCannotBlockAndNilRunner(t *testing.T) {
 }
 
 func TestSessionEndTimeout(t *testing.T) {
-	cfg := map[string][]config.HookMatcher{"SessionEnd": {{Hooks: []config.HookSpec{{Type: "command", Command: "sleep 30", Timeout: 1}}}}}
+	cfg := map[string][]config.HookMatcher{"SessionEnd": {{Hooks: []config.HookSpec{{Type: "command", Command: hooktest.Sleep30(), Timeout: 1}}}}}
 	r := New(cfg, t.TempDir())
 	start := time.Now()
 	n := r.SessionEnd(context.Background(), "exit")
@@ -146,7 +170,7 @@ func TestStopHookCap(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "stop")
 	url, requests := modelServer(t, sayDone)
-	cfg := cmd("Stop", "", "cat >> "+log+"; echo >> "+log+`; echo '{"decision":"block","reason":"again"}'`)
+	cfg := cmd("Stop", "", hooktest.LogStdinThenBlock(log))
 	a := newAgent(url, cfg, dir)
 	var notices []agent.HookNotice
 	if err := a.Run(context.Background(), "go", func(ev any) {
@@ -183,7 +207,7 @@ func TestStopHookCap(t *testing.T) {
 func TestStopHookExit2ThenAllows(t *testing.T) {
 	dir := t.TempDir()
 	url, requests := modelServer(t, sayDone)
-	cfg := cmd("Stop", "", `grep -q '"stop_hook_active":true' && exit 0; echo "run the linter" >&2; exit 2`)
+	cfg := cmd("Stop", "", hooktest.StopOnce("run the linter"))
 	a := newAgent(url, cfg, dir)
 	if err := a.Run(context.Background(), "go", func(any) {}); err != nil {
 		t.Fatal(err)

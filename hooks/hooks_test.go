@@ -1,5 +1,3 @@
-//go:build !windows
-
 package hooks
 
 import (
@@ -16,6 +14,7 @@ import (
 
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/hooks/hooktest"
 )
 
 func cmd(event, matcher, command string) map[string][]config.HookMatcher {
@@ -23,7 +22,7 @@ func cmd(event, matcher, command string) map[string][]config.HookMatcher {
 }
 
 func TestPreToolUseExit2Blocks(t *testing.T) {
-	r := New(cmd("PreToolUse", "Bash", `grep -q 'rm -rf' && { echo "no rm -rf" >&2; exit 2; } || exit 0`), t.TempDir())
+	r := New(cmd("PreToolUse", "Bash", hooktest.BlockRmRf()), t.TempDir())
 	_, o := r.PreToolUse(context.Background(), agent.BashArgs{Command: "rm -rf /tmp/x"})
 	if !o.Block || o.Reason != "no rm -rf" {
 		t.Fatalf("expected block: %+v", o)
@@ -35,18 +34,18 @@ func TestPreToolUseExit2Blocks(t *testing.T) {
 }
 
 func TestPreToolUseJSONDecisionAndUpdatedInput(t *testing.T) {
-	r := New(cmd("PreToolUse", "", `echo '{"hookSpecificOutput":{"permissionDecision":"allow","updatedInput":{"command":"ls -la"}}}'`), t.TempDir())
+	r := New(cmd("PreToolUse", "", hooktest.EchoUpdatedInput()), t.TempDir())
 	args, o := r.PreToolUse(context.Background(), agent.BashArgs{Command: "ls"})
 	if o.Block || args.Command != "ls -la" {
 		t.Fatalf("got %+v %+v", args, o)
 	}
-	r = New(cmd("PreToolUse", "bash|edit", `echo '{"hookSpecificOutput":{"permissionDecision":"ask","permissionDecisionReason":"needs review"}}'`), t.TempDir())
+	r = New(cmd("PreToolUse", "bash|edit", hooktest.EchoAsk()), t.TempDir())
 	_, o = r.PreToolUse(context.Background(), agent.BashArgs{Command: "ls"})
 	if !o.Block || !strings.Contains(o.Reason, "needs review") {
 		t.Fatalf("ask should deny: %+v", o)
 	}
 	// A matcher for another tool does not run.
-	r = New(cmd("PreToolUse", "Write", `exit 2`), t.TempDir())
+	r = New(cmd("PreToolUse", "Write", hooktest.Exit2()), t.TempDir())
 	if _, o = r.PreToolUse(context.Background(), agent.BashArgs{Command: "ls"}); o.Block {
 		t.Fatal("non-matching hook ran")
 	}
@@ -55,7 +54,7 @@ func TestPreToolUseJSONDecisionAndUpdatedInput(t *testing.T) {
 func TestHookInputAndErrors(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "in.json")
-	r := New(cmd("UserPromptSubmit", "", "cat > "+out+"; echo 'remember: be brief'"), dir)
+	r := New(cmd("UserPromptSubmit", "", hooktest.WriteStdinThenEcho(out)), dir)
 	r.SetSession("s1", "/t.jsonl")
 	o := r.UserPromptSubmit(context.Background(), "hello")
 	if o.Context != "remember: be brief" {
@@ -67,7 +66,7 @@ func TestHookInputAndErrors(t *testing.T) {
 	if in["prompt"] != "hello" || in["session_id"] != "s1" || in["hook_event_name"] != "UserPromptSubmit" || in["cwd"] != dir {
 		t.Fatalf("input %v", in)
 	}
-	r = New(cmd("Stop", "", "echo oops >&2; exit 1"), dir)
+	r = New(cmd("Stop", "", hooktest.OopsExit1()), dir)
 	if o := r.Stop(context.Background(), false); o.Block || len(o.Notices) != 1 {
 		t.Fatalf("exit 1 should be a non-blocking notice: %+v", o)
 	}
@@ -111,9 +110,9 @@ func TestAgentWithHooks(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg := cmd("PreToolUse", "Bash", `echo "destructive" >&2; exit 2`)
+	cfg := cmd("PreToolUse", "Bash", hooktest.DestructiveExit2())
 	cfg["Stop"] = []config.HookMatcher{{Hooks: []config.HookSpec{{Type: "command",
-		Command: `grep -q '"stop_hook_active":false' && echo '{"decision":"block","reason":"run the tests first"}' || true`}}}}
+		Command: hooktest.BlockOnFirstStop()}}}}
 	a := agent.New(config.ModelRef{Provider: config.Provider{BaseURL: srv.URL}, Model: config.Model{ID: "m"}}, "", t.TempDir())
 	a.Hooks = New(cfg, t.TempDir())
 	var notices []string

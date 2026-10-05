@@ -109,9 +109,10 @@ func (s Shell) ToolName() string {
 	return "bash"
 }
 
-// utf8Prelude makes Windows PowerShell write UTF-8 to pipes; by default it
-// uses the OEM code page (e.g. CP949 on Korean Windows), garbling output.
-const utf8Prelude = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; "
+// utf8Prelude makes Windows PowerShell read and write UTF-8 on pipes; by
+// default it uses the OEM code page (e.g. CP949 on Korean Windows),
+// garbling output and any JSON a hook reads from stdin.
+const utf8Prelude = "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; "
 
 // Args returns the argv that runs script with this shell.
 func (s Shell) Args(script string) []string {
