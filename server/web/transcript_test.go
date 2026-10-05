@@ -85,17 +85,20 @@ s.upsert({id: "d", type: "commandExecution", status: "inProgress", pending: true
 var r3 = s.running();
 `)
 	for expr, want := range map[string]any{
-		"r1":                             true,
-		"r2":                             false,
-		"r3":                             false, // still being written, not running
-		"outLen <= 2 * tr.KEEP_OUTPUT":   true,
-		"outLen >= tr.KEEP_OUTPUT":       true,
-		"s.blocks().length":              int64(1),
-		"(s.reset(), s.blocks().length)": int64(0),
+		"r1":                           true,
+		"r2":                           false,
+		"r3":                           false, // still being written, not running
+		"outLen <= 2 * tr.KEEP_OUTPUT": true,
+		"outLen >= tr.KEEP_OUTPUT":     true,
+		"s.blocks().length":            int64(1),
 	} {
 		if got := run(expr); got != want {
 			t.Errorf("%s = %v, want %v", expr, got, want)
 		}
+	}
+	// Last: reset changes the state the checks above read (map order is random).
+	if got := run("(s.reset(), s.blocks().length)"); got != int64(0) {
+		t.Errorf("after reset: %v blocks", got)
 	}
 }
 
