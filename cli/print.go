@@ -19,6 +19,7 @@ import (
 
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/extensions"
 	"github.com/sebastianrcnt/atto/goal"
 	"github.com/sebastianrcnt/atto/images"
 	"github.com/sebastianrcnt/atto/provider"
@@ -233,7 +234,12 @@ func RunPrint(o PrintOptions) error {
 		return err
 	}
 	ag.MaxSteps = o.MaxSteps
+	// Extensions have no UI here: notices go to stderr, dialogs get their
+	// default answers, and sendMessage steers the run.
+	ext := core.LoadExtensions(ag, &extensions.Headless{Out: os.Stderr, Send: ag.Steer})
+	defer ext.Close()
 	core.Bind(ag, hk, sess, start, !o.NoSave)
+	ext.SessionStart(source)
 	if hk != nil {
 		for _, n := range hk.SessionStart(context.Background(), source) {
 			fmt.Fprintln(os.Stderr, n)
@@ -332,6 +338,7 @@ func RunPrint(o PrintOptions) error {
 			fmt.Fprintln(os.Stderr, n)
 		}
 	}
+	ext.SessionEnd("other")
 	p.flushStep()
 	res.DurationMs = time.Since(began).Milliseconds()
 	res.Result = strings.TrimSpace(p.lastText)

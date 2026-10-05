@@ -156,7 +156,8 @@ To use the terminal's own selection instead, hold the key that bypasses mouse re
 | `/compact` | compact the conversation now |
 | `/copy` | copy the last answer; works over SSH in terminals with OSC 52 |
 | `/context` | show what fills the context and how much is cached |
-| `/reload` | read AGENTS.md, skills, hooks, `settings.json` and `models.json` again, keeping the conversation |
+| `/reload` | read AGENTS.md, skills, hooks, extensions, `settings.json` and `models.json` again, keeping the conversation |
+| `/extensions [approve <name>]` | list extensions, or approve a project extension |
 | `/resume` | resume a saved session |
 | `/tree` | go back to any point of the session; earlier branches are kept |
 | `/fork` | start a new session from an earlier message |
@@ -176,9 +177,9 @@ To use the terminal's own selection instead, hold the key that bypasses mouse re
 - `atto job start` runs a command in the background. With `-notify REGEXP` (and `-notify-limit N`, default 50) each matching output line wakes the agent while the job keeps running; matches within a second are batched.
 - `atto monitor` and `atto timer` wake the agent when something happens. `atto timer every 30m [-count N] [-until HH:MM|duration] <message>` repeats (minimum 1m, no drift; missed intervals fire once).
 - `atto goal complete` reports that a goal is done.
-- `atto reload` reloads the session's AGENTS.md files, skills, hooks and settings after the agent edited them; the result comes back as an `[atto event]`.
+- `atto reload` reloads the session's AGENTS.md files, skills, hooks, extensions and settings after the agent edited them; the result comes back as an `[atto event]`.
 
-**Nothing loads unseen.** When a session starts, resumes or forks, the conversation opens with a dim "Loaded" block: the AGENTS.md (or AGENTS.override.md, CLAUDE.md) files in the system prompt with their sizes (and whether the 32 KiB cap cut them), files that were found but skipped and why, the skills and where they came from, the hooks, the settings and models files read, and the model and effort with where each came from (`-m`, the session, `settings.json`). Click its header or press `Ctrl+T` for the full list. `/reload` shows it again with what changed. The same report:
+**Nothing loads unseen.** When a session starts, resumes or forks, the conversation opens with a dim "Loaded" block: the AGENTS.md (or AGENTS.override.md, CLAUDE.md) files in the system prompt with their sizes (and whether the 32 KiB cap cut them), files that were found but skipped and why, the skills and where they came from, the hooks, the extensions, the settings and models files read, and the model and effort with where each came from (`-m`, the session, `settings.json`). Click its header or press `Ctrl+T` for the full list. `/reload` shows it again with what changed. The same report:
 
 - `atto context` prints it for the current directory (`-json` for the data).
 - `atto -p -v` prints the one-line-per-kind summary to stderr at the start, and stream-json's `init` event has it as `context`.
@@ -214,6 +215,25 @@ atto sessions delete [-y] <id>       permanent: also removes its jobs, inbox, go
 - `Notification` runs when atto wants your attention, with `message` and `notification_type`; the matcher is tested against the type. It cannot block. The TUI sends `idle_prompt` when a turn that took 15 seconds or more is done and atto waits for your input (not when a queued message or a goal turn follows), `background_event` when a job or timer event arrives while atto is idle, and `goal_blocked` when a goal becomes blocked. There are no permission prompts, so no such notification. `-p` and the servers send none.
 - Hook messages, such as the reason of a blocked Stop, appear in the transcript, and as `hook` events in `-p --output-format stream-json`.
 
+**Extensions** are TypeScript or JavaScript files, often written by the agent itself, that atto runs in an embedded engine (no Node.js needed). They can block or rewrite the agent's commands, rewrite what the model sees of their output (to redact secrets, say), add to prompts, add slash commands, and show status items, widgets and dialogs in the TUI.
+
+```ts
+// ~/.atto/extensions/no-force-push.ts
+export default function (atto) {
+  atto.on("tool_call", (e) => /git push.*--force/.test(e.command) ? { block: true, reason: "no force-push" } : undefined);
+  atto.registerCommand("todo", {
+    description: "Count TODOs",
+    handler: async (args, ctx) => ctx.ui.notify((await atto.exec("git grep -c TODO || true")).stdout || "none"),
+  });
+}
+```
+
+- Put them in `~/.atto/extensions/` (`name.ts`, or `name/index.ts` with files it imports) or the project's `.atto/extensions/`. Project extensions run only after you approve them (`/extensions approve <name>` or `atto extensions approve <name>`); a change needs approval again.
+- `/reload` (or `atto reload`) loads changes; the Loaded block shows each extension's status, commands and events, and errors with `file:line`.
+- Events: `session_start`, `session_end`, `turn_start`, `turn_end`, `user_prompt`, `tool_call`, `tool_result`. They run inside the hooks: `PreToolUse` hooks, then `tool_call`, the command, `tool_result`, then `PostToolUse` hooks.
+- Also `atto.exec`, `atto.fs`, `fetch`, timers, `atto.sendMessage`; dialogs and widgets are TUI-only (in `-p` and the server, dialogs get default answers).
+- `atto extensions docs` prints the guide ([docs/extensions.md](docs/extensions.md)), `atto extensions types` the type declarations, `atto extensions` the list. A handler that hangs is skipped after 5 seconds and a runaway script is stopped and its extension disabled; atto goes on.
+
 **Front end and back end are separate.** Both servers speak the same JSON-RPC protocol, built around threads, turns and items:
 
 - `atto serve` serves it over HTTP + SSE and includes a web client, so you can use atto from a phone.
@@ -233,7 +253,8 @@ Everything lives in `~/.atto`. Set `ATTO_DIR` to move it.
 
 | Path | Contents |
 | --- | --- |
-| `settings.json` | default model and effort, renderer, `mouse`, status line, hooks, `updateCheck`, `doubleEscapeAction` (`tree`, `fork` or `none`), `branchSummary.skipPrompt`, `toolOutputTokenLimit` (how much of a command's output the model gets, default 10000 tokens; the middle is cut and the full output saved to a file, as in codex), `backgroundExit` (experimental: `false` turns off the exit menu that offers "Run in background" while a turn runs) |
+| `settings.json` | default model and effort, renderer, `mouse`, status line, hooks, `updateCheck`, `doubleEscapeAction` (`tree`, `fork` or `none`), `branchSummary.skipPrompt`, `toolOutputTokenLimit` (how much of a command's output the model gets, default 10000 tokens; the middle is cut and the full output saved to a file, as in codex), `backgroundExit` (experimental: `false` turns off the exit menu that offers "Run in background" while a turn runs), `extensions` (`disabled` names, handler `timeout` in seconds) |
+| `extensions/` | your extensions; `extension-approvals.json` holds approved project extensions, `extensions.log` their logs |
 | `models.json` | your providers and models |
 | `auth.json` | keys and logins (mode 0600) |
 | `sessions/` | saved sessions |

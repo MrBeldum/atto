@@ -15,6 +15,7 @@ import (
 	"github.com/sebastianrcnt/atto/core"
 	"github.com/sebastianrcnt/atto/core/transcript"
 	"github.com/sebastianrcnt/atto/events"
+	"github.com/sebastianrcnt/atto/extensions"
 	"github.com/sebastianrcnt/atto/hooks"
 	"github.com/sebastianrcnt/atto/images"
 	"github.com/sebastianrcnt/atto/provider"
@@ -91,6 +92,7 @@ type thread struct {
 	agent     *agent.Agent
 	sess      *session.Writer
 	hooks     *hooks.Runner
+	ext       *extensions.Manager
 	hookSrc   []config.HookSource
 	loaded    core.Loaded        // what it loaded, as of the last reload
 	tr        transcript.Builder // used by the running turn, or by restore while idle
@@ -127,6 +129,14 @@ func (s *Server) Close() {
 			go func() {
 				defer ending.Done()
 				t.hooks.SessionEnd(context.Background(), "other")
+			}()
+		}
+		if t.ext != nil {
+			ending.Add(1)
+			go func() {
+				defer ending.Done()
+				t.ext.SessionEnd("other")
+				t.ext.Close()
 			}()
 		}
 	}
@@ -311,8 +321,14 @@ func (s *Server) newThread(cwd string, model config.ModelRef, effort string, fil
 	if err != nil {
 		return nil, err
 	}
-	core.Bind(ag, hk, file, start, true)
 	t := &thread{id: file.ID, cwd: cwd, agent: ag, sess: file, hooks: hk, hookSrc: src}
+	// Extensions have no UI here: notices go to the client as
+	// extension/notify, dialogs get their default answers, and
+	// sendMessage steers the thread's turn.
+	t.ext = core.LoadExtensions(ag, &extensions.Headless{Send: ag.Steer, OnNotify: func(ext, text, level string) {
+		s.notify(t, "extension/notify", map[string]any{"extension": ext, "message": text, "level": level})
+	}})
+	core.Bind(ag, hk, file, start, true)
 	t.loaded = core.Collect(ag, src, modelFrom, effortFrom)
 	t.tr.IDPrefix = itemPrefix(t.id)
 	s.mu.Lock()
@@ -352,6 +368,9 @@ func (s *Server) startThread(p threadParams) (any, error) {
 }
 
 func (s *Server) sessionStart(t *thread, source string) {
+	if t.ext != nil {
+		t.ext.SessionStart(source)
+	}
 	if t.hooks == nil {
 		return
 	}

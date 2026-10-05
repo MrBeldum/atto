@@ -40,6 +40,7 @@
 //	hook           {event, message, blocked}  (also a hook item during a turn)
 //	event          {title}  (inbox event delivered to the thread)
 //	thread/reloaded {context, changes, promptChanged, error?}  (atto reload run by the agent)
+//	extension/notify {extension, message, level}  (ctx.ui.notify; extensions have no other UI here)
 //	turn/completed {turnId, status, error?, usage, contextTokens}
 package server
 

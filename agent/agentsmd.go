@@ -45,7 +45,10 @@ type SkippedInstruction struct {
 // projectRoot walks up from cwd to the first directory holding .git (a
 // directory, or a file in worktrees and submodules), as codex does. Without
 // one the project is just cwd.
-func projectRoot(cwd string) string {
+func projectRoot(cwd string) string { return ProjectRoot(cwd) }
+
+// ProjectRoot is the project cwd belongs to (see projectRoot).
+func ProjectRoot(cwd string) string {
 	for dir := cwd; ; {
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 			return dir

@@ -28,7 +28,8 @@ func init() {
 		{"compact", "", "Compact the conversation into handoff notes", (*App).cmdCompact},
 		{"copy", "", "Copy the last answer (works over SSH via OSC 52)", (*App).cmdCopy},
 		{"context", "[system]", "Show what fills the context and cache use", (*App).cmdContext},
-		{"reload", "", "Re-read AGENTS.md, skills, hooks, settings and models", (*App).cmdReload},
+		{"reload", "", "Re-read AGENTS.md, skills, hooks, extensions, settings and models", (*App).cmdReload},
+		{"extensions", "[approve <name>]", "List extensions, or approve a project extension", (*App).cmdExtensions},
 		{"request", "", "Save the raw last request to a file", (*App).cmdRequest},
 		{"debug", "", "Save a heap profile and memory figures to ~/.atto/debug", (*App).cmdDebug},
 		{"login", "[provider]", "Sign in with an account or save an API key", (*App).cmdLogin},
@@ -138,6 +139,7 @@ func (a *App) allCommands() []command {
 	}
 	sk, _ := a.agent.Skills()
 	all := slices.Clone(commands)
+	all = append(all, a.extensionCommands()...)
 	for _, s := range sk {
 		all = append(all, command{"skill:" + s.Name, "[text]", s.Description, (*App).cmdSkill})
 	}
@@ -174,7 +176,9 @@ func (a *App) runCommand(text string) {
 	name, arg, _ := strings.Cut(strings.TrimPrefix(text, "/"), " ")
 	arg = strings.TrimSpace(arg)
 	var match []command
-	for _, c := range commands {
+	// Built-in commands first, then the extensions': an exact name wins,
+	// else a unique prefix.
+	for _, c := range append(slices.Clone(commands), a.extensionCommands()...) {
 		if c.name == name {
 			match = []command{c}
 			break

@@ -17,6 +17,7 @@ import (
 	"github.com/sebastianrcnt/atto/core"
 	"github.com/sebastianrcnt/atto/core/transcript"
 	"github.com/sebastianrcnt/atto/events"
+	"github.com/sebastianrcnt/atto/extensions"
 	"github.com/sebastianrcnt/atto/hooks"
 	"github.com/sebastianrcnt/atto/images"
 	"github.com/sebastianrcnt/atto/provider"
@@ -50,6 +51,10 @@ type App struct {
 	agent  *agent.Agent
 	sess   *session.Writer
 	hooks  *hooks.Runner // nil when no hooks are configured
+	// ext runs the session's extensions (nil in tests that need none);
+	// extUI is what they show.
+	ext   *extensions.Manager
+	extUI extUI
 	// hookSrc are the settings files the hooks came from, loaded what the
 	// session loaded (the "Loaded" block), and modelFrom/effortFrom where
 	// the model and effort in use came from.
@@ -190,6 +195,7 @@ func Run(opts Options) error {
 	a.skipSummary = settings.BranchSummary != nil && settings.BranchSummary.SkipPrompt
 	a.ui.NoMouse = mouseDisabled(settings.Mouse, os.Getenv)
 	a.build()
+	a.ext = core.LoadExtensions(ag, newTUIHost(a))
 	if noModels {
 		// First run: start anyway and say how to get a model, like pi.
 		a.notice("%s", core.NoModelsHint())
@@ -246,6 +252,9 @@ func Run(opts Options) error {
 	a.ui.Stop()
 	a.sess.Close()
 	if a.printExit() { // the run goes on in the background
+		if a.ext != nil {
+			a.ext.Close() // the session's extensions run on there; no session_end
+		}
 		return nil
 	}
 	if n := a.leaveCore(); n > 0 {
@@ -255,6 +264,10 @@ func Run(opts Options) error {
 		for _, n := range a.hooks.SessionEnd(context.Background(), "exit") {
 			fmt.Fprintln(os.Stderr, n)
 		}
+	}
+	if a.ext != nil {
+		a.ext.SessionEnd("exit")
+		a.ext.Close()
 	}
 	return nil
 }
@@ -267,7 +280,7 @@ func (a *App) build() {
 
 	// The command list sits above the input, as in Claude Code, so the
 	// input and the status line keep their place as it opens and closes.
-	a.ui.Footer.Add(tui.Func(a.renderActivity), tui.Func(a.renderPending), jumpPill{a}, tui.Func(a.renderReadOnly), tui.Func(a.renderSuggestions), tui.Func(a.renderInput), tui.Func(a.renderStatus))
+	a.ui.Footer.Add(tui.Func(a.renderActivity), tui.Func(a.renderPending), jumpPill{a}, tui.Func(a.renderReadOnly), tui.Func(a.renderWidgets), tui.Func(a.renderSuggestions), tui.Func(a.renderInput), tui.Func(a.renderStatus))
 	a.ui.SetFocus(a.editor)
 	a.ui.OnInput = a.onInput
 	a.ui.OnCopy = a.copySelection
@@ -309,6 +322,9 @@ func (a *App) newSession(reason string) {
 // by a short timeout): the hooks must see the session being left, which the
 // next Bind replaces.
 func (a *App) sessionEndHook(reason string) {
+	if a.ext != nil {
+		a.ext.SessionEnd(reason)
+	}
 	if a.hooks == nil {
 		return
 	}
@@ -339,6 +355,9 @@ func (a *App) notify(kind, message string) {
 
 // sessionStartHook runs SessionStart hooks in the background.
 func (a *App) sessionStartHook(source string) {
+	if a.ext != nil {
+		a.ext.SessionStart(source)
+	}
 	if a.hooks == nil {
 		return
 	}

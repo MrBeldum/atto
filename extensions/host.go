@@ -1,0 +1,88 @@
+package extensions
+
+import (
+	"fmt"
+	"io"
+	"sync"
+)
+
+// Host is what a front end gives extensions: its UI and a way to talk to
+// the model. Methods are called from extension goroutines and must not
+// block on the front end's own goroutine (queue the work instead): the
+// front end may be waiting for an extension when they are called. ext is
+// the extension's name, which owns its status items and widgets.
+type Host interface {
+	// HasUI is true in the TUI; ctx.hasUI tells extensions.
+	HasUI() bool
+	// Notify shows text; level is "info", "warning" or "error".
+	Notify(ext, text, level string)
+	// SetStatus sets the status line item key ("" removes it).
+	SetStatus(ext, key, text string)
+	// SetWidget sets the band of lines key above the input (nil removes it).
+	SetWidget(ext, key string, lines []string)
+	// Ask shows q and calls answer once, from any goroutine, with the
+	// choice (a string, nil when canceled) for "select" and "input", or a
+	// bool for "confirm".
+	Ask(ext string, q Question, answer func(any))
+	// ClearUI removes every status item and widget of ext.
+	ClearUI(ext string)
+	// SendMessage queues text as a user message for the model.
+	SendMessage(text string)
+}
+
+// Question is a dialog an extension asks: Kind is "select" (Options),
+// "confirm" or "input".
+type Question struct {
+	Kind    string
+	Title   string
+	Options []string
+}
+
+// Headless is the Host of front ends without a UI (atto -p, the server):
+// notices go to Out (if set), status items and widgets are dropped, and
+// questions get their default answer at once: select and input
+// undefined, confirm false. Messages go to Send.
+type Headless struct {
+	mu   sync.Mutex
+	Out  io.Writer
+	Send func(text string)
+	// OnNotify, if set, receives notices instead of Out.
+	OnNotify func(ext, text, level string)
+}
+
+func (h *Headless) HasUI() bool { return false }
+
+func (h *Headless) Notify(ext, text, level string) {
+	if h.OnNotify != nil {
+		h.OnNotify(ext, text, level)
+		return
+	}
+	if h.Out == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	prefix := ""
+	if level == "warning" || level == "error" {
+		prefix = level + ": "
+	}
+	fmt.Fprintf(h.Out, "[%s] %s%s\n", ext, prefix, text)
+}
+
+func (h *Headless) SetStatus(string, string, string)   {}
+func (h *Headless) SetWidget(string, string, []string) {}
+func (h *Headless) ClearUI(string)                     {}
+
+func (h *Headless) Ask(_ string, q Question, answer func(any)) {
+	if q.Kind == "confirm" {
+		answer(false)
+		return
+	}
+	answer(nil)
+}
+
+func (h *Headless) SendMessage(text string) {
+	if h.Send != nil {
+		h.Send(text)
+	}
+}
