@@ -360,7 +360,8 @@ func (a *App) builtinStatus(first, width int) []string {
 		first: first, width: width, effort: effort,
 		name: m.Model.DisplayName(), subscription: m.Provider.Subscription, priced: priced(m.Model),
 		ctxWindow: m.Model.ContextWindow, maxTokens: m.Model.MaxTokens,
-		reasoning: m.Model.Reasoning != nil && *m.Model.Reasoning, nEfforts: len(m.Model.Efforts), nEffortMap: len(m.Model.EffortMap),
+		reasoning: m.Model.Reasoning != nil && *m.Model.Reasoning,
+		efforts:   strings.Join(m.Model.Efforts, "\x1e"), effortMap: effortMapFingerprint(m.Model.EffortMap),
 		usage: a.usage, ctxTokens: a.ctxTokens, sessName: a.sessName, mem: fmtBytes(rssBytes.Load()),
 		branch: a.gitBranch, cwd: a.cwd,
 	}
@@ -379,7 +380,7 @@ type statusKey struct {
 	subscription, priced  bool
 	ctxWindow, maxTokens  int
 	reasoning             bool
-	nEfforts, nEffortMap  int
+	efforts, effortMap    string // contents, not just counts (#4)
 	usage                 usageStats
 	ctxTokens             int
 	sessName, mem, branch string
@@ -565,4 +566,29 @@ func plural(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+// effortMapFingerprint keys the status cache on EffortMap contents so an
+// in-place reload that keeps the same entry count still invalidates (#4).
+func effortMapFingerprint(m map[string]*string) string {
+	if len(m) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteByte('=')
+		if v := m[k]; v != nil {
+			b.WriteString(*v)
+		} else {
+			b.WriteString("<nil>")
+		}
+		b.WriteByte(';')
+	}
+	return b.String()
 }
