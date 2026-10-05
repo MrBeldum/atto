@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -64,6 +66,7 @@ type TUI struct {
 	mu      sync.Mutex
 	focused Component
 	stopped bool
+	started bool
 	wake    chan struct{}
 	done    chan struct{}
 
@@ -83,14 +86,50 @@ type TUI struct {
 	viewStart   int  // body line shown at viewTop
 	viewRows    int  // screen rows showing body
 	pinned      bool // the first body row shows the Pin line
+	footerTop   int  // first screen row of the footer
+	newBelow    bool // output arrived below the view while scrolled up
 	prevFrame   []string
+
+	// FullRepaint rewrites every visible row, from column 1, on every frame
+	// that changes anything, instead of only the rows that differ. It trades
+	// bandwidth for robustness on terminals that mishandle sparse positioned
+	// writes (ConPTY-backed hosts such as Windows Terminal). Inline mode
+	// repaints the bottom viewport of its content; rows already in scrollback
+	// are never touched. New sets it from DefaultFullRepaint.
+	FullRepaint bool
 
 	// FullRedraws counts full redraws; useful for tests and debugging.
 	FullRedraws int
 }
 
 func New(term Terminal) *TUI {
-	return &TUI{term: term, wake: make(chan struct{}, 1), done: make(chan struct{})}
+	return &TUI{term: term, FullRepaint: DefaultFullRepaint(), wake: make(chan struct{}, 1), done: make(chan struct{})}
+}
+
+// DefaultFullRepaint reports whether full-repaint mode is on by default: on
+// for Windows, off elsewhere, overridable with ATTO_FULL_REPAINT=1 / =0.
+func DefaultFullRepaint() bool {
+	return fullRepaintFor(runtime.GOOS, os.Getenv("ATTO_FULL_REPAINT"))
+}
+
+// AnimationInterval is how often a busy UI should request a render to turn a
+// spinner. Full repaint rewrites the whole viewport per frame, so it ticks
+// slower (elapsed time is computed at render time and stays accurate).
+func (t *TUI) AnimationInterval() time.Duration {
+	if t.FullRepaint {
+		return 250 * time.Millisecond
+	}
+	return 80 * time.Millisecond
+}
+
+func fullRepaintFor(goos, env string) bool {
+	switch strings.TrimSpace(env) {
+	case "1":
+		return true
+	case "0":
+		return false
+	}
+	return goos == "windows"
 }
 
 // Start enters raw mode, starts the render loop and performs the first render.
@@ -103,6 +142,7 @@ func (t *TUI) Start() error {
 		t.term.Write("\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[2J")
 	}
 	t.term.Write("\x1b[?25l")
+	t.started = true
 	go t.loop()
 	t.RequestRender()
 	return nil
@@ -129,6 +169,31 @@ func (t *TUI) Stop() {
 	}
 	t.mu.Unlock()
 	t.term.Stop()
+}
+
+// SetMode switches between fullscreen and inline rendering while running:
+// it leaves or enters the alternate screen and mouse reporting, then makes
+// the next frame a first frame in the new mode. Call it inside Do (or from
+// an input handler). Before Start it only sets Mode.
+func (t *TUI) SetMode(m Mode) {
+	if t.Mode == m {
+		return
+	}
+	t.Mode = m
+	if !t.started {
+		return
+	}
+	if m == Fullscreen {
+		t.term.Write("\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[2J")
+	} else {
+		// The main screen returns with the cursor where it was left; the
+		// first inline frame is drawn from there.
+		t.term.Write("\x1b[?1000l\x1b[?1006l\x1b[?1049l")
+	}
+	t.prevFrame, t.prevLines = nil, nil
+	t.prevWidth, t.prevHeight = 0, 0
+	t.hwCursorRow, t.prevViewportTop, t.maxLinesRender = 0, 0, 0
+	t.scroll, t.prevBodyLen = 0, 0
 }
 
 // Do runs fn under the TUI lock and schedules a render.
@@ -220,6 +285,10 @@ func (t *TUI) ScrollToBottom() { t.scroll = 0 }
 // ScrollOffset reports how many body lines are hidden below the viewport.
 func (t *TUI) ScrollOffset() int { return t.scroll }
 
+// NewBelow reports whether output has arrived below the view since it was
+// scrolled up; it clears when the view is back at the bottom.
+func (t *TUI) NewBelow() bool { return t.newBelow }
+
 // Redraw forces the next frame to repaint everything.
 func (t *TUI) Redraw() {
 	t.prevFrame = nil
@@ -244,6 +313,8 @@ func (t *TUI) handleScroll(data string) bool {
 			t.ScrollBy(t.viewRows / 2)
 		case btn == 0 && press && y-1 >= t.viewTop && y-1 < t.viewTop+t.viewRows:
 			t.Body.Click(t.viewStart + y - 1 - t.viewTop)
+		case btn == 0 && press && y-1 >= t.footerTop:
+			t.Footer.Click(y - 1 - t.footerTop)
 		}
 		return true // swallow all other mouse events
 	}
@@ -456,6 +527,13 @@ func (t *TUI) doRender() {
 		return
 	}
 
+	// Full repaint: rewrite every visible content row, not just the changed
+	// ones, so ConPTY never has to merge a sparse update with older cells.
+	if t.FullRepaint {
+		first, last = prevViewportTop, len(newLines)-1
+		appendStart = false
+	}
+
 	var b strings.Builder
 	b.WriteString(syncBegin)
 	prevViewportBottom := prevViewportTop + height - 1
@@ -532,27 +610,43 @@ func (t *TUI) positionCursor(b *strings.Builder, cur *cursorPos, total int) {
 }
 
 // doRenderFullscreen composes a full frame (body window + pinned footer) and
-// rewrites only the screen rows that changed.
+// rewrites only the screen rows that changed (every row with FullRepaint).
 func (t *TUI) doRenderFullscreen() {
 	width, height := t.term.Size()
 	inner := t.innerWidth(width)
-	footer := t.pad(t.Footer.Render(inner))
 	body := t.pad(t.Body.Render(inner))
 
 	// Keep the view anchored while scrolled up and new output arrives.
 	if t.scroll > 0 && len(body) > t.prevBodyLen {
 		t.scroll += len(body) - t.prevBodyLen
+		t.newBelow = true
 	}
 	t.prevBodyLen = len(body)
 
-	if len(footer) > height {
-		footer = footer[len(footer)-height:]
+	// The footer may show something while scrolled up (a "jump to bottom"
+	// pill) and so change height with it; render it again if clamping the
+	// scroll to the body changed that.
+	var footer []string
+	var gap, avail, end, start int
+	for i := 0; i < 2; i++ {
+		scrolled := t.scroll > 0
+		footer = t.pad(t.Footer.Render(inner))
+		if len(footer) > height {
+			footer = footer[len(footer)-height:]
+		}
+		gap = min(t.GapY, max(0, (height-len(footer))/4))
+		avail = max(0, height-len(footer)-2*gap)
+		t.scroll = min(t.scroll, max(0, len(body)-avail))
+		if (t.scroll > 0) == scrolled {
+			break
+		}
 	}
-	gap := min(t.GapY, max(0, (height-len(footer))/4))
-	avail := max(0, height-len(footer)-2*gap)
-	t.scroll = min(t.scroll, max(0, len(body)-avail))
-	end := len(body) - t.scroll
-	start := max(0, end-avail)
+	if t.scroll == 0 {
+		t.newBelow = false
+	}
+	end = len(body) - t.scroll
+	start = max(0, end-avail)
+	t.footerTop = height - len(footer)
 
 	t.viewTop, t.viewStart, t.viewRows = gap, start, end-start
 	frame := make([]string, gap, height)
@@ -571,13 +665,19 @@ func (t *TUI) doRenderFullscreen() {
 	lines, cur := prepareLines(frame, width, height)
 
 	full := t.prevWidth != width || t.prevHeight != height || len(t.prevFrame) != len(lines)
+	changed := full
+	for i := 0; !changed && i < len(lines); i++ {
+		changed = t.prevFrame[i] != lines[i]
+	}
 	var b strings.Builder
 	if full {
 		t.FullRedraws++
 		b.WriteString("\x1b[2J")
 	}
 	for i, l := range lines {
-		if full || t.prevFrame[i] != l {
+		// Full repaint rewrites every row of a frame that changed; each row
+		// is cleared first, then the whole line is written from column 1.
+		if full || (t.FullRepaint && changed) || t.prevFrame[i] != l {
 			fmt.Fprintf(&b, "\x1b[%d;1H\x1b[2K%s", i+1, l)
 		}
 	}

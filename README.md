@@ -133,6 +133,7 @@ Pastes over 1000 characters show as `[Pasted Content 1234 chars]` and are sent i
 | --- | --- |
 | `/model` | switch model mid-session |
 | `/effort` | set reasoning effort |
+| `/tui [auto\|fullscreen\|inline]` | show or change the renderer; saved to `settings.json` and applied at once |
 | `/compact` | compact the conversation now |
 | `/copy` | copy the last answer; works over SSH in terminals with OSC 52 |
 | `/context` | show what fills the context and how much is cached |
@@ -206,6 +207,10 @@ Everything lives in `~/.atto`. Set `ATTO_DIR` to move it.
 | `auth.json` | keys and logins (mode 0600) |
 | `sessions/` | saved sessions |
 | `images/` | images sent in sessions, by content hash |
+
+### Troubleshooting
+
+If text looks garbled, doubled or leaves fragments behind (seen with wide characters such as Korean in Windows Terminal and other ConPTY hosts), atto can repaint every visible row on each frame instead of only the changed ones. This is on by default on Windows. Set `ATTO_FULL_REPAINT=1` to force it on, or `ATTO_FULL_REPAINT=0` to force it off, on any OS.
 
 ## License
 

@@ -293,3 +293,105 @@ func TestParseMouse(t *testing.T) {
 		t.Fatalf("parser split X10 report wrong: %q", got)
 	}
 }
+
+// logTerm records what the renderer writes, on top of the test terminal.
+type logTerm struct {
+	*vterm
+	out strings.Builder
+}
+
+func (l *logTerm) Write(s string) { l.out.WriteString(s); l.vterm.Write(s) }
+
+func TestSetMode(t *testing.T) {
+	l := &logTerm{vterm: newVterm(20, 5)}
+	ui := New(l)
+	ui.Body.Add(&lines{l: []string{"a", "b"}})
+	ui.Footer.Add(&lines{l: []string{"foot"}})
+
+	ui.SetMode(Inline) // before Start: only the mode changes
+	ui.SetMode(Fullscreen)
+	if l.out.Len() != 0 || ui.Mode != Fullscreen {
+		t.Fatalf("SetMode before Start wrote %q", l.out.String())
+	}
+
+	ui.started = true
+	ui.RenderNow()
+	l.out.Reset()
+	ui.SetMode(Inline)
+	if got := l.out.String(); got != "\x1b[?1000l\x1b[?1006l\x1b[?1049l" {
+		t.Fatalf("leaving fullscreen wrote %q", got)
+	}
+	ui.RenderNow()
+	if strings.Contains(l.out.String(), "\x1b[2J") {
+		t.Fatalf("the first inline frame cleared the screen: %q", l.out.String())
+	}
+	if !strings.Contains(l.out.String(), "foot") {
+		t.Fatalf("inline frame missing: %q", l.out.String())
+	}
+
+	l.out.Reset()
+	ui.SetMode(Fullscreen)
+	if !strings.HasPrefix(l.out.String(), "\x1b[?1049h\x1b[?1000h\x1b[?1006h") {
+		t.Fatalf("entering fullscreen wrote %q", l.out.String())
+	}
+	ui.RenderNow()
+	if got := l.screenRows(); got[len(got)-1] != "foot" {
+		t.Fatalf("fullscreen footer not pinned: %q", got)
+	}
+}
+
+// pill is a footer component that shows only while scrolled up and jumps
+// to the bottom when clicked.
+type pill struct{ ui *TUI }
+
+func (p pill) Render(int) []string {
+	if p.ui.ScrollOffset() == 0 {
+		return nil
+	}
+	if p.ui.NewBelow() {
+		return []string{"NEW"}
+	}
+	return []string{"JUMP"}
+}
+
+func (p pill) Click(int) bool { p.ui.ScrollToBottom(); return true }
+
+func TestFooterClickAndNewBelow(t *testing.T) {
+	v := newVterm(20, 6)
+	ui := New(v)
+	body := &lines{l: []string{"a", "b", "c", "d", "e", "f", "g", "h"}}
+	ui.Body.Add(body)
+	ui.Footer.Add(pill{ui}, &lines{l: []string{"> in", "status"}})
+
+	ui.RenderNow()
+	if got := v.screenRows(); got[3] != "h" || strings.Contains(strings.Join(got, "|"), "JUMP") {
+		t.Fatalf("at the bottom there is no pill: %q", got)
+	}
+	ui.ScrollBy(2)
+	ui.RenderNow()
+	got := v.screenRows()
+	if got[len(got)-3] != "JUMP" {
+		t.Fatalf("scrolled up shows the pill above the input: %q", got)
+	}
+	if ui.NewBelow() {
+		t.Fatal("nothing new yet")
+	}
+
+	body.l = append(body.l, "i")
+	ui.RenderNow()
+	got = v.screenRows()
+	if got[len(got)-3] != "NEW" || !ui.NewBelow() {
+		t.Fatalf("new output while scrolled up is flagged: %q", got)
+	}
+
+	// A click on the pill row scrolls to the bottom and removes it.
+	ui.handleScroll("\x1b[<0;3;4M") // row 4 of 6 is the pill
+	ui.RenderNow()
+	got = v.screenRows()
+	if ui.ScrollOffset() != 0 || ui.NewBelow() || got[len(got)-3] == "NEW" || got[len(got)-3] == "JUMP" {
+		t.Fatalf("click did not jump to the bottom: %q", got)
+	}
+	if got[len(got)-3] != "i" {
+		t.Fatalf("newest line is visible: %q", got)
+	}
+}

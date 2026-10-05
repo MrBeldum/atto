@@ -13,6 +13,8 @@ import (
 // shell hosts (`_shell`) and job supervisors (`_supervise <dir>`), which
 // are started by re-executing os.Executable(). With them, commands run
 // as in the atto binary, under shell hosts.
+//
+// New scans the home directory for skills; tests keep off the real one.
 func TestMain(m *testing.M) {
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
@@ -35,5 +37,13 @@ func TestMain(m *testing.M) {
 		}
 	}
 	ShellHost = true
-	os.Exit(m.Run())
+	home, err := os.MkdirTemp("", "atto-home")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("HOME", home)
+	os.Setenv("USERPROFILE", home)
+	code := m.Run()
+	os.RemoveAll(home)
+	os.Exit(code)
 }

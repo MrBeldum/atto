@@ -22,6 +22,7 @@ import (
 	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/session"
 	"github.com/sebastianrcnt/atto/shell"
+	"github.com/sebastianrcnt/atto/skills"
 )
 
 // HookOutcome is what hooks decided for one event.
@@ -135,8 +136,10 @@ type Agent struct {
 	// persistence. Called on the goroutine running Run/Compact.
 	Record func(session.Entry)
 
-	system   string
-	messages []provider.Message
+	system    string
+	skills    []skills.Skill // snapshot taken with the system prompt
+	skillWarn []string
+	messages  []provider.Message
 	// MaxSteps stops a turn after this many model calls (0: unlimited).
 	MaxSteps int
 	// Hooks, if set, run around prompts, tool calls, stops and compaction.
@@ -219,8 +222,16 @@ func New(model config.ModelRef, effort, cwd string) *Agent {
 // stays byte-identical for the whole session (and across resumes) and the
 // prefix cache survives midnight. Call only while no turn is running.
 func (a *Agent) SetStart(t time.Time) {
-	a.system = systemPrompt(a.Cwd, a.Shell, t)
+	// Skills are listed once here and not rescanned, like AGENTS files, so
+	// the prompt (and the prefix cache) holds for the whole session.
+	home, _ := os.UserHomeDir()
+	a.skills, a.skillWarn = skills.Load(skills.Dirs(config.SkillsDir(), projectRoot(a.Cwd), home))
+	a.system = systemPrompt(a.Cwd, a.Shell, t, a.skills)
 }
+
+// Skills returns the skills found when the session started, and warnings
+// about skill files that were invalid or shadowed.
+func (a *Agent) Skills() ([]skills.Skill, []string) { return a.skills, a.skillWarn }
 
 // SetSession sets the session ID (for provider routing headers) and extra
 // environment variables for bash commands.
@@ -809,7 +820,7 @@ func shellGuide(sh shell.Shell) string {
 	return "You have one tool, bash. Use it for everything: exploring (ls, rg, cat, sed -n), editing files (heredocs, sed, python scripts, patch), building, and testing."
 }
 
-func systemPrompt(cwd string, sh shell.Shell, start time.Time) string {
+func systemPrompt(cwd string, sh shell.Shell, start time.Time, sk []skills.Skill) string {
 	var b strings.Builder
 	name := sh.ToolName()
 	fmt.Fprintf(&b, `You are atto, a coding agent running in the user's terminal.
@@ -833,10 +844,7 @@ Environment:
 - Session started: %s
 `, cwd, runtime.GOOS, runtime.GOARCH, sh.Path, start.Format("2006-01-02"))
 
-	for _, p := range []string{filepath.Join(config.Dir(), "AGENTS.md"), filepath.Join(cwd, "AGENTS.md")} {
-		if data, err := os.ReadFile(p); err == nil && len(strings.TrimSpace(string(data))) > 0 {
-			fmt.Fprintf(&b, "\n# Instructions from %s\n\n%s\n", p, strings.TrimSpace(string(data)))
-		}
-	}
+	writeInstructions(&b, loadInstructions(cwd))
+	b.WriteString(skills.FormatForPrompt(sk, name))
 	return b.String()
 }

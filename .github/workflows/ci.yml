@@ -1,5 +1,13 @@
 name: ci
-on: [push, pull_request]
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - LICENSE
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - LICENSE
 permissions:
   contents: read
 jobs:
@@ -15,13 +23,81 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go vet ./...
-      - run: go test -race ./...
+      # -race only on Linux: it is the slow part, and the race detector finds
+      # the same data races on every OS.
+      - if: runner.os == 'Linux'
+        run: go test -race ./...
+      - if: runner.os != 'Linux'
+        run: go test ./...
       - run: go build ./cmd/atto
+
+  # Everything below runs only for pushes to main. The binaries build in
+  # parallel with the tests; only publishing waits for the tests.
+  version:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # git describe needs the tags
+      - id: v
+        # v<next>-dev.<N>+<sha7>: the last v* tag with its patch bumped, N
+        # commits after it. For v0.0.2 plus 14 commits: v0.0.3-dev.14+abc1234.
+        # Computed once so every build and the release agree on it.
+        run: |
+          desc=$(git describe --tags --long --abbrev=7 --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude 'v*-*' 2>/dev/null \
+            || echo "v0.0.0-$(git rev-list --count HEAD)-g$(git rev-parse --short=7 HEAD)")
+          sha=${desc##*-g}
+          rest=${desc%-g*}
+          n=${rest##*-}
+          tag=${rest%-*}
+          IFS=. read -r major minor patch <<< "${tag#v}"
+          echo "version=v$major.$minor.$((patch + 1))-dev.$n+$sha" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - darwin/amd64
+          - darwin/arm64
+          - linux/amd64
+          - linux/arm64
+          - windows/amd64
+          - windows/arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          os=${TARGET%/*} arch=${TARGET#*/}
+          out=atto_${os}_${arch}
+          [ "$os" = windows ] && out=$out.exe
+          echo "Building $VERSION for $TARGET"
+          mkdir dist
+          CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
+            -ldflags "-s -w -X github.com/sebastianrcnt/atto/update.Version=${VERSION} -X github.com/sebastianrcnt/atto/update.Channel=edge" \
+            -o "dist/$out" ./cmd/atto
+      - uses: actions/upload-artifact@v4
+        with:
+          # Artifact names cannot contain "/", so number them.
+          name: atto-${{ strategy.job-index }}
+          path: dist/atto_*
+          if-no-files-found: error
+          retention-days: 1
 
   # Every push to main becomes the rolling "edge" prerelease, once the tests
   # pass on all three systems. Tagged releases are release.yml's job.
   edge:
-    needs: test
+    needs: [test, build, version]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -32,38 +108,21 @@ jobs:
     concurrency:
       group: edge-release
       cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      # No checkout in this job, so gh can't infer the repository.
+      GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          fetch-depth: 0  # git describe needs the tags
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: Version
-        # v<next>-dev.<N>+<sha7>: the last v* tag with its patch bumped, N
-        # commits after it. For v0.0.2 plus 14 commits: v0.0.3-dev.14+abc1234.
+          pattern: atto-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
         run: |
-          desc=$(git describe --tags --long --abbrev=7 --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude 'v*-*' 2>/dev/null \
-            || echo "v0.0.0-$(git rev-list --count HEAD)-g$(git rev-parse --short=7 HEAD)")
-          sha=${desc##*-g}
-          rest=${desc%-g*}
-          n=${rest##*-}
-          tag=${rest%-*}
-          IFS=. read -r major minor patch <<< "${tag#v}"
-          echo "VERSION=v$major.$minor.$((patch + 1))-dev.$n+$sha" >> "$GITHUB_ENV"
-      - name: Build
-        run: |
-          echo "Building $VERSION"
-          mkdir dist
-          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
-            os=${target%/*} arch=${target#*/}
-            out=dist/atto_${os}_${arch}
-            [ "$os" = windows ] && out=$out.exe
-            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
-              -ldflags "-s -w -X github.com/sebastianrcnt/atto/update.Version=${VERSION} -X github.com/sebastianrcnt/atto/update.Channel=edge" \
-              -o "$out" ./cmd/atto
-          done
-          (cd dist && sha256sum atto_* > checksums.txt)
+          cd dist
+          sha256sum atto_* > checksums.txt
+          cat checksums.txt
       - uses: actions/attest-build-provenance@v2
         with:
           subject-path: dist/atto_*

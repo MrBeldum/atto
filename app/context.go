@@ -17,7 +17,9 @@ import (
 // usageStats tracks token usage for the status line and /context.
 type usageStats struct {
 	last                  provider.Usage
-	input, cached, output int // session totals
+	input, cached, output int // session totals; input includes cached and written
+	cacheWrite            int // session total of tokens written to the cache
+	cost                  float64
 }
 
 func (u *usageStats) add(x provider.Usage) {
@@ -25,7 +27,13 @@ func (u *usageStats) add(x provider.Usage) {
 	u.input += x.PromptTokens
 	u.cached += x.CachedTokens
 	u.output += x.CompletionTokens
+	u.cacheWrite += x.CacheWriteTokens
+	u.cost += x.Cost
 }
+
+// fresh is the session's input that was neither read from nor written to
+// the cache: pi's "↑".
+func (u *usageStats) fresh() int { return max(0, u.input-u.cached-u.cacheWrite) }
 
 // fromEntries rebuilds totals from a resumed session.
 func (u *usageStats) fromEntries(entries []session.Entry) {
