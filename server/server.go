@@ -116,6 +116,11 @@ type thread struct {
 	turnSeq   int
 	ctxTokens int
 	usage     provider.Usage // totals for the running turn
+	// What the extensions show (see extui.go): on the blocks of the
+	// items, around the input, and how many text blocks they added.
+	blocks   blocks
+	ui       extensions.UIState
+	extTexts int
 }
 
 // Close interrupts running turns, stops background jobs and closes session
@@ -357,13 +362,13 @@ func (s *Server) newThread(cwd string, model config.ModelRef, effort string, fil
 	if err != nil {
 		return nil, err
 	}
-	t := &thread{id: file.ID, cwd: cwd, agent: ag, sess: file, hooks: hk, hookSrc: src}
-	// Extensions have no UI here: notices go to the client as
-	// extension/notify, dialogs get their default answers, and
-	// sendMessage steers the thread's turn.
-	t.ext = core.LoadExtensions(ag, &extensions.Headless{Send: ag.Steer, OnNotify: func(ext, text, level string) {
+	t := &thread{id: file.ID, cwd: cwd, agent: ag, sess: file, hooks: hk, hookSrc: src, blocks: blocks{}}
+	// Extensions show what they show to the clients (see threadHost);
+	// notices go to them as extension/notify, dialogs get their default
+	// answers, and sendMessage steers the thread's turn.
+	t.ext = core.LoadExtensions(ag, &threadHost{s: s, t: t, Headless: &extensions.Headless{Send: ag.Steer, OnNotify: func(ext, text, level string) {
 		s.notify(t, "extension/notify", map[string]any{"extension": ext, "message": text, "level": level})
-	}})
+	}}})
 	t.mcp = core.LoadMCP(ag)
 	core.Bind(ag, hk, file, start, true)
 	t.loaded = core.Collect(ag, src, modelFrom, effortFrom)
@@ -472,11 +477,17 @@ func (s *Server) snapshot(t *thread) ThreadInfo {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	info := t.info()
-	info.Items = append([]Item(nil), t.items...)
+	info.Items = make([]Item, 0, len(t.items))
+	for _, it := range t.items {
+		info.Items = append(info.Items, t.withDisplay(it))
+	}
 	if t.busy {
 		for _, it := range t.tr.Open() {
-			info.Items = append(info.Items, wireItem(&it))
+			info.Items = append(info.Items, t.withDisplay(wireItem(t.id, &it)))
 		}
+	}
+	if !t.ui.Empty() {
+		info.ExtensionUI = WireExtensionUI(&t.ui)
 	}
 	info.EventID = s.eventSeq()
 	return info

@@ -52,8 +52,8 @@ func NewLive(version string, live Live) *Server {
 // end calls it in the order things happen, from one goroutine at a time.
 func (s *Server) Publish(method string, params map[string]any) { s.Notify(method, params) }
 
-// WireItem is the protocol form of a transcript item.
-func WireItem(it *transcript.Item) Item { return wireItem(it) }
+// WireItem is the protocol form of a transcript item of session sid.
+func WireItem(sid string, it *transcript.Item) Item { return wireItem(sid, it) }
 
 // liveCall serves the protocol for a live conversation.
 func (s *Server) liveCall(method string, p threadParams) (any, error) {

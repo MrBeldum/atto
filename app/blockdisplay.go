@@ -25,57 +25,37 @@ type blockDisplay struct {
 	orig expander // expanded() means: showing the original text
 
 	id      string // the block ID extensions use
+	item    string // the transcript item's ID, for /remote
 	entryID string // of the assistant message, for the session
 	kind    string // session.BlockText or session.BlockReasoning
 
-	statuses []extStatus
-	owner    string // the extension whose text overrides the block
-	text     string // that text; "" means no override
-	ver      int
+	state transcript.BlockDisplay
+	ver   int
 
 	metaLine int // line of the last render holding the toggle, -1 when none
 }
-
-type extStatus struct{ ext, text string }
 
 // key identifies what a render of the block depends on besides its text
 // and width.
 func (b *blockDisplay) key() (ver int, original bool) { return b.ver, b.showingOriginal() }
 
-func (b *blockDisplay) hasOverride() bool { return b.text != "" }
+func (b *blockDisplay) hasOverride() bool { return b.state.Text != "" }
 
 func (b *blockDisplay) showingOriginal() bool { return b.hasOverride() && b.orig.expanded() }
 
 // shown is what the block displays given its own text.
 func (b *blockDisplay) shown(original string) string {
 	if b.hasOverride() && !b.showingOriginal() {
-		return b.text
+		return b.state.Text
 	}
 	return original
 }
 
 // setStatus sets (text "" removes) the status of ext; it reports a change.
 func (b *blockDisplay) setStatus(ext, text string) bool {
-	for i, s := range b.statuses {
-		if s.ext != ext {
-			continue
-		}
-		if s.text == text {
-			return false
-		}
-		if text == "" {
-			b.statuses = append(b.statuses[:i:i], b.statuses[i+1:]...)
-		} else {
-			b.statuses = append([]extStatus(nil), b.statuses...)
-			b.statuses[i].text = text
-		}
-		b.ver++
-		return true
-	}
-	if text == "" {
+	if !b.state.SetStatus(ext, text) {
 		return false
 	}
-	b.statuses = append(b.statuses, extStatus{ext, text})
 	b.ver++
 	return true
 }
@@ -84,40 +64,18 @@ func (b *blockDisplay) setStatus(ext, text string) bool {
 // block's own; it reports a change. The latest extension to set a text
 // owns the override, and only the owner can restore the original.
 func (b *blockDisplay) setDisplay(ext, text string) bool {
-	if text == "" {
-		if b.owner != ext || b.text == "" {
-			return false
-		}
-		b.owner, b.text = "", ""
-		b.ver++
-		return true
-	}
-	if b.owner == ext && b.text == text {
+	if !b.state.SetDisplay(ext, text) {
 		return false
 	}
-	b.owner, b.text = ext, text
 	b.ver++
 	return true
-}
-
-// snapshot is ext's whole state for the block, as a session entry keeps it.
-func (b *blockDisplay) snapshot(ext string) (status, display string) {
-	for _, s := range b.statuses {
-		if s.ext == ext {
-			status = s.text
-		}
-	}
-	if b.owner == ext {
-		display = b.text
-	}
-	return status, display
 }
 
 // header is the statuses as a dim suffix (" · translating…"), "" when none.
 func (b *blockDisplay) header() string {
 	var out string
-	for _, s := range b.statuses {
-		out += tui.Dim(" · " + s.text)
+	for _, s := range b.state.Statuses {
+		out += tui.Dim(" · " + s.Text)
 	}
 	return out
 }
@@ -128,9 +86,10 @@ func (b *blockDisplay) toggleLine(width int) string {
 	if !b.hasOverride() {
 		return ""
 	}
-	what := "shown: " + b.owner + " (click or ctrl+o to show original)"
+	owner := b.state.Owner
+	what := "shown: " + owner + " (click or ctrl+o to show original)"
 	if b.showingOriginal() {
-		what = "original shown (click or ctrl+o to show " + b.owner + "'s)"
+		what = "original shown (click or ctrl+o to show " + owner + "'s)"
 	}
 	return tui.Truncate(tui.Dim("  · "+what), width, "…")
 }
@@ -165,7 +124,7 @@ func (a *App) itemSaved(it *transcript.Item) {
 		kind = session.BlockReasoning
 	}
 	d := b.display()
-	d.entryID, d.kind = it.EntryID, kind
+	d.entryID, d.kind, d.item = it.EntryID, kind, it.ID
 	d.id = session.BlockID(a.sess.ID, it.EntryID, kind)
 	if a.blocks == nil {
 		a.blocks = map[string]displayBlock{}
@@ -203,11 +162,22 @@ func (a *App) blockText(ext, id, text string) {
 	}
 }
 
-// recordBlock saves ext's state for the block in the session.
+// recordBlock saves ext's state for the block in the session, and tells
+// the /remote clients.
 func (a *App) recordBlock(d *blockDisplay, ext string) {
+	a.remoteDisplay(d)
 	if a.sess == nil || d.entryID == "" || strings.HasPrefix(d.entryID, "n") { // not recorded: nothing to attach to
 		return
 	}
-	status, display := d.snapshot(ext)
+	status, display := d.state.Snapshot(ext)
 	a.sess.Append(session.Entry{Type: session.TypeBlockDisplay, TargetID: d.entryID, Block: d.kind, Ext: ext, Status: status, Display: display})
+}
+
+// blockState is what extensions show on the block blockID; nil for a
+// block not known ("" is an item that has no block ID yet).
+func (a *App) blockState(blockID string) *transcript.BlockDisplay {
+	if b := a.blocks[blockID]; b != nil && blockID != "" {
+		return &b.display().state
+	}
+	return nil
 }

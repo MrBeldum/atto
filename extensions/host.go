@@ -58,10 +58,11 @@ type Question struct {
 	Options []string
 }
 
-// Headless is the Host of front ends without a UI (atto -p, the server):
-// notices go to Out (if set), status items and widgets are dropped, and
-// questions get their default answer at once: select and input
-// undefined, confirm false. Messages go to Send.
+// Headless is the Host of front ends without a UI (atto -p, and the
+// server's, which adds what its clients show): notices go to Out (if set),
+// status items and widgets are dropped, and questions get their default
+// answer at once: select and input undefined, confirm false. Messages go
+// to Send.
 type Headless struct {
 	mu   sync.Mutex
 	Out  io.Writer
@@ -92,7 +93,7 @@ func (h *Headless) Notify(ext, text, level string) {
 func (h *Headless) SetStatus(string, string, string)   {}
 func (h *Headless) SetWidget(string, string, []string) {}
 
-// Blocks are shown by the TUI only.
+// Blocks are for front ends that show them (the TUI, the server).
 func (h *Headless) SetBlockStatus(string, string, string)  {}
 func (h *Headless) SetBlockDisplay(string, string, string) {}
 func (h *Headless) ClearUI(string)                         {}

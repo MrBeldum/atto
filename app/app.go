@@ -58,7 +58,7 @@ type App struct {
 	mcp *mcp.Manager
 	// mcpAsked are the approval prompts shown this run (name#hash).
 	mcpAsked map[string]bool
-	extUI    extUI
+	extUI    extensions.UIState // touched on the UI goroutine only
 	// hookSrc are the settings files the hooks came from, loaded what the
 	// session loaded (the "Loaded" block), and modelFrom/effortFrom where
 	// the model and effort in use came from.

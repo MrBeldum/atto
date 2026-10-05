@@ -1,0 +1,126 @@
+package server
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/sebastianrcnt/atto/core/transcript"
+	"github.com/sebastianrcnt/atto/extensions"
+	"github.com/sebastianrcnt/atto/session"
+)
+
+// What a thread's extensions show, kept on the thread and sent to clients
+// as data: statuses and replacement texts on reasoning and agentMessage
+// items (item/display), text blocks (extText items) and status items and
+// widgets (extension/ui). Blocks and text blocks are saved in the session
+// as the TUI saves them (block_display and ext_text entries), so either
+// front end shows them on resume.
+
+// block is a reasoning or agentMessage item extensions can name.
+type block struct {
+	item    string // the item's ID
+	entryID string // of the assistant message
+	kind    string // session.BlockText or session.BlockReasoning
+	disp    transcript.BlockDisplay
+}
+
+// blocks are a thread's blocks by block ID.
+type blocks map[string]*block
+
+// saved makes a block of a reasoning or assistant item saved in session sid.
+func (bl blocks) saved(sid string, it *transcript.Item) {
+	if it.EntryID == "" {
+		return
+	}
+	kind := session.BlockText
+	if it.Kind == transcript.Reasoning {
+		kind = session.BlockReasoning
+	}
+	bl[session.BlockID(sid, it.EntryID, kind)] = &block{item: it.ID, entryID: it.EntryID, kind: kind}
+}
+
+// attach gives an item what extensions show on its block.
+func (bl blocks) attach(w Item) Item {
+	if b := bl[w.BlockID]; b != nil && w.BlockID != "" {
+		w.Display = WireDisplay(&b.disp)
+	}
+	return w
+}
+
+// withDisplay is w with what extensions show on its block. Call with t.mu
+// held.
+func (t *thread) withDisplay(w Item) Item { return t.blocks.attach(w) }
+
+// threadHost is the Host of a thread's extensions: notices, dialogs and
+// messages as without a UI (see extensions.Headless), and what they show
+// kept on the thread for its clients. Its methods take t.mu, never s.mu.
+type threadHost struct {
+	*extensions.Headless
+	s *Server
+	t *thread
+}
+
+// publish sends a notification of the thread while t.mu is held, so that
+// a snapshot (which reads the event ID under t.mu too) either has the
+// change or is followed by its notification.
+func (h *threadHost) publish(method string, params map[string]any) { h.s.notify(h.t, method, params) }
+
+func (h *threadHost) SetStatus(ext, key, text string) {
+	h.ui(func(u *extensions.UIState) { u.SetStatus(ext+"/"+key, text) })
+}
+
+func (h *threadHost) SetWidget(ext, key string, lines []string) {
+	h.ui(func(u *extensions.UIState) { u.SetWidget(ext+"/"+key, lines) })
+}
+
+func (h *threadHost) ClearUI(ext string) {
+	h.ui(func(u *extensions.UIState) { u.Clear(ext) })
+}
+
+func (h *threadHost) ui(change func(*extensions.UIState)) {
+	t := h.t
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	change(&t.ui)
+	h.publish("extension/ui", map[string]any{"ui": WireExtensionUI(&t.ui)})
+}
+
+func (h *threadHost) SetBlockStatus(ext, id, text string) {
+	h.block(ext, id, func(d *transcript.BlockDisplay) bool { return d.SetStatus(ext, text) })
+}
+
+func (h *threadHost) SetBlockDisplay(ext, id, text string) {
+	h.block(ext, id, func(d *transcript.BlockDisplay) bool { return d.SetDisplay(ext, text) })
+}
+
+// block changes what ext shows on block id, saves ext's state for it in
+// the session and tells the clients. A block that is not the thread's (the
+// branch changed) is ignored.
+func (h *threadHost) block(ext, id string, change func(*transcript.BlockDisplay) bool) {
+	t := h.t
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	b := t.blocks[id]
+	if b == nil || !change(&b.disp) {
+		return
+	}
+	if !strings.HasPrefix(b.entryID, "n") { // "n<k>": not recorded, nothing to attach to
+		status, display := b.disp.Snapshot(ext)
+		t.sess.Append(session.Entry{Type: session.TypeBlockDisplay, TargetID: b.entryID, Block: b.kind, Ext: ext, Status: status, Display: display})
+	}
+	h.publish("item/display", map[string]any{"itemId": b.item, "blockId": id, "display": WireDisplay(&b.disp)})
+}
+
+// ShowText adds an extText item, completed at once, and saves it in the
+// session.
+func (h *threadHost) ShowText(ext, title, text string, o extensions.TextOptions) {
+	t := h.t
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.extTexts++
+	it := Item{ID: fmt.Sprintf("%s-x%d", t.id, t.extTexts), Type: ItemExtText, Status: string(transcript.Completed),
+		Title: title, Ext: ext, Text: text, Lang: o.Lang, Preview: o.Preview}
+	t.items = append(t.items, it)
+	t.sess.Append(session.Entry{Type: session.TypeExtText, Ext: ext, Title: title, Display: text, Lang: o.Lang, Preview: o.Preview})
+	h.publish("item/completed", map[string]any{"turnId": t.turnID, "item": it})
+}
