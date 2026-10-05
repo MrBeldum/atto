@@ -62,7 +62,7 @@ func (v *vterm) lineFeed() {
 		v.r++
 		return
 	}
-	v.scrollback = append(v.scrollback, strings.TrimRight(string(v.screen[0]), " "))
+	v.scrollback = append(v.scrollback, rowString(v.screen[0]))
 	copy(v.screen, v.screen[1:])
 	v.screen[v.h-1] = blankRow(v.w)
 }
@@ -82,13 +82,48 @@ func (v *vterm) Write(s string) {
 			i++
 		default:
 			r, n := utf8.DecodeRuneInString(s[i:])
-			if v.c < v.w {
-				v.screen[v.r][v.c] = r
-			}
-			v.c++
+			v.put(r)
 			i += n
 		}
 	}
+}
+
+// put draws one rune. A wide rune takes two cells (the second holds 0), and
+// overwriting half of a wide rune blanks the other half, as real terminals do.
+func (v *vterm) put(r rune) {
+	w := VisibleWidth(string(r))
+	if w == 0 {
+		return
+	}
+	for k := 0; k < w; k++ {
+		c := v.c + k
+		if c >= v.w {
+			break
+		}
+		row := v.screen[v.r]
+		if row[c] == 0 && c > 0 && row[c-1] != 0 { // right half of a wide rune
+			row[c-1] = ' '
+		}
+		if c+1 < v.w && row[c+1] == 0 { // left half of a wide rune
+			row[c+1] = ' '
+		}
+		if k == 0 {
+			row[c] = r
+		} else {
+			row[c] = 0
+		}
+	}
+	v.c += w
+}
+
+func rowString(r []rune) string {
+	var b strings.Builder
+	for _, c := range r {
+		if c != 0 {
+			b.WriteRune(c)
+		}
+	}
+	return strings.TrimRight(b.String(), " ")
 }
 
 func (v *vterm) escape(seq string) {
@@ -144,7 +179,7 @@ func (v *vterm) escape(seq string) {
 func (v *vterm) rows() []string {
 	out := append([]string(nil), v.scrollback...)
 	for _, r := range v.screen {
-		out = append(out, strings.TrimRight(string(r), " "))
+		out = append(out, rowString(r))
 	}
 	for len(out) > 0 && out[len(out)-1] == "" {
 		out = out[:len(out)-1]
@@ -156,7 +191,7 @@ func (v *vterm) rows() []string {
 func (v *vterm) screenRows() []string {
 	out := make([]string, len(v.screen))
 	for i, r := range v.screen {
-		out[i] = strings.TrimRight(string(r), " ")
+		out[i] = rowString(r)
 	}
 	return out
 }
