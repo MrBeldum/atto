@@ -91,21 +91,6 @@ func (p *resumePicker) HandleInput(data string) {
 	}
 }
 
-func relTime(t time.Time) string {
-	d := time.Since(t)
-	switch {
-	case d < 10*time.Second:
-		return "now"
-	case d < time.Minute:
-		return fmt.Sprintf("%ds ago", int(d.Seconds()))
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
-	}
-	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
-}
-
 func toggle(a, b string, second bool) string {
 	if second {
 		return tui.Dim(a+" | ") + tui.Bold(b)
@@ -141,7 +126,7 @@ func (p *resumePicker) row(it tui.SelectItem, selected bool, width int) []string
 	if selected {
 		marker = tui.FG(6, "› ")
 	}
-	meta := fmt.Sprintf("    %s · %d messages", relTime(s.Updated), s.Messages)
+	meta := fmt.Sprintf("    %s · %d messages", session.RelTime(s.Updated), s.Messages)
 	if s.Path == p.current {
 		meta += " · current"
 	}
