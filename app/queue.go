@@ -64,6 +64,9 @@ func (a *App) restoreToEditor(texts []string) {
 
 // afterRun settles pending input once a turn or compaction finishes.
 func (a *App) afterRun(err error) {
+	if a.runKind == "turn" {
+		a.goalTurnEnded(err)
+	}
 	if a.runKind == "turn" && err == nil {
 		took := "<1s"
 		if d := time.Since(a.runStart); d >= time.Second {
@@ -123,6 +126,7 @@ func (a *App) maybeSendNextQueued() {
 		a.startTurn(next)
 		return
 	}
+	a.continueGoal()
 }
 
 func previewLines(text string, width int, style func(string) string) []string {

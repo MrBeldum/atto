@@ -305,7 +305,7 @@ func pickModel(models config.ModelsFile, settings config.Settings, id string) (c
 }
 
 func sessionEnv(id string) []string {
-	env := []string{"ATTO_SESSION_ID=" + id}
+	env := []string{"ATTO_SESSION_ID=" + id, config.EnvAgent + "=1"}
 	if exe, err := os.Executable(); err == nil {
 		env = append(env, "PATH="+dirOf(exe)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}

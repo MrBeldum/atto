@@ -36,6 +36,7 @@ const (
 	TypeModel      = "model"
 	TypeEffort     = "effort"
 	TypeName       = "name"
+	TypeGoal       = "goal"
 )
 
 // Entry is one line of a session file. Fields are used according to Type.
@@ -67,6 +68,9 @@ type Entry struct {
 
 	// name
 	Name string `json:"name,omitempty"`
+
+	// goal: a snapshot of the session's goal (null when cleared)
+	Goal json.RawMessage `json:"goal,omitempty"`
 }
 
 // ToolMeta records how a tool call went, for redisplay on resume.

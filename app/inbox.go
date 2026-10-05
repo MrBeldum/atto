@@ -49,6 +49,7 @@ func (a *App) watchInbox() {
 				return // session switched; leave events for when it is resumed
 			}
 			a.jobCount, a.timerCount = nJobs, nTimers
+			a.pollGoal()
 			a.pendingEvents = append(a.pendingEvents, evs...)
 			a.deliverEvents()
 		})

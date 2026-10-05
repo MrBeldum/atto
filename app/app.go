@@ -16,6 +16,7 @@ import (
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/events"
+	"github.com/sebastianrcnt/atto/goal"
 	"github.com/sebastianrcnt/atto/hooks"
 	"github.com/sebastianrcnt/atto/jobs"
 	"github.com/sebastianrcnt/atto/session"
@@ -83,6 +84,8 @@ type App struct {
 	// Inbox: events waiting for delivery, and counts for the status line.
 	pendingEvents        []events.Event
 	jobCount, timerCount int
+
+	goal goalState
 
 	// Status line state.
 	gitBranch   string
@@ -186,6 +189,7 @@ func Run(opts Options) error {
 	})
 	a.ui.Stop()
 	a.sess.Close()
+	_ = goal.Clear(a.sess.ID) // the session file keeps the goal's snapshot
 	// Like codex, background jobs end with the session that started them.
 	if n := jobs.KillAll(a.sess.ID); n > 0 {
 		fmt.Printf("atto: stopped %d background job(s)\n", n)
@@ -213,6 +217,7 @@ func (a *App) leaveSession() {
 	if a.sess == nil {
 		return
 	}
+	_ = goal.Clear(a.sess.ID) // the session file keeps the goal's snapshot
 	if n := jobs.KillAll(a.sess.ID); n > 0 {
 		a.notice("Stopped %d background job(s) of the previous conversation.", n)
 	}
@@ -229,6 +234,7 @@ func (a *App) newSession() {
 	a.agent.SetSession(a.sess.ID, sessionEnv(a.sess.ID))
 	a.hooks.SetSession(a.sess.ID, a.sess.Path)
 	a.setLiveSession(a.sess.ID)
+	a.goal = goalState{}
 	a.recModel, a.recEffort, a.sessName = "", "", ""
 	a.statusTrigger()
 }
@@ -251,7 +257,7 @@ func (a *App) sessionStartHook(source string) {
 // sessionEnv lets commands the agent runs find this session ("atto history")
 // and the atto binary itself.
 func sessionEnv(id string) []string {
-	env := []string{"ATTO_SESSION_ID=" + id}
+	env := []string{"ATTO_SESSION_ID=" + id, config.EnvAgent + "=1"}
 	if exe, err := os.Executable(); err == nil {
 		env = append(env, "PATH="+filepath.Dir(exe)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
@@ -384,6 +390,7 @@ func (a *App) recordSettings() {
 func (a *App) startTurn(text string) {
 	a.add(&userBlock{text: text})
 	a.runKind = "turn"
+	a.goal.turnTools, a.goal.budgetSent = 0, false
 	a.recordSettings()
 	a.start("Thinking", func(ctx context.Context, emit func(any)) error {
 		return a.agent.Run(ctx, text, emit)
@@ -466,6 +473,7 @@ func (a *App) onEvent(ev any) {
 		}
 		a.text.text.WriteString(e.Text)
 	case agent.ToolStart:
+		a.goal.turnTools++
 		a.endStream()
 		b := &toolBlock{args: e.Args, timeout: e.Timeout, start: time.Now(), expander: expander{d: &a.details}}
 		a.tools[e.ID] = b
@@ -485,6 +493,7 @@ func (a *App) onEvent(ev any) {
 		a.endStream()
 		a.ctxTokens = e.Context
 		a.usage.add(e.Usage)
+		a.goalStep(e.Usage.PromptTokens, e.Usage.CachedTokens, e.Usage.CompletionTokens)
 		a.statusTrigger()
 	case agent.SteerCommitted:
 		var user []string // events were already shown when they arrived

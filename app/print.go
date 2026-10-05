@@ -9,12 +9,14 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/term"
 
 	"github.com/sebastianrcnt/atto/agent"
 	"github.com/sebastianrcnt/atto/config"
+	"github.com/sebastianrcnt/atto/goal"
 	"github.com/sebastianrcnt/atto/hooks"
 	"github.com/sebastianrcnt/atto/jobs"
 	"github.com/sebastianrcnt/atto/provider"
@@ -33,6 +35,10 @@ type PrintOptions struct {
 	Continue bool   // continue the latest session in this directory
 	Resume   string // continue the session with this ID
 	NoSave   bool   // do not record the run as a session
+	// Goal keeps running turns until the objective is done (or blocked,
+	// out of budget, or failing); GoalBudget caps its tokens.
+	Goal       string
+	GoalBudget string
 }
 
 // printResult is the final JSON object for --output-format json and the
@@ -46,6 +52,8 @@ type printResult struct {
 	SessionID  string `json:"session_id"`
 	Model      string `json:"model"`
 	NumSteps   int    `json:"num_steps"`
+	GoalStatus string `json:"goal_status,omitempty"`
+	GoalNote   string `json:"goal_note,omitempty"`
 	DurationMs int64  `json:"duration_ms"`
 	Usage      struct {
 		InputTokens       int `json:"input_tokens"`
@@ -219,15 +227,89 @@ func RunPrint(o PrintOptions) error {
 		sess.Append(session.Entry{Type: session.TypeEffort, Effort: ag.Effort()})
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	p := &printer{format: o.Format, partial: o.Partial, verbose: o.Verbose, out: os.Stdout, errOut: os.Stderr}
 	res := printResult{Type: "result", SessionID: sess.ID, Model: model.ProviderName + "/" + model.Model.ID}
 	p.emit(map[string]any{"type": "init", "session_id": sess.ID, "model": res.Model, "effort": ag.Effort(), "cwd": cwd})
 
+	var g *goal.Goal
+	if o.Goal != "" {
+		budget := 0
+		if o.GoalBudget != "" {
+			if budget, err = goal.ParseBudget(o.GoalBudget); err != nil {
+				return err
+			}
+		}
+		if g, err = goal.New(o.Goal, budget); err != nil {
+			return err
+		}
+		if err := goal.Save(sess.ID, g); err != nil {
+			return err
+		}
+		defer goal.Clear(sess.ID)
+	}
+
 	began := time.Now()
-	runErr := ag.Run(ctx, o.Prompt, func(ev any) { p.event(ev, &res) })
+	input := o.Prompt
+	if input == "" && g != nil {
+		input = g.Continuation()
+	}
+	var runErr error
+	for {
+		turnStart, tools := time.Now(), 0
+		budgetSent := false
+		runErr = ag.Run(ctx, input, func(ev any) {
+			p.event(ev, &res)
+			if g == nil {
+				return
+			}
+			switch e := ev.(type) {
+			case agent.ToolStart:
+				tools++
+			case agent.StepEnd:
+				// The goal lives here; from the file only the model's
+				// complete/blocked report is taken (see goal.Adopt).
+				file, _ := goal.Load(sess.ID)
+				g.Adopt(file)
+				if g.Status == goal.Active && g.Account(e.Usage.PromptTokens, e.Usage.CachedTokens, e.Usage.CompletionTokens) && !budgetSent {
+					budgetSent = true
+					ag.Steer(g.BudgetMessage())
+				}
+				_ = goal.Save(sess.ID, g)
+			}
+		})
+		if g == nil {
+			break
+		}
+		file, _ := goal.Load(sess.ID)
+		g.Adopt(file)
+		var failed error
+		if runErr != nil && !errors.Is(runErr, context.Canceled) {
+			failed = runErr
+		}
+		g.TurnEnded(time.Since(turnStart), failed, tools)
+		_ = goal.Save(sess.ID, g)
+		if g.Status != goal.Active || errors.Is(runErr, context.Canceled) {
+			break
+		}
+		p.flushStep()
+		if o.Verbose && (o.Format == "" || o.Format == "text") {
+			fmt.Fprintf(os.Stderr, "\n◎ continuing goal · turn %d · %s\n", g.Turns+1, g.Usage())
+		}
+		input = g.Continuation()
+	}
+	if g != nil {
+		res.GoalStatus, res.GoalNote = string(g.Status), g.Note
+		if !o.NoSave { // so resuming the session shows the goal
+			raw, _ := json.Marshal(g)
+			sess.Append(session.Entry{Type: session.TypeGoal, Goal: raw})
+		}
+		if g.Status != goal.Complete && runErr == nil {
+			runErr = fmt.Errorf("goal %s: %s", g.Status, g.Note)
+		}
+	}
 	if n := jobs.KillAll(sess.ID); n > 0 { // jobs end with the run
 		fmt.Fprintf(os.Stderr, "atto: stopped %d background job(s)\n", n)
 	}

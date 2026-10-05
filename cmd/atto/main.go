@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/sebastianrcnt/atto/app"
+	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/server"
 )
@@ -25,14 +26,33 @@ usage:
   atto logout <provider>            remove stored credentials
   atto history grep|show ...        search a session transcript
   atto job|monitor|timer|sleep ...  background jobs and wake-ups (atto job for details)
+  atto goal [complete|blocked|set]  the session goal (set one with /goal or -goal)
   atto serve [-listen addr]         JSON-RPC over HTTP + SSE, with a web client
   atto app-server                   JSON-RPC over stdio (JSON lines)
 
 flags:
 `
 
+// nestedRefused are the commands an atto agent may not run from its shell:
+// starting another agent (which would recurse and spend tokens unseen) or
+// changing credentials. "" is atto itself (interactive or -p).
+var nestedRefused = map[string]bool{"": true, "serve": true, "app-server": true, "login": true, "logout": true, "auth": true}
+
+func refuseNested(cmd string) {
+	if !config.InAgent() || !nestedRefused[cmd] {
+		return
+	}
+	what := "start another atto agent"
+	if cmd == "login" || cmd == "logout" || cmd == "auth" {
+		what = "change atto's credentials"
+	}
+	fmt.Fprintf(os.Stderr, "atto: commands run by an atto agent can't %s (%s is set). Do the work in this session instead; for background work use atto job.\n", what, config.EnvAgent)
+	os.Exit(2)
+}
+
 func main() {
 	if len(os.Args) > 1 {
+		refuseNested(os.Args[1])
 		sub := map[string]func([]string, io.Writer) error{
 			"history":    app.RunHistory,
 			"auth":       app.RunAuth,
@@ -41,6 +61,7 @@ func main() {
 			"monitor":    app.RunMonitor,
 			"timer":      app.RunTimer,
 			"sleep":      app.RunSleep,
+			"goal":       app.RunGoal,
 			"_supervise": app.RunSupervise,
 			"login":      app.RunLogin,
 			"logout":     app.RunLogout,
@@ -80,6 +101,8 @@ func main() {
 	verbose := fs.Bool("v", false, "print mode: show tool activity on stderr")
 	maxSteps := fs.Int("max-steps", 0, "print mode: stop after this many model calls")
 	noSave := fs.Bool("no-save", false, "print mode: do not save the run as a session")
+	goalObj := fs.String("goal", "", "print mode: keep working until this objective is done")
+	goalBudget := fs.String("goal-budget", "", "print mode: token budget for -goal, e.g. 200k")
 
 	// Allow flags before and after the prompt: atto -p "fix it" -m x.
 	var positional []string
@@ -99,6 +122,7 @@ func main() {
 		return
 	}
 	provider.UserAgent = "github.com/sebastianrcnt/atto/" + app.Version
+	refuseNested("")
 
 	var err error
 	if *print {
@@ -109,10 +133,14 @@ func main() {
 			os.Exit(2)
 		}
 		var prompt string
-		if prompt, err = app.ReadPromptInput(positional); err == nil {
+		if *goalObj == "" || len(positional) > 0 {
+			prompt, err = app.ReadPromptInput(positional) // a goal needs no prompt
+		}
+		if err == nil {
 			err = app.RunPrint(app.PrintOptions{
 				Prompt: prompt, Model: *model, Effort: *effort, Format: *format, Partial: *partial,
 				Verbose: *verbose, MaxSteps: *maxSteps, Continue: *cont, Resume: *sessionID, NoSave: *noSave,
+				Goal: *goalObj, GoalBudget: *goalBudget,
 			})
 		}
 	} else {

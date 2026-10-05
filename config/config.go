@@ -27,6 +27,15 @@ import (
 
 const EnvDir = "ATTO_DIR"
 
+// EnvAgent is set in the environment of every command an atto agent runs.
+// atto refuses to start another agent (or change credentials) when it is
+// set, so a model cannot recurse into atto by accident. It is a guard, not
+// a sandbox: the model can unset it.
+const EnvAgent = "ATTO_AGENT"
+
+// InAgent reports whether this process was started by an atto agent.
+func InAgent() bool { return os.Getenv(EnvAgent) != "" }
+
 // Dir returns the atto root directory.
 func Dir() string {
 	if d := os.Getenv(EnvDir); d != "" {

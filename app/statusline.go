@@ -220,6 +220,9 @@ func (a *App) renderStatus(width int) []string {
 	if off := a.ui.ScrollOffset(); off > 0 {
 		flags = append(flags, tui.FG(3, fmt.Sprintf("↓ %d more lines (scroll or PgDn)", off)))
 	}
+	if p := a.goalPill(); p != "" {
+		flags = append(flags, p)
+	}
 	if a.jobCount > 0 {
 		flags = append(flags, tui.FG(2, fmt.Sprintf("● %d job%s running (/jobs)", a.jobCount, plural(a.jobCount))))
 	}

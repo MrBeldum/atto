@@ -269,6 +269,7 @@ func (a *App) resume(path string) {
 		}
 	}
 	a.replay(entries)
+	a.restoreGoal(entries)
 	if h.Cwd != a.cwd {
 		a.notice("Resumed a session from %s; commands run in %s.", shortPath(h.Cwd), shortPath(a.cwd))
 	}
