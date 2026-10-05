@@ -28,7 +28,7 @@ usage:
   cat file | atto -p "explain"      stdin is appended to the prompt
   atto models [refresh]             list available models
   atto auth set <provider>          store an API key
-  atto login openai                 sign in with ChatGPT (subscription)
+  atto login [provider]             sign in (ChatGPT, …); /login inside atto
   atto logout <provider>            remove stored credentials
   atto resume [id]                  resume a session (no id: pick one)
   atto sessions [list|show|rename|archive|unarchive|delete]
