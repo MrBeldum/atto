@@ -1,11 +1,39 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/sebastianrcnt/atto/agent"
+	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/tui"
 )
+
+func TestSkillCommands(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ATTO_DIR", filepath.Join(tmp, "atto"))
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+	skill := filepath.Join(tmp, "atto", "skills", "pdf", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skill), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skill, []byte("---\nname: pdf\ndescription: Work with PDFs\n---\nUse pdftotext."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &App{editor: tui.NewEditor("› "), agent: agent.New(config.ModelRef{}, "", tmp)}
+	a.editor.SetText("/skill:p")
+	lines := a.renderSuggestions(80)
+	if len(lines) == 0 || !strings.Contains(tui.StripEscapes(lines[0]), "/skill:pdf") {
+		t.Fatalf("the skill is in the command list: %q", lines)
+	}
+	a.suggestionKey("tab")
+	if got := a.editor.Text(); got != "/skill:pdf " {
+		t.Fatalf("tab completes the skill: %q", got)
+	}
+}
 
 func TestSuggestionList(t *testing.T) {
 	a := &App{editor: tui.NewEditor("› ")}
