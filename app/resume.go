@@ -15,13 +15,13 @@ import (
 // resumePicker lists saved sessions, codex-style: newest first, filtered
 // to the current directory, type to search. Tab toggles Cwd/All, shift+tab
 // toggles Active/Archived, ctrl+a archives (or unarchives) the selection.
+// Navigation, search and scrolling are the shared SelectList's; this adds the
+// toggles and draws two-line rows.
 type resumePicker struct {
 	cwd       string
 	all       bool
 	archived  bool
-	query     string
-	items     []session.Summary
-	selected  int
+	list      *tui.SelectList
 	current   string // path of the open session, marked in the list
 	onPick    func(session.Summary)
 	onArchive func(session.Summary)
@@ -30,74 +30,64 @@ type resumePicker struct {
 
 const resumeVisible = 6
 
+func newResumePicker(cwd, current string) *resumePicker {
+	p := &resumePicker{cwd: cwd, current: current}
+	p.list = &tui.SelectList{
+		MaxVisible:   resumeVisible,
+		Filterable:   true,
+		FilterPrompt: "Search: ",
+		FilterHint:   "Type to search",
+		RenderRow:    p.row,
+	}
+	p.list.OnSelect = func(it tui.SelectItem) { p.onPick(it.Data.(session.Summary)) }
+	p.list.OnCancel = func() { p.onCancel() }
+	p.load()
+	return p
+}
+
+// load refreshes the sessions from disk; the selection stays in range.
 func (p *resumePicker) load() {
 	dir := p.cwd
 	if p.all {
 		dir = ""
 	}
-	p.items, _ = session.List(dir, p.archived)
-	p.selected = min(p.selected, max(0, len(p.items)-1))
-}
-
-func (p *resumePicker) filtered() []session.Summary {
-	if p.query == "" {
-		return p.items
+	sums, _ := session.List(dir, p.archived)
+	p.list.Items = nil
+	for _, s := range sums {
+		// The label is what searching matches: name, first message and ID.
+		p.list.Items = append(p.list.Items, tui.SelectItem{
+			Label: strings.Join(strings.Fields(s.Name+" "+s.Preview), " "),
+			Value: s.ID,
+			Data:  s,
+		})
 	}
-	q := strings.ToLower(p.query)
-	var out []session.Summary
-	for _, s := range p.items {
-		if strings.Contains(strings.ToLower(s.Name), q) || strings.Contains(strings.ToLower(s.Preview), q) || strings.Contains(s.ID, q) {
-			out = append(out, s)
-		}
+	switch {
+	case len(sums) == 0 && p.archived:
+		p.list.Empty = "  No archived sessions"
+	case len(sums) == 0:
+		p.list.Empty = "  No saved sessions"
+	default:
+		p.list.Empty = "  No results for your search"
 	}
-	return out
 }
 
 func (p *resumePicker) HandleInput(data string) {
-	items := p.filtered()
 	switch tui.Key(data) {
-	case "up", "ctrl+p":
-		p.selected = max(0, p.selected-1)
-	case "down", "ctrl+n":
-		p.selected = min(max(0, len(items)-1), p.selected+1)
-	case "pageup":
-		p.selected = max(0, p.selected-resumeVisible)
-	case "pagedown":
-		p.selected = min(max(0, len(items)-1), p.selected+resumeVisible)
 	case "tab":
 		p.all = !p.all
-		p.selected = 0
+		p.list.Selected = 0
 		p.load()
 	case "shift+tab":
 		p.archived = !p.archived
-		p.selected = 0
+		p.list.Selected = 0
 		p.load()
 	case "ctrl+a":
-		if p.selected < len(items) {
-			p.onArchive(items[p.selected])
+		if it, ok := p.list.Current(); ok {
+			p.onArchive(it.Data.(session.Summary))
 			p.load()
 		}
-	case "enter":
-		if p.selected < len(items) {
-			p.onPick(items[p.selected])
-		}
-	case "escape":
-		if p.query != "" {
-			p.query, p.selected = "", 0
-		} else {
-			p.onCancel()
-		}
-	case "ctrl+c":
-		p.onCancel()
-	case "backspace":
-		if r := []rune(p.query); len(r) > 0 {
-			p.query, p.selected = string(r[:len(r)-1]), 0
-		}
 	default:
-		if tui.Printable(data) {
-			p.query += data
-			p.selected = 0
-		}
+		p.list.HandleInput(data)
 	}
 }
 
@@ -133,60 +123,40 @@ func (p *resumePicker) Render(width int) []string {
 		tui.Truncate(tui.Dim("Filter: ")+toggle("Cwd", "All", p.all)+tui.Dim(" (tab)  Status: ")+toggle("Active", "Archived", p.archived)+tui.Dim(" (shift+tab)"), width, "…"),
 		tui.Truncate(tui.Dim("↑↓ select · enter resume · "+archiveKey+" · esc cancel"), width, "…"),
 	}
-	search := tui.Dim("Type to search")
-	if p.query != "" {
-		search = p.query
-	}
-	out = append(out, tui.Truncate(tui.Dim("Search: ")+search, width, "…"))
+	return append(out, p.list.Render(width)...)
+}
 
-	items := p.filtered()
-	switch {
-	case len(p.items) == 0 && p.archived:
-		return append(out, tui.Dim("  No archived sessions"))
-	case len(p.items) == 0:
-		return append(out, tui.Dim("  No saved sessions"))
-	case len(items) == 0:
-		return append(out, tui.Dim("  No results for your search"))
+// row draws a session as two lines: its title, then when and how long.
+func (p *resumePicker) row(it tui.SelectItem, selected bool, width int) []string {
+	s := it.Data.(session.Summary)
+	preview := strings.Join(strings.Fields(s.Preview), " ")
+	title := preview
+	if s.Name != "" {
+		title = tui.Bold(s.Name) + tui.Dim("  "+preview)
 	}
-	start := max(0, min(p.selected-resumeVisible/2, len(items)-resumeVisible))
-	end := min(len(items), start+resumeVisible)
-	for i := start; i < end; i++ {
-		s := items[i]
-		preview := strings.Join(strings.Fields(s.Preview), " ")
-		title := preview
-		if s.Name != "" {
-			title = tui.Bold(s.Name) + tui.Dim("  "+preview)
-		}
-		if title == "" {
-			title = "(no message yet)"
-		}
-		marker := "  "
-		if i == p.selected {
-			marker = tui.FG(6, "› ")
-		}
-		out = append(out, tui.Truncate(marker+title, width, "…"))
-		meta := fmt.Sprintf("    %s · %d messages", relTime(s.Updated), s.Messages)
-		if s.Path == p.current {
-			meta += " · current"
-		}
-		if p.all {
-			meta += " · ⌁ " + shortPath(s.Cwd)
-		}
-		out = append(out, tui.Truncate(tui.Dim(meta), width, "…"))
+	if title == "" {
+		title = "(no message yet)"
 	}
-	if len(items) > resumeVisible {
-		out = append(out, tui.Dim(fmt.Sprintf("  (%d/%d)", p.selected+1, len(items))))
+	marker := "  "
+	if selected {
+		marker = tui.FG(6, "› ")
 	}
-	return out
+	meta := fmt.Sprintf("    %s · %d messages", relTime(s.Updated), s.Messages)
+	if s.Path == p.current {
+		meta += " · current"
+	}
+	if p.all {
+		meta += " · ⌁ " + shortPath(s.Cwd)
+	}
+	return []string{tui.Truncate(marker+title, width, "…"), tui.Truncate(tui.Dim(meta), width, "…")}
 }
 
 // cmdResume opens the session picker. It works mid-turn too: picking a
 // session interrupts the running turn and switches once it has stopped.
 func (a *App) cmdResume(string) {
-	p := &resumePicker{cwd: a.cwd, current: a.sess.Path}
-	p.load()
-	if len(p.items) > 1 && p.items[0].Path == a.sess.Path {
-		p.selected = 1 // the open session is first; default to the one before it
+	p := newResumePicker(a.cwd, a.sess.Path)
+	if items := p.list.Items; len(items) > 1 && items[0].Data.(session.Summary).Path == a.sess.Path {
+		p.list.Selected = 1 // the open session is first; default to the one before it
 	}
 	p.onCancel = a.closeModal
 	p.onArchive = func(s session.Summary) {
