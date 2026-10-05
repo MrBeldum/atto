@@ -85,6 +85,7 @@ A model can set:
 
 - `efforts`: the reasoning levels it supports
 - `effortMap`: how atto's effort levels translate into what the server expects
+- `input`: `["text", "image"]` if it accepts images (default: text only; catalog models know this already)
 
 ## Use
 
@@ -109,6 +110,11 @@ atto -p -goal "make the tests pass" -goal-budget 200k
 | `Shift+Tab` | cycle reasoning effort |
 | `Ctrl+T` | expand all thinking and command output (or click a block) |
 | `Ctrl+C` | interrupt; clears the input when idle; quits when the input is empty |
+| `Ctrl+V` / `Alt+V` | attach the image on the clipboard (use `Alt+V` where the terminal pastes text on `Ctrl+V`, as on Windows) |
+
+Pasting the path of an image file, or dropping the file on the terminal, attaches it too. Images show as `[image 1: 1024x768 PNG]` in the input; delete the placeholder to drop the image. Images larger than 2048 pixels are scaled down. Clipboard images need `osascript` (macOS; `pngpaste` is used if installed), `wl-paste` or `xclip` (Linux), or PowerShell (Windows, WSL).
+
+Pastes over 1000 characters show as `[Pasted Content 1234 chars]` and are sent in full.
 
 ### Slash commands
 
@@ -172,6 +178,7 @@ Everything lives in `~/.atto`. Set `ATTO_DIR` to move it.
 | `models.json` | your providers and models |
 | `auth.json` | keys and logins (mode 0600) |
 | `sessions/` | saved sessions |
+| `images/` | images sent in sessions, by content hash |
 
 ## License
 

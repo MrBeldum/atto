@@ -54,7 +54,7 @@ func (t *ProcessTerminal) Start(onInput func(string), onResize func()) error {
 	// interrupted portably, and the process exits shortly after anyway.
 	go func() {
 		parser := &inputParser{}
-		buf := make([]byte, 4096)
+		buf := make([]byte, 64*1024) // large, so a paste arrives in few reads
 		for {
 			n, err := t.in.Read(buf)
 			if n > 0 {

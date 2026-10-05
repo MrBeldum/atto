@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -20,9 +21,30 @@ const PastePrefix = "\x00paste:"
 type inputParser struct {
 	pending string
 	paste   *strings.Builder
+	// lastBurst is when the last unbracketed paste was read; now is
+	// time.Now unless a test sets it.
+	lastBurst time.Time
+	now       func() time.Time
 }
 
+// burstGap is how soon after an unbracketed paste a read still belongs
+// to it: a long paste arrives over several reads.
+const burstGap = 30 * time.Millisecond
+
 func (p *inputParser) feed(data string) []string {
+	if p.pending == "" && p.paste == nil {
+		now := time.Now
+		if p.now != nil {
+			now = p.now
+		}
+		t := now()
+		cont := !p.lastBurst.IsZero() && t.Sub(p.lastBurst) < burstGap && plainText(data)
+		if cont || unbracketedPaste(data) {
+			p.lastBurst = t
+			return []string{PastePrefix + data}
+		}
+		p.lastBurst = time.Time{}
+	}
 	s := p.pending + data
 	p.pending = ""
 	var out []string
@@ -30,7 +52,16 @@ func (p *inputParser) feed(data string) []string {
 		if p.paste != nil {
 			end := strings.Index(s, pasteEnd)
 			if end < 0 {
-				p.paste.WriteString(s)
+				// Hold back a partial end marker split across reads.
+				keep := 0
+				for k := min(len(pasteEnd)-1, len(s)); k > 0; k-- {
+					if strings.HasSuffix(s, pasteEnd[:k]) {
+						keep = k
+						break
+					}
+				}
+				p.paste.WriteString(s[:len(s)-keep])
+				p.pending = s[len(s)-keep:]
 				return out
 			}
 			p.paste.WriteString(s[:end])
@@ -53,6 +84,26 @@ func (p *inputParser) feed(data string) []string {
 		s = s[n:]
 	}
 	return out
+}
+
+// unbracketedPaste reports whether one read looks like pasted text that
+// arrived without bracketed-paste markers, as in the classic Windows
+// console: plain text with a line break followed by more text. Typing
+// cannot produce that within one read, so a paste no longer submits at its
+// first newline. (codex-rs detects such bursts by key timing instead.)
+func unbracketedPaste(data string) bool {
+	return strings.ContainsAny(strings.TrimRight(data, "\r\n"), "\r\n") && plainText(data)
+}
+
+// plainText reports whether data is text and line breaks only: no escape
+// sequences or control keys.
+func plainText(data string) bool {
+	for _, r := range data {
+		if (r < 0x20 && r != '\r' && r != '\n' && r != '\t') || r == 0x7f {
+			return false
+		}
+	}
+	return data != "" && utf8.ValidString(data)
 }
 
 // seqLen returns the length of the first key sequence in s and whether it is

@@ -18,7 +18,9 @@ import (
 	"github.com/sebastianrcnt/atto/events"
 	"github.com/sebastianrcnt/atto/goal"
 	"github.com/sebastianrcnt/atto/hooks"
+	"github.com/sebastianrcnt/atto/images"
 	"github.com/sebastianrcnt/atto/jobs"
+	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/session"
 	"github.com/sebastianrcnt/atto/tui"
 	"github.com/sebastianrcnt/atto/update"
@@ -51,6 +53,8 @@ type App struct {
 
 	editor *tui.Editor
 	modal  modal
+	// clipboard reads an image for Ctrl+V / Alt+V.
+	clipboard func(context.Context) (provider.Image, error)
 
 	busy     bool
 	runKind  string // "turn" or "compact" while busy
@@ -65,7 +69,7 @@ type App struct {
 	// Codex-style pending input: Enter during a turn steers it (delivered
 	// after the next tool call); Tab queues a follow-up turn.
 	pendingSteers            []string
-	queued                   []string
+	queued                   []queuedInput
 	sendSteersAfterInterrupt bool
 	queuePaused              bool
 
@@ -142,6 +146,8 @@ func Run(opts Options) error {
 		tools:  map[string]*toolBlock{},
 		cwd:    cwd,
 		quit:   make(chan struct{}),
+
+		clipboard: images.SystemClipboard().Read,
 	}
 	if opts.Inline || settings.Renderer == "inline" || (settings.Renderer == "" && legacyConsole()) {
 		a.ui.Mode = tui.Inline
@@ -206,6 +212,7 @@ func (a *App) build() {
 	a.editor = tui.NewEditor(tui.FG(6, "› "))
 	a.editor.Rule = tui.Dim
 	a.editor.OnSubmit = a.submit
+	a.editor.OnPaste = a.pasteImagePath
 
 	a.ui.Footer.Add(tui.Func(a.renderActivity), tui.Func(a.renderPending), tui.Func(a.renderInput), tui.Func(a.renderSuggestions), tui.Func(a.renderStatus))
 	a.ui.SetFocus(a.editor)
@@ -340,6 +347,9 @@ func (a *App) onInput(data string) bool {
 	case "ctrl+l":
 		a.ui.Redraw()
 		return true
+	case "ctrl+v":
+		a.pasteClipboardImage()
+		return true
 	case "tab":
 		if m := a.matchingCommands(); len(m) > 0 {
 			a.editor.SetText("/" + m[0].name + " ")
@@ -355,11 +365,19 @@ func (a *App) onInput(data string) bool {
 			return true
 		}
 	}
+	if data == "\x1bv" { // alt+v: where the terminal keeps Ctrl+V for pasting text
+		a.pasteClipboardImage()
+		return true
+	}
 	return false
 }
 
-func (a *App) submit(text string) {
+func (a *App) submit(text string, att []tui.Attachment) {
 	a.ui.ScrollToBottom()
+	if len(att) > 0 && !strings.HasPrefix(text, "/") {
+		a.submitWithImages(text, att)
+		return
+	}
 	switch {
 	case text == "":
 		// Enter on an empty prompt resumes a paused queue.
@@ -372,9 +390,9 @@ func (a *App) submit(text string) {
 	case a.busy && a.runKind == "turn":
 		a.steer(text)
 	case a.busy:
-		a.enqueue(text)
+		a.enqueue(text, nil)
 	default:
-		a.startTurn(text)
+		a.startTurn(text, nil)
 	}
 }
 
@@ -392,13 +410,22 @@ func (a *App) recordSettings() {
 	}
 }
 
-func (a *App) startTurn(text string) {
+// startTurn runs a turn for text and its image attachments.
+func (a *App) startTurn(text string, att []tui.Attachment) {
+	imgs := attachedImages(att)
+	for _, im := range imgs {
+		if err := images.Save(im); err != nil {
+			a.errorNotice(fmt.Errorf("saving image: %w", err))
+			a.restoreToEditor([]string{text}, att...)
+			return
+		}
+	}
 	a.add(&userBlock{text: text})
 	a.runKind = "turn"
 	a.goal.turnTools, a.goal.budgetSent = 0, false
 	a.recordSettings()
 	a.start("Thinking", func(ctx context.Context, emit func(any)) error {
-		return a.agent.Run(ctx, text, emit)
+		return a.agent.RunWithImages(ctx, text, imgs, emit)
 	})
 }
 
