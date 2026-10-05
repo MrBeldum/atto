@@ -88,7 +88,7 @@ func (a *App) cmdContext(arg string) {
 			name  string
 			chars int
 		}{
-			{"system prompt", b.System}, {"tool schema", b.Tools}, {"user messages", b.User},
+			{"system prompt", b.System}, {"tool schema", b.Tools}, {"user messages", b.User}, {"images", b.Images},
 			{"handoff notes", b.Notes}, {"assistant text", b.Assistant}, {"reasoning", b.Reasoning},
 			{"tool calls", b.ToolCalls}, {"tool results", b.ToolResults},
 		}

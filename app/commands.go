@@ -253,7 +253,7 @@ func (a *App) cmdEffort(arg string) {
 
 func (a *App) cmdCompact(string) {
 	if a.busy {
-		a.enqueue("/compact")
+		a.enqueue("/compact", nil)
 		return
 	}
 	a.runKind = "compact"
@@ -275,7 +275,7 @@ func (a *App) reset() {
 
 func (a *App) cmdClear(string) {
 	if a.busy {
-		a.enqueue("/clear")
+		a.enqueue("/clear", nil)
 		return
 	}
 	a.reset()

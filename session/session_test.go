@@ -3,10 +3,37 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/sebastianrcnt/atto/provider"
 )
+
+func TestImageReferencesRoundTrip(t *testing.T) {
+	t.Setenv("ATTO_DIR", t.TempDir())
+	w := New("/work")
+	im := provider.Image{File: "ab12.png", MIME: "image/png", Width: 640, Height: 480, Data: []byte("pixels")}
+	w.Append(Entry{Type: TypeMessage, Message: &provider.Message{Role: "user", Content: "look [image 1: 640x480 PNG]", Images: []provider.Image{im}}})
+	w.Append(Entry{Type: TypeCompaction, Replacement: []provider.Message{{Role: "user", Content: "kept", Images: []provider.Image{im}}}})
+	w.Close()
+
+	raw, _ := os.ReadFile(w.Path)
+	if strings.Contains(string(raw), "pixels") || strings.Contains(string(raw), "cGl4ZWxz") {
+		t.Fatalf("image bytes written to the session: %s", raw)
+	}
+	_, entries, err := Load(w.Path)
+	if err != nil || len(entries) != 2 {
+		t.Fatal(err)
+	}
+	ref := im
+	ref.Data = nil
+	for _, got := range [][]provider.Image{entries[0].Message.Images, entries[1].Replacement[0].Images} {
+		if len(got) != 1 || !reflect.DeepEqual(got[0], ref) {
+			t.Fatalf("reference %+v, want %+v", got, ref)
+		}
+	}
+}
 
 func TestWriterLoadList(t *testing.T) {
 	t.Setenv("ATTO_DIR", t.TempDir())

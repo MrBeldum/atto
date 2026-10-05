@@ -20,22 +20,6 @@ type ReasoningState struct {
 	Items []json.RawMessage `json:"items"`
 }
 
-// withoutReasoning drops Responses-only state before messages go to a chat
-// completions server.
-func withoutReasoning(msgs []Message) []Message {
-	for i := range msgs {
-		if msgs[i].Reasoning == nil {
-			continue
-		}
-		out := append([]Message(nil), msgs...)
-		for j := range out {
-			out[j].Reasoning = nil
-		}
-		return out
-	}
-	return msgs
-}
-
 const (
 	chatGPTBaseURL = "https://api.openai.com/v1"
 	// promptCacheKeyMax is the longest prompt_cache_key the API accepts.
@@ -169,9 +153,7 @@ func responsesInput(msgs []Message, model string) (instructions string, input []
 			}
 			input = append(input, map[string]any{"role": "developer", "content": m.Content})
 		case "user":
-			input = append(input, map[string]any{
-				"role": "user", "content": []map[string]any{{"type": "input_text", "text": m.Content}},
-			})
+			input = append(input, map[string]any{"role": "user", "content": responsesUserContent(m)})
 		case "assistant":
 			if m.Content == "" && len(m.ToolCalls) == 0 {
 				continue
