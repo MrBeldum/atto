@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"strings"
 	"testing"
 )
@@ -65,5 +66,16 @@ func TestResumeArgs(t *testing.T) {
 	}
 	if !nestedRefused["resume"] {
 		t.Error("resume starts an agent and must be refused inside one")
+	}
+}
+
+func TestImageFlagRepeats(t *testing.T) {
+	fs := flag.NewFlagSet("atto", flag.ContinueOnError)
+	p := fs.Bool("p", false, "")
+	var imgs stringList
+	fs.Var(&imgs, "image", "")
+	words := parseInterleaved(fs, []string{"-p", "-image", "a.png", "what", "is", "-image=b.jpg", "this"})
+	if !*p || strings.Join(imgs, ",") != "a.png,b.jpg" || strings.Join(words, " ") != "what is this" {
+		t.Fatalf("p %v, images %q, words %q", *p, imgs, words)
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/sebastianrcnt/atto/core/transcript"
 	"github.com/sebastianrcnt/atto/events"
 	"github.com/sebastianrcnt/atto/hooks"
+	"github.com/sebastianrcnt/atto/images"
 	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/session"
 )
@@ -180,6 +181,8 @@ type threadParams struct {
 	Input    string `json:"input"`
 	Archived bool   `json:"archived"`
 	NumTurns int    `json:"numTurns"`
+	// Images go with turn/start's input (see images.go).
+	Images []ImageInput `json:"images"`
 }
 
 func (s *Server) call(ctx context.Context, method string, raw json.RawMessage) (any, error) {
@@ -281,6 +284,7 @@ func (s *Server) listModels() (any, error) {
 		out = append(out, map[string]any{
 			"id": r.ProviderName + "/" + r.Model.ID, "name": r.Model.DisplayName(),
 			"contextWindow": r.Model.ContextWindow, "efforts": r.Model.Levels(), "hasKey": r.APIKey != "" || len(r.Provider.Env) == 0,
+			"images": r.Model.Images(),
 		})
 	}
 	return map[string]any{"models": out}, nil
@@ -494,13 +498,19 @@ func (s *Server) startTurn(p threadParams) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(p.Input) == "" {
+	if strings.TrimSpace(p.Input) == "" && len(p.Images) == 0 {
 		return nil, invalid("input is required")
 	}
+	m, _ := t.agent.Current()
+	imgs, err := turnImages(p.Images, m)
+	if err != nil {
+		return nil, err
+	}
+	input := images.WithPlaceholders(p.Input, imgs)
 	var turnID string
 	turnID, err = s.begin(t, func(ctx context.Context, emit func(any)) error {
-		emit(transcript.Input{Text: p.Input})
-		return t.agent.Run(ctx, p.Input, emit)
+		emit(transcript.Input{Text: input, Images: imgs})
+		return t.agent.RunWithImages(ctx, input, imgs, emit)
 	})
 	if err != nil {
 		return nil, err

@@ -18,14 +18,19 @@ import (
 	"golang.org/x/term"
 
 	"github.com/sebastianrcnt/atto/agent"
+	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/goal"
+	"github.com/sebastianrcnt/atto/images"
 	"github.com/sebastianrcnt/atto/provider"
 	"github.com/sebastianrcnt/atto/session"
 )
 
 // PrintOptions configures a non-interactive run (atto -p).
 type PrintOptions struct {
-	Prompt   string
+	Prompt string
+	// Images go with the prompt (the first turn of a goal); the prompt
+	// holds their placeholders (see ReadPromptInput).
+	Images   []provider.Image
 	Model    string // provider/id; default model if empty
 	Effort   string // default effort if empty
 	Format   string // "text" (default), "json" or "stream-json"
@@ -66,37 +71,62 @@ type printResult struct {
 var ErrPrintFailed = errors.New("run failed")
 
 // ReadPromptInput combines the prompt arguments with piped stdin, as
-// `cat file | atto -p "explain this"` does. With a prompt argument, stdin
+// `cat file | atto -p "explain this"` does, and reads the images to attach:
+// the files given with -image, then stdin itself when it is an image
+// (`pngpaste - | atto -p "what is this?"`). With a prompt argument, stdin
 // is only read if data shows up promptly: scripts and agents often leave
-// an idle pipe open, which would otherwise block forever.
-func ReadPromptInput(args []string) (string, error) {
+// an idle pipe open, which would otherwise block forever. The images'
+// placeholders ("[image 1: 640x480 PNG]") are added to the text, as the
+// TUI's editor has them.
+func ReadPromptInput(args, imagePaths []string) (string, []provider.Image, error) {
 	prompt := strings.TrimSpace(strings.Join(args, " "))
+	var imgs []provider.Image
+	for _, path := range imagePaths {
+		im, err := images.ReadFile(path)
+		if err != nil {
+			return "", nil, fmt.Errorf("-image %s: %w", path, err)
+		}
+		imgs = append(imgs, im)
+	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		wait := time.Duration(0) // no prompt: stdin is the prompt, wait for it
-		if prompt != "" {
+		if prompt != "" || len(imgs) > 0 {
 			wait = time.Second
 		}
-		in, err := readStdin(os.Stdin, wait)
+		in, err := readStdinBytes(os.Stdin, wait)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
-		if in = strings.TrimSpace(in); in != "" {
+		if images.Sniff(in) {
+			im, err := images.Prepare(in)
+			if err != nil {
+				return "", nil, fmt.Errorf("image on stdin: %w", err)
+			}
+			imgs = append(imgs, im)
+		} else if text := strings.TrimSpace(string(in)); text != "" {
 			if prompt == "" {
-				prompt = in
+				prompt = text
 			} else {
-				prompt += "\n\n" + in
+				prompt += "\n\n" + text
 			}
 		}
 	}
-	if prompt == "" {
-		return "", fmt.Errorf("no prompt: pass it as an argument or on stdin")
+	if prompt == "" && len(imgs) == 0 {
+		return "", nil, fmt.Errorf("no prompt: pass it as an argument or on stdin")
 	}
-	return prompt, nil
+	return images.WithPlaceholders(prompt, imgs), imgs, nil
 }
 
-// readStdin reads r to EOF. If wait > 0 and no data arrives within it,
-// it gives up and returns "".
+// readStdin is readStdinBytes as text.
 func readStdin(r io.Reader, wait time.Duration) (string, error) {
+	b, err := readStdinBytes(r, wait)
+	return string(b), err
+}
+
+// readStdinBytes reads r to EOF (at most images.MaxFileBytes after the
+// first read). If wait > 0 and no data arrives within it, it gives up and
+// returns nothing.
+func readStdinBytes(r io.Reader, wait time.Duration) ([]byte, error) {
 	type chunk struct {
 		b   []byte
 		err error
@@ -112,19 +142,19 @@ func readStdin(r io.Reader, wait time.Duration) (string, error) {
 		select {
 		case c = <-first:
 		case <-time.After(wait):
-			return "", nil
+			return nil, nil
 		}
 	} else {
 		c = <-first
 	}
 	if c.err != nil {
 		if c.err == io.EOF {
-			return string(c.b), nil
+			return c.b, nil
 		}
-		return "", c.err
+		return nil, c.err
 	}
-	rest, err := io.ReadAll(io.LimitReader(r, 16<<20))
-	return string(c.b) + string(rest), err
+	rest, err := io.ReadAll(io.LimitReader(r, images.MaxFileBytes))
+	return append(c.b, rest...), err
 }
 
 // RunPrint runs one prompt without the TUI. Assistant text goes to stdout;
@@ -185,6 +215,19 @@ func RunPrint(o PrintOptions) error {
 		return err
 	}
 
+	if len(o.Images) > 0 {
+		if !model.Model.Images() {
+			return errors.New(images.Unsupported(model.Model.DisplayName(), "-m", config.ModelsPath()))
+		}
+		if !o.NoSave { // the session refers to them by file
+			for _, im := range o.Images {
+				if err := images.Save(im); err != nil {
+					return fmt.Errorf("saving image: %w", err)
+				}
+			}
+		}
+	}
+
 	ag, hk, err := core.NewAgent(cwd, model, effort)
 	if err != nil {
 		return err
@@ -235,9 +278,11 @@ func RunPrint(o PrintOptions) error {
 	if input == "" && d.Goal != nil {
 		input = d.Goal.Continuation()
 	}
+	imgs := o.Images // with the first turn only
 	turn := func(ctx context.Context, input string, emit func(any)) error {
-		emit(transcript.Input{Text: input})
-		err := ag.Run(ctx, input, emit)
+		emit(transcript.Input{Text: input, Images: imgs})
+		err := ag.RunWithImages(ctx, input, imgs, emit)
+		imgs = nil
 		p.tr.End()
 		return err
 	}

@@ -49,6 +49,12 @@ button { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); b
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 select { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); max-width: 220px; }
 #menu { display: none; }
+#attached { max-width: 820px; margin: 0 auto 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+#attached:empty { display: none; }
+.att { position: relative; }
+.att img { height: 56px; border-radius: 8px; border: 1px solid var(--line); display: block; }
+.att button { position: absolute; top: -6px; right: -6px; padding: 0 6px; border-radius: 50%; font-size: 12px; line-height: 18px; }
+#input.drop { background: var(--user); }
 #login { max-width: 420px; margin: 18vh auto; padding: 0 16px; }
 #login input { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); }
 @media (max-width: 720px) {
@@ -78,7 +84,10 @@ select { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); ba
   </div>
   <div id="log"></div>
   <div id="input">
+    <div id="attached"></div>
     <form id="send">
+      <button type="button" id="attach" title="Attach images (or paste or drop them)">+</button>
+      <input type="file" id="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
       <textarea id="text" rows="1" placeholder="Message atto" title="Enter to send, Shift+Enter for a new line"></textarea>
       <button class="primary" id="go">Send</button>
       <button type="button" id="stop" hidden>Stop</button>
@@ -92,6 +101,10 @@ let token = new URLSearchParams(location.hash.slice(1)).get("token") || localSto
 let current = null;             // ThreadInfo of the open thread
 const items = new Map();        // itemId -> {el, item}
 let rpcId = 0;
+let models = [];                // models/list
+let pending = [];               // images to send with the next turn: {mimeType, data, url}
+const imageTypes = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+const maxImageBytes = 10 << 20; // the server's limit
 
 async function rpc(method, params = {}) {
   const r = await fetch("/rpc", {
@@ -190,6 +203,7 @@ function showThread(info) {
   $("title").textContent = (info.name ? info.name + " · " : "") + info.cwd;
   fillEffort(info);
   $("model").value = info.model;
+  showAttach();
   setBusy(info.busy);
   document.querySelectorAll(".thread").forEach((t) => t.classList.toggle("active", t.dataset.id === info.threadId));
   $("side").classList.remove("open");
@@ -217,7 +231,7 @@ async function loadThreads() {
 }
 
 async function loadModels() {
-  const models = (await rpc("models/list")).models || [];
+  models = (await rpc("models/list")).models || [];
   $("model").innerHTML = models.filter((m) => m.hasKey).map((m) => `<option value="${esc(m.id)}">${esc(m.name)} (${esc(m.id.split("/")[0])})</option>`).join("");
 }
 
@@ -248,16 +262,55 @@ function connect() {
   };
 }
 
+// Images: the attach button, paste and drop add them to the next turn.
+function imagesOK() { return (models.find((m) => m.id === $("model").value) || {}).images; }
+function showAttach() { $("attach").hidden = !imagesOK(); }
+function addImages(files) {
+  for (const f of files) {
+    if (!imageTypes.includes(f.type)) { note(`${f.name || "file"}: not a PNG, JPEG, GIF or WebP image`); continue; }
+    if (!imagesOK()) { note("This model does not take images. Switch models to send them."); return; }
+    if (f.size > maxImageBytes) { note(`${f.name || "image"}: larger than 10 MB`); continue; }
+    const r = new FileReader();
+    r.onload = () => { pending.push({ mimeType: f.type, data: r.result, url: URL.createObjectURL(f) }); showPending(); };
+    r.readAsDataURL(f);
+  }
+}
+function showPending() {
+  $("attached").innerHTML = "";
+  pending.forEach((im, i) => {
+    const el = document.createElement("div");
+    el.className = "att";
+    el.innerHTML = `<img alt="image ${i + 1}"><button type="button" title="Remove">×</button>`;
+    el.querySelector("img").src = im.url;
+    el.querySelector("button").onclick = () => { URL.revokeObjectURL(im.url); pending.splice(i, 1); showPending(); };
+    $("attached").appendChild(el);
+  });
+}
+$("attach").onclick = () => $("file").click();
+$("file").onchange = () => { addImages($("file").files); $("file").value = ""; };
+$("text").onpaste = (e) => {
+  const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/"));
+  if (files.length) { e.preventDefault(); addImages(files); }
+};
+$("input").ondragover = (e) => { e.preventDefault(); $("input").classList.add("drop"); };
+$("input").ondragleave = () => $("input").classList.remove("drop");
+$("input").ondrop = (e) => { e.preventDefault(); $("input").classList.remove("drop"); addImages(e.dataTransfer.files); };
+
 $("send").onsubmit = async (e) => {
   e.preventDefault();
   const text = $("text").value.trim();
-  if (!text) return;
+  if (!text && !pending.length) return;
+  if (current?.busy && pending.length) { note("Images go with a new turn: send them once this one finishes."); return; }
   $("text").value = ""; autosize();
+  const images = pending.map(({ mimeType, data }) => ({ mimeType, data }));
   try {
     if (!current) showThread(await rpc("thread/start", { model: $("model").value }));
     if (current.busy) { await rpc("turn/steer", { threadId: current.threadId, input: text }); note("↳ steering: " + text); }
-    else await rpc("turn/start", { threadId: current.threadId, input: text });
-  } catch (err) { note("Error: " + err.message); }
+    else {
+      await rpc("turn/start", { threadId: current.threadId, input: text, images });
+      pending.forEach((im) => URL.revokeObjectURL(im.url)); pending = []; showPending();
+    }
+  } catch (err) { $("text").value = text; note("Error: " + err.message); }
 };
 $("text").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("send").requestSubmit(); } };
 function autosize() { const t = $("text"); t.style.height = "auto"; t.style.height = t.scrollHeight + "px"; }
@@ -265,7 +318,7 @@ $("text").oninput = autosize;
 $("stop").onclick = () => current && rpc("turn/interrupt", { threadId: current.threadId });
 $("new").onclick = async () => { showThread(await rpc("thread/start", { model: $("model").value })); loadThreads(); };
 $("menu").onclick = () => $("side").classList.toggle("open");
-$("model").onchange = async () => { if (current) { current = { ...current, ...(await rpc("thread/setModel", { threadId: current.threadId, model: $("model").value })) }; fillEffort(current); } };
+$("model").onchange = async () => { showAttach(); if (current) { current = { ...current, ...(await rpc("thread/setModel", { threadId: current.threadId, model: $("model").value })) }; fillEffort(current); } };
 $("effort").onchange = async () => { if (current) await rpc("thread/setEffort", { threadId: current.threadId, effort: $("effort").value }).catch((e) => note(e.message)); };
 
 function showLogin() { $("login").hidden = false; $("side").hidden = $("main").hidden = true; }
@@ -279,6 +332,7 @@ async function start() {
   history.replaceState(null, "", location.pathname);
   $("login").hidden = true; $("side").hidden = $("main").hidden = false;
   await loadModels();
+  showAttach();
   await loadThreads();
   connect();
 }

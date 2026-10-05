@@ -19,8 +19,7 @@ import (
 func (a *App) imagesUnsupported() {
 	m := a.model()
 	a.add(&noticeBlock{
-		text: fmt.Sprintf("Model %s does not support image input. Remove the images or switch models (/model). "+
-			`If it does, add "input": ["text", "image"] to it in %s.`, m.Model.DisplayName(), shortPath(config.ModelsPath())),
+		text:  images.Unsupported(m.Model.DisplayName(), "/model", shortPath(config.ModelsPath())),
 		style: func(s string) string { return tui.FG(3, s) },
 	})
 }

@@ -10,7 +10,7 @@
 // Requests:
 //
 //	initialize                                     → {name, version, protocolVersion}
-//	models/list                                    → {models: [...]}
+//	models/list                                    → {models: [{id, name, contextWindow, efforts, hasKey, images}]}
 //	thread/start   {cwd?, model?, effort?}         → thread
 //	thread/resume  {threadId}                      → thread + items
 //	thread/read    {threadId}                      → thread + items
@@ -19,7 +19,10 @@
 //	thread/setEffort {threadId, effort}            → thread
 //	thread/compact {threadId}                      → {turnId}
 //	thread/rollback {threadId, numTurns?}          → thread + items + {input}
-//	turn/start     {threadId, input}               → {turnId}
+//	turn/start     {threadId, input, images?}      → {turnId}
+//	               images: [{mimeType, data}], data base64 (or a data: URL);
+//	               PNG, JPEG, GIF or WebP, at most 10 of 10 MB each, for
+//	               models that take images
 //	turn/steer     {threadId, input}               → {}
 //	turn/interrupt {threadId}                      → {}
 //	turn/background {threadId}                     → {}  (Ctrl+B: the running command becomes a job)

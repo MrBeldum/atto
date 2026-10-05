@@ -105,6 +105,8 @@ atto -c                               # continue the last session here
 atto -resume                          # pick a saved session
 atto -p "fix the failing test"        # one prompt, non-interactive
 git diff | atto -p "review this"      # stdin is appended to the prompt
+atto -p -image shot.png "why?"        # attach images (repeatable)
+pngpaste - | atto -p "what is this?"  # an image on stdin is attached too
 atto -p -output-format json "..."     # also: stream-json
 atto -p -goal "make the tests pass" -goal-budget 200k
 ```
@@ -124,6 +126,8 @@ atto -p -goal "make the tests pass" -goal-budget 200k
 | `Ctrl+V` / `Alt+V` | attach the image on the clipboard (use `Alt+V` where the terminal pastes text on `Ctrl+V`, as on Windows) |
 
 Pasting the path of an image file, or dropping the file on the terminal, attaches it too. Images show as `[image 1: 1024x768 PNG]` in the input; delete the placeholder to drop the image. Images larger than 2048 pixels are scaled down. Clipboard images need `osascript` (macOS; `pngpaste` is used if installed), `wl-paste` or `xclip` (Linux), or PowerShell (Windows, WSL).
+
+`atto -p` attaches images given with `-image` and an image piped to stdin (PNG, JPEG, GIF or WebP, recognized by its first bytes); the prompt argument is then the text. In `atto serve`'s web client, attach images with the `+` button, by pasting or by dropping them; over JSON-RPC, `turn/start` takes `images: [{mimeType, data}]` (base64 or a `data:` URL, at most 10 of 10 MB each). Either way the model must accept images.
 
 Pastes over 1000 characters show as `[Pasted Content 1234 chars]` and are sent in full.
 

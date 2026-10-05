@@ -27,6 +27,8 @@ usage:
   atto [flags] "prompt"             interactive session, starting with this message
   atto -p [flags] "prompt"          run one prompt and print the result
   cat file | atto -p "explain"      stdin is appended to the prompt
+  atto -p -image shot.png "why?"    attach an image (repeatable); an image on
+                                    stdin is attached too
   atto models [refresh]             list available models
   atto auth set <provider>          store an API key
   atto login [provider]             sign in (ChatGPT, …); /login inside atto
@@ -160,6 +162,31 @@ func editDistance(a, b string) int {
 	return prev[len(rb)]
 }
 
+// stringList is a flag that may be repeated (-image a.png -image b.png).
+type stringList []string
+
+func (l *stringList) String() string { return strings.Join(*l, ", ") }
+
+func (l *stringList) Set(v string) error {
+	*l = append(*l, v)
+	return nil
+}
+
+// parseInterleaved parses flags before and after the prompt words, as in
+// atto -p "fix it" -m x, and returns the words.
+func parseInterleaved(fs *flag.FlagSet, args []string) []string {
+	var positional []string
+	for {
+		_ = fs.Parse(args)
+		args = fs.Args()
+		if len(args) == 0 {
+			return positional
+		}
+		positional = append(positional, args[0])
+		args = args[1:]
+	}
+}
+
 // initialPrompt joins positional words into the first message, so
 // atto fix the build and atto "fix the build" start the same session.
 func initialPrompt(positional []string) string { return strings.Join(positional, " ") }
@@ -226,19 +253,10 @@ func main() {
 	noSave := fs.Bool("no-save", false, "print mode: do not save the run as a session")
 	goalObj := fs.String("goal", "", "print mode: keep working until this objective is done")
 	goalBudget := fs.String("goal-budget", "", "print mode: token budget for -goal, e.g. 200k")
+	var imagePaths stringList
+	fs.Var(&imagePaths, "image", "print mode: attach the image file at `path` (PNG, JPEG, GIF or WebP) to the prompt; repeatable.\nAn image piped to stdin is attached as well. The model must accept images")
 
-	// Allow flags before and after the prompt: atto -p "fix it" -m x.
-	var positional []string
-	args := os.Args[1:]
-	for {
-		_ = fs.Parse(args)
-		args = fs.Args()
-		if len(args) == 0 {
-			break
-		}
-		positional = append(positional, args[0])
-		args = args[1:]
-	}
+	positional := parseInterleaved(fs, os.Args[1:])
 
 	if *showVersion {
 		fmt.Println("atto", update.Describe())
@@ -256,12 +274,13 @@ func main() {
 			os.Exit(2)
 		}
 		var prompt string
-		if *goalObj == "" || len(positional) > 0 {
-			prompt, err = cli.ReadPromptInput(positional) // a goal needs no prompt
+		var imgs []provider.Image
+		if *goalObj == "" || len(positional) > 0 || len(imagePaths) > 0 {
+			prompt, imgs, err = cli.ReadPromptInput(positional, imagePaths) // a goal needs no prompt
 		}
 		if err == nil {
 			err = cli.RunPrint(cli.PrintOptions{
-				Prompt: prompt, Model: *model, Effort: *effort, Format: *format, Partial: *partial,
+				Prompt: prompt, Images: imgs, Model: *model, Effort: *effort, Format: *format, Partial: *partial,
 				Verbose: *verbose, MaxSteps: *maxSteps, Continue: *cont, Resume: *sessionID, NoSave: *noSave,
 				Goal: *goalObj, GoalBudget: *goalBudget,
 			})
