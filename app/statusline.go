@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -353,6 +354,45 @@ const minPath = 14
 // Items are dropped only when two rows cannot hold them.
 func (a *App) builtinStatus(first, width int) []string {
 	m, effort := a.agent.Current()
+	// The rows only change with what they are made of, which is far less
+	// often than frames are drawn, so keep them until it changes.
+	k := statusKey{
+		first: first, width: width, effort: effort,
+		name: m.Model.DisplayName(), subscription: m.Provider.Subscription, priced: priced(m.Model),
+		ctxWindow: m.Model.ContextWindow, maxTokens: m.Model.MaxTokens,
+		reasoning: m.Model.Reasoning != nil && *m.Model.Reasoning, nEfforts: len(m.Model.Efforts), nEffortMap: len(m.Model.EffortMap),
+		usage: a.usage, ctxTokens: a.ctxTokens, sessName: a.sessName, mem: fmtBytes(rssBytes.Load()),
+		branch: a.gitBranch, cwd: a.cwd,
+	}
+	if c := &a.statusRows; c.rows != nil && c.key == k {
+		return slices.Clone(c.rows)
+	}
+	rows := a.buildStatus(m, effort, first, width)
+	a.statusRows.key, a.statusRows.rows = k, slices.Clone(rows)
+	return rows
+}
+
+// statusKey is everything builtinStatus reads.
+type statusKey struct {
+	first, width          int
+	effort, name          string
+	subscription, priced  bool
+	ctxWindow, maxTokens  int
+	reasoning             bool
+	nEfforts, nEffortMap  int
+	usage                 usageStats
+	ctxTokens             int
+	sessName, mem, branch string
+	cwd                   string
+}
+
+// statusCache is builtinStatus' rows for key.
+type statusCache struct {
+	key  statusKey
+	rows []string
+}
+
+func (a *App) buildStatus(m config.ModelRef, effort string, first, width int) []string {
 	sep := tui.Dim(" · ")
 	u := &a.usage
 
