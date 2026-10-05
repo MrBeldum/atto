@@ -2,7 +2,8 @@
 #
 #   irm https://raw.githubusercontent.com/sebastianrcnt/atto/main/install.ps1 | iex
 #
-# $env:ATTO_VERSION = "v0.1.0" picks a release (default: the latest);
+# $env:ATTO_VERSION = "v0.1.0" picks a release (default: the latest; "edge" is
+# the unstable build of main);
 # $env:ATTO_INSTALL_DIR picks the directory (default: %LOCALAPPDATA%\Programs\atto).
 # Running it again installs the latest release over the old one.
 $ErrorActionPreference = "Stop"

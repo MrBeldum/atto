@@ -43,7 +43,7 @@ flags:
 // nestedRefused are the commands an atto agent may not run from its shell:
 // starting another agent (which would recurse and spend tokens unseen) or
 // changing credentials. "" is atto itself (interactive or -p).
-var nestedRefused = map[string]bool{"": true, "serve": true, "app-server": true, "login": true, "logout": true, "auth": true, "update": true}
+var nestedRefused = map[string]bool{"": true, "serve": true, "app-server": true, "login": true, "logout": true, "auth": true, "update": true, "channel": true}
 
 func refuseNested(cmd string) {
 	if !config.InAgent() || !nestedRefused[cmd] {
@@ -53,7 +53,7 @@ func refuseNested(cmd string) {
 	switch cmd {
 	case "login", "logout", "auth":
 		what = "change atto's credentials"
-	case "update":
+	case "update", "channel":
 		what = "replace the atto binary"
 	}
 	fmt.Fprintf(os.Stderr, "atto: commands run by an atto agent can't %s (%s is set). Do the work in this session instead; for background work use atto job.\n", what, config.EnvAgent)
@@ -81,6 +81,7 @@ func subcommands() map[string]func([]string, io.Writer) error {
 		"sleep":      cli.RunSleep,
 		"goal":       cli.RunGoal,
 		"update":     cli.RunUpdate,
+		"channel":    cli.RunChannel,
 		"_supervise": cli.RunSupervise,
 		"login":      cli.RunLogin,
 		"logout":     cli.RunLogout,
@@ -206,7 +207,7 @@ func main() {
 	}
 
 	if *showVersion {
-		fmt.Println("atto", update.Current())
+		fmt.Println("atto", update.Describe())
 		return
 	}
 	provider.UserAgent = "github.com/sebastianrcnt/atto/" + update.Current()

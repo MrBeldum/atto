@@ -33,18 +33,26 @@ They don't need root. Two environment variables change what gets installed:
 | Variable | Effect |
 | --- | --- |
 | `ATTO_VERSION=v0.1.0` | installs that release |
+| `ATTO_VERSION=edge` | installs the edge build (see below) |
 | `ATTO_INSTALL_DIR=...` | installs somewhere else |
 
 Running the script again is safe. It installs the latest release over the old one.
+
+**Edge builds.** Every push to `main` that passes the tests replaces the [`edge` prerelease](https://github.com/sebastianrcnt/atto/releases/tag/edge), named like `v0.0.3-dev.14+abc1234` (the next patch version, 14 commits after the last tag, at commit `abc1234`). It's unreleased code and may break. Install it with `ATTO_VERSION=edge` (`$env:ATTO_VERSION = "edge"` in PowerShell), or build from source with `go install github.com/sebastianrcnt/atto/cmd/atto@main`.
 
 ### Update
 
 ```sh
 atto update          # install the latest release
 atto update -check   # only check
+atto channel         # show which channel this binary follows
+atto channel edge    # switch to edge builds
+atto channel stable  # go back to tagged releases
 ```
 
-Once a day atto asks the GitHub API whether a newer release exists, and mentions it when you start atto. It never updates itself on its own. To turn the check off, set `"updateCheck": false` in `~/.atto/settings.json`.
+The channel is part of the binary: release builds are `stable`, edge builds are `edge`, and `atto -version` shows which (`atto v0.0.3-dev.14+abc1234 (edge)`). `atto update` stays on the channel you're on. `atto channel <name>` installs the latest binary of that channel, which then follows it. Nothing is saved in settings. Going from edge back to stable installs the latest stable release even though its version number is lower, and says so: `Switched to stable: atto v0.0.3-dev.14 → v0.0.2`. Only `atto channel` does that. Builds from `go install` or a local `go build` have no channel (they report `dev`) and get no update notices.
+
+Once a day atto asks the GitHub API whether a newer release exists on your channel, and mentions it when you start atto. It never updates itself on its own. To turn the check off, set `"updateCheck": false` in `~/.atto/settings.json`.
 
 If you installed with `go install` or Homebrew, update that way instead.
 
