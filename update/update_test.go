@@ -262,3 +262,29 @@ func TestDescribe(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestFetchRetriesServerErrors(t *testing.T) {
+	defer func(n int, w time.Duration) { fetchTries, fetchWait = n, w }(fetchTries, fetchWait)
+	fetchWait = time.Millisecond
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+	b, err := fetch(context.Background(), srv.URL, 10)
+	if err != nil || string(b) != "ok" || calls != 3 {
+		t.Fatalf("got %q, %v after %d calls", b, err, calls)
+	}
+	// A 404 is not retried.
+	calls = 0
+	nf := httptest.NewServer(http.NotFoundHandler())
+	defer nf.Close()
+	if _, err := fetch(context.Background(), nf.URL, 10); err == nil {
+		t.Fatal("404 succeeded")
+	}
+}

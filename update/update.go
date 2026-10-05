@@ -26,9 +26,22 @@ import (
 	"github.com/sebastianrcnt/atto/config"
 )
 
+// Install is the reinstall command for this system.
+var Install = installSh
+
+func init() {
+	if runtime.GOOS == "windows" {
+		Install = installPs1
+	}
+}
+
 const (
-	Repo    = "sebastianrcnt/atto"
-	Install = "curl -fsSL https://raw.githubusercontent.com/" + Repo + "/main/install.sh | sh"
+	installSh  = "curl -fsSL https://raw.githubusercontent.com/" + Repo + "/main/install.sh | sh"
+	installPs1 = "irm https://raw.githubusercontent.com/" + Repo + "/main/install.ps1 | iex"
+)
+
+const (
+	Repo = "sebastianrcnt/atto"
 
 	Stable = "stable"
 	// Edge is the channel of builds from every push to main. Its release
@@ -290,17 +303,39 @@ func InstallRelease(ctx context.Context, tag, exe string) error {
 	return replace(exe, bin)
 }
 
+// fetchTries is how many times fetch tries a download: GitHub's release
+// downloads now and then answer 500 or 502 for a moment.
+var fetchTries, fetchWait = 3, 2 * time.Second
+
+// fetch downloads url, retrying network errors and 5xx answers.
 func fetch(ctx context.Context, url string, limit int64) ([]byte, error) {
+	var err error
+	for try := 1; ; try++ {
+		var b []byte
+		var retry bool
+		if b, retry, err = fetchOnce(ctx, url, limit); err == nil || !retry || try >= fetchTries {
+			return b, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(fetchWait):
+		}
+	}
+}
+
+func fetchOnce(ctx context.Context, url string, limit int64) (b []byte, retry bool, err error) {
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, ctx.Err() == nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("%s: %s", url, resp.Status)
+		return nil, resp.StatusCode >= 500, fmt.Errorf("%s: %s", url, resp.Status)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, limit))
+	b, err = io.ReadAll(io.LimitReader(resp.Body, limit))
+	return b, err != nil, err
 }
 
 // checksum finds name in a sha256sum-style list.
@@ -325,8 +360,14 @@ func replace(exe string, data []byte) error {
 		return err
 	}
 	if runtime.GOOS == "windows" {
+		// A running exe can be renamed but not overwritten. exe.old may
+		// itself still be running (an atto started before the last update),
+		// and then it can't be replaced either: move exe aside under a new
+		// name instead. Cleanup removes them once nothing runs them.
 		old := exe + ".old"
-		_ = os.Remove(old)
+		if os.Remove(old) != nil && fileExists(old) {
+			old = fmt.Sprintf("%s.old-%d", exe, time.Now().UnixNano())
+		}
 		if err := os.Rename(exe, old); err != nil {
 			os.Remove(tmp)
 			return err
@@ -339,11 +380,21 @@ func replace(exe string, data []byte) error {
 	return nil
 }
 
-// Cleanup removes the binary a Windows update left behind.
+// Cleanup removes the binaries Windows updates left behind; those still
+// running stay until a later start.
 func Cleanup() {
 	if exe, err := os.Executable(); err == nil {
 		_ = os.Remove(exe + ".old")
+		olds, _ := filepath.Glob(exe + ".old-*")
+		for _, o := range olds {
+			_ = os.Remove(o)
+		}
 	}
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 // checkFile caches the daily release check.
