@@ -50,6 +50,7 @@ type Usage struct {
 }
 
 type Request struct {
+	SessionID  string // substituted for "$session" in headers
 	Model      string
 	Messages   []Message
 	Tools      []Tool
@@ -77,43 +78,69 @@ type Client struct {
 	APIKey  string
 	// MaxTokensField names the output limit field ("max_tokens" by default).
 	MaxTokensField string
-	// ExtraBody is merged into every request body. String values "$effort"
-	// and "$thinking" are replaced with the request's effort and whether
-	// thinking is enabled.
+	// ExtraBody is merged into every request body. String placeholders:
+	//   "$effort"       the effort level (via EffortMap); the key is dropped
+	//                   when effort is "off" and EffortMap has no "off"
+	//   "$thinking"     true unless effort is "off"
+	//   "$thinkingType" "enabled" or "disabled"
 	ExtraBody map[string]any
-	HTTP      *http.Client
+	EffortMap map[string]string
+	// Headers are added to every request; "$session" becomes the session ID.
+	Headers map[string]string
+	HTTP    *http.Client
 }
 
-func substitute(v any, effort string) any {
+// substitute resolves placeholders in v. keep is false when the value
+// should be omitted entirely.
+func (c *Client) substitute(v any, effort string) (out any, keep bool) {
 	switch x := v.(type) {
+	case nil:
+		return nil, false
 	case string:
 		switch x {
 		case "$effort":
-			return effort
+			if mapped, ok := c.EffortMap[effort]; ok {
+				return mapped, true
+			}
+			if effort == "off" || effort == "" {
+				return nil, false
+			}
+			return effort, true
 		case "$thinking":
-			return effort != "off"
+			return effort != "off", true
+		case "$thinkingType":
+			if effort == "off" {
+				return "disabled", true
+			}
+			return "enabled", true
 		}
-		return x
+		return x, true
 	case map[string]any:
-		out := make(map[string]any, len(x))
+		m := make(map[string]any, len(x))
 		for k, vv := range x {
-			out[k] = substitute(vv, effort)
+			if r, ok := c.substitute(vv, effort); ok {
+				m[k] = r
+			}
 		}
-		return out
+		return m, true
 	case []any:
-		out := make([]any, len(x))
-		for i, vv := range x {
-			out[i] = substitute(vv, effort)
+		var a []any
+		for _, vv := range x {
+			if r, ok := c.substitute(vv, effort); ok {
+				a = append(a, r)
+			}
 		}
-		return out
+		return a, true
 	}
-	return v
+	return v, true
 }
 
 func (c *Client) body(req Request) ([]byte, error) {
 	b := map[string]any{}
 	for k, v := range c.ExtraBody {
-		b[k] = substitute(v, req.Effort)
+		if r, ok := c.substitute(v, req.Effort); ok {
+			b[k] = r
+		}
 	}
 	b["model"] = req.Model
 	b["messages"] = req.Messages
@@ -185,6 +212,15 @@ func (c *Client) Stream(ctx context.Context, req Request, h Handler) (Result, er
 	hr.Header.Set("Accept", "text/event-stream")
 	if c.APIKey != "" {
 		hr.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
+	for k, v := range c.Headers {
+		if v == "$session" {
+			if req.SessionID == "" {
+				continue
+			}
+			v = req.SessionID
+		}
+		hr.Header.Set(k, v)
 	}
 	hc := c.HTTP
 	if hc == nil {

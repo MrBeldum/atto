@@ -126,6 +126,9 @@ func Run(opts Options) error {
 	a.newSession()
 	a.statusCmd = settings.StatusLine != nil && settings.StatusLine.Command != ""
 	a.startStatusLine(settings.StatusLine)
+	if config.CatalogStale() {
+		go a.refreshCatalog()
+	}
 
 	switch {
 	case opts.Continue:
@@ -171,7 +174,7 @@ func (a *App) newSession() {
 	a.sess = session.New(a.cwd)
 	a.agent.Record = a.sess.Append
 	a.agent.SetStart(time.Now())
-	a.agent.SetEnv(sessionEnv(a.sess.ID))
+	a.agent.SetSession(a.sess.ID, sessionEnv(a.sess.ID))
 	a.recModel, a.recEffort, a.sessName = "", "", ""
 	a.statusTrigger()
 }
@@ -507,4 +510,25 @@ func effortStyle(level string) string {
 	default: // xhigh, max
 		return tui.FG(5, tui.Bold(level))
 	}
+}
+
+// refreshCatalog updates the models.dev catalog in the background and
+// reloads the model list, so newly available providers appear in /model.
+func (a *App) refreshCatalog() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := config.RefreshCatalog(ctx); err != nil {
+		return // offline is fine; the cached catalog (if any) stays in use
+	}
+	models, err := config.LoadModels()
+	if err != nil {
+		return
+	}
+	a.ui.Do(func() {
+		before := len(a.models.List())
+		a.models = models
+		if n := len(models.List()); n > before {
+			a.notice("Model catalog updated: %d models available (/model).", n)
+		}
+	})
 }

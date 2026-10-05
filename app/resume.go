@@ -243,7 +243,7 @@ func (a *App) resume(path string) {
 	a.sess = session.Resume(path, h)
 	a.agent.Record = a.sess.Append
 	a.agent.SetStart(h.Time) // same system prompt as before: keeps the prefix cache
-	a.agent.SetEnv(sessionEnv(h.ID))
+	a.agent.SetSession(h.ID, sessionEnv(h.ID))
 	a.agent.Restore(entries)
 	a.ctxTokens = a.agent.ContextTokens()
 	a.recModel, a.recEffort, a.sessName = "", "", ""

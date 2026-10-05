@@ -18,27 +18,61 @@ type SelectList struct {
 	Items      []SelectItem
 	Selected   int
 	MaxVisible int
+	// Filterable enables type-to-filter on label and detail.
+	Filterable bool
 	OnSelect   func(SelectItem)
 	OnCancel   func()
+
+	query string
+}
+
+func (s *SelectList) visible() []SelectItem {
+	if s.query == "" {
+		return s.Items
+	}
+	q := strings.ToLower(s.query)
+	var out []SelectItem
+	for _, it := range s.Items {
+		if strings.Contains(strings.ToLower(StripEscapes(it.Label+" "+it.Detail+" "+it.Value)), q) {
+			out = append(out, it)
+		}
+	}
+	return out
 }
 
 func (s *SelectList) HandleInput(data string) {
+	items := s.visible()
 	switch Key(data) {
 	case "up", "ctrl+p":
-		if len(s.Items) > 0 {
-			s.Selected = (s.Selected - 1 + len(s.Items)) % len(s.Items)
+		if len(items) > 0 {
+			s.Selected = (s.Selected - 1 + len(items)) % len(items)
 		}
 	case "down", "ctrl+n", "tab":
-		if len(s.Items) > 0 {
-			s.Selected = (s.Selected + 1) % len(s.Items)
+		if len(items) > 0 {
+			s.Selected = (s.Selected + 1) % len(items)
 		}
 	case "enter":
-		if s.OnSelect != nil && s.Selected < len(s.Items) {
-			s.OnSelect(s.Items[s.Selected])
+		if s.OnSelect != nil && s.Selected < len(items) {
+			s.OnSelect(items[s.Selected])
 		}
-	case "escape", "ctrl+c":
+	case "escape":
+		if s.query != "" {
+			s.query, s.Selected = "", 0
+		} else if s.OnCancel != nil {
+			s.OnCancel()
+		}
+	case "ctrl+c":
 		if s.OnCancel != nil {
 			s.OnCancel()
+		}
+	case "backspace":
+		if r := []rune(s.query); s.Filterable && len(r) > 0 {
+			s.query, s.Selected = string(r[:len(r)-1]), 0
+		}
+	default:
+		if s.Filterable && Printable(data) {
+			s.query += data
+			s.Selected = 0
 		}
 	}
 }
@@ -47,6 +81,19 @@ func (s *SelectList) Render(width int) []string {
 	var out []string
 	if s.Title != "" {
 		out = append(out, Truncate(Dim(s.Title), width, "…"))
+	}
+	if s.Filterable {
+		q := Dim("type to filter")
+		if s.query != "" {
+			q = s.query
+		}
+		out = append(out, Truncate(Dim("Filter: ")+q, width, "…"))
+	}
+	all := s.Items
+	s.Items = s.visible()
+	defer func() { s.Items = all }()
+	if len(s.Items) == 0 {
+		return append(out, Dim("  no matches"))
 	}
 	maxVis := s.MaxVisible
 	if maxVis <= 0 {

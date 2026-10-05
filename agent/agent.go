@@ -65,6 +65,7 @@ type Agent struct {
 	model  config.ModelRef
 	effort string
 	env    []string // extra environment for bash commands
+	sessID string   // sent to providers that route by session
 
 	// Record, if set, receives every change to the conversation, for
 	// persistence. Called on the goroutine running Run/Compact.
@@ -126,10 +127,11 @@ func (a *Agent) SetStart(t time.Time) {
 	a.system = systemPrompt(a.Cwd, t)
 }
 
-// SetEnv sets extra environment variables for bash commands.
-func (a *Agent) SetEnv(env []string) {
+// SetSession sets the session ID (for provider routing headers) and extra
+// environment variables for bash commands.
+func (a *Agent) SetSession(id string, env []string) {
 	a.cfgMu.Lock()
-	a.env = env
+	a.sessID, a.env = id, env
 	a.cfgMu.Unlock()
 }
 
@@ -141,9 +143,11 @@ func (a *Agent) SetModel(m config.ModelRef) {
 	a.model = m
 	a.client = &provider.Client{
 		BaseURL:        m.Provider.BaseURL,
-		APIKey:         m.Provider.ResolvedAPIKey(),
+		APIKey:         m.APIKey,
 		MaxTokensField: m.Provider.MaxTokensField,
-		ExtraBody:      m.Provider.ExtraBody,
+		ExtraBody:      m.RequestBody(),
+		EffortMap:      m.Model.EffortMap,
+		Headers:        m.Provider.Headers,
 	}
 	if len(m.Model.Efforts) > 0 && !contains(m.Model.Efforts, a.effort) {
 		a.effort = m.Model.Efforts[len(m.Model.Efforts)/2]
@@ -267,13 +271,14 @@ func (a *Agent) tools() []provider.Tool {
 func (a *Agent) request(extra ...provider.Message) (*provider.Client, provider.Request) {
 	model, effort := a.Current()
 	a.cfgMu.Lock()
-	client := a.client
+	client, sessID := a.client, a.sessID
 	a.cfgMu.Unlock()
 	msgs := make([]provider.Message, 0, len(a.messages)+len(extra)+1)
 	msgs = append(msgs, provider.Message{Role: "system", Content: a.system})
 	msgs = append(msgs, a.messages...)
 	msgs = append(msgs, extra...)
 	return client, provider.Request{
+		SessionID: sessID,
 		Model:     model.Model.ID,
 		Messages:  msgs,
 		Tools:     a.tools(),

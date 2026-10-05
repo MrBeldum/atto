@@ -4,18 +4,26 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"atto/app"
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "history" {
-		if err := app.RunHistory(os.Args[2:], os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+	if len(os.Args) > 1 {
+		sub := map[string]func([]string, io.Writer) error{
+			"history": app.RunHistory,
+			"auth":    app.RunAuth,
+			"models":  app.RunModels,
+		}[os.Args[1]]
+		if sub != nil {
+			if err := sub(os.Args[2:], os.Stdout); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
 		}
-		return
 	}
 	showVersion := flag.Bool("version", false, "print version and exit")
 	inline := flag.Bool("inline", false, "render inline in the main screen instead of fullscreen")

@@ -113,9 +113,12 @@ func (a *App) cmdModel(arg string) {
 		return
 	}
 	cur := a.model()
-	p := &tui.SelectList{Title: "Select model (enter to choose, esc to cancel)"}
+	p := &tui.SelectList{Title: "Select model (enter to choose, esc to cancel)", Filterable: true}
 	for i, r := range a.models.List() {
 		detail := r.ProviderName
+		if r.APIKey == "" && r.Provider.Env != nil {
+			detail += " (no key: atto auth set " + r.ProviderName + ")"
+		}
 		if r.Model.ContextWindow > 0 {
 			detail += " · " + fmtTokens(r.Model.ContextWindow) + " ctx"
 		}

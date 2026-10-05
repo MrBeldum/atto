@@ -49,7 +49,45 @@ func TestStreamParsesReasoningTextAndToolCalls(t *testing.T) {
 		t.Fatalf("usage %+v finish %q", res.Usage, res.FinishReason)
 	}
 	kw := body["chat_template_kwargs"].(map[string]any)
-	if kw["reasoning_effort"] != "off" || kw["enable_thinking"] != false || body["max_tokens"] != float64(9) {
+	if _, has := kw["reasoning_effort"]; has || kw["enable_thinking"] != false || body["max_tokens"] != float64(9) {
 		t.Fatalf("request body %v", body)
+	}
+}
+
+func TestHeadersAndEffortPlaceholders(t *testing.T) {
+	var body map[string]any
+	var hdr http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hdr, body = r.Header, nil
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	c := &Client{
+		BaseURL:   srv.URL,
+		Headers:   map[string]string{"x-opencode-session": "$session", "x-fixed": "1"},
+		EffortMap: map[string]string{"max": "xhigh"},
+		ExtraBody: map[string]any{
+			"reasoning_effort": "$effort",
+			"thinking":         map[string]any{"type": "$thinkingType"},
+		},
+	}
+	if _, err := c.Stream(context.Background(), Request{SessionID: "s1", Effort: "max"}, Handler{}); err != nil {
+		t.Fatal(err)
+	}
+	if hdr.Get("x-opencode-session") != "s1" || hdr.Get("x-fixed") != "1" {
+		t.Fatalf("headers %v", hdr)
+	}
+	if body["reasoning_effort"] != "xhigh" || body["thinking"].(map[string]any)["type"] != "enabled" {
+		t.Fatalf("body %v", body)
+	}
+	if _, err := c.Stream(context.Background(), Request{Effort: "off"}, Handler{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := body["reasoning_effort"]; has || body["thinking"].(map[string]any)["type"] != "disabled" {
+		t.Fatalf("off body %v", body)
+	}
+	if hdr.Get("x-opencode-session") != "" {
+		t.Fatal("session header sent without a session")
 	}
 }
