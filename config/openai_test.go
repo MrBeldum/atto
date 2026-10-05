@@ -181,7 +181,7 @@ func TestAuthFileMergeAndPermissions(t *testing.T) {
 		t.Fatalf("after logout %v", got)
 	}
 	// No temp files left behind.
-	if m, _ := filepath.Glob(filepath.Join(Dir(), ".auth-*")); len(m) != 0 {
+	if m, _ := filepath.Glob(filepath.Join(Dir(), ".auth*tmp*")); len(m) != 0 {
 		t.Fatalf("leftovers %v", m)
 	}
 }

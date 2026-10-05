@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sebastianrcnt/atto/ai"
+	"github.com/sebastianrcnt/atto/fsutil"
 )
 
 // Built-in providers come from the models.dev catalog (as pi does). Only
@@ -140,11 +141,7 @@ func RefreshCatalog(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(catalogPath()), 0o755); err != nil {
 		return err
 	}
-	tmp := catalogPath() + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, catalogPath())
+	return fsutil.WriteAtomic(catalogPath(), data, 0o644)
 }
 
 // CatalogProviders builds providers from the cached catalog (none if the

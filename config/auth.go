@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sebastianrcnt/atto/auth"
+	"github.com/sebastianrcnt/atto/fsutil"
 )
 
 // AuthEntry is one provider's credentials in auth.json, in pi's format, so
@@ -89,24 +90,8 @@ func updateAuth(fn func(raw map[string]json.RawMessage) error) error {
 	if err := os.MkdirAll(Dir(), 0o755); err != nil {
 		return err
 	}
-	// Write-then-rename so a crash never leaves a truncated credentials file.
-	tmp, err := os.CreateTemp(filepath.Dir(AuthPath()), ".auth-*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(append(out, '\n')); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), AuthPath())
+	// Atomic so a crash never leaves a truncated credentials file.
+	return fsutil.WriteAtomic(AuthPath(), append(out, '\n'), 0o600)
 }
 
 func setEntry(provider string, e AuthEntry) error {
