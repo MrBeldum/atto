@@ -42,6 +42,20 @@ func Load() (config.Settings, config.ModelsFile, error) {
 	return settings, models, nil
 }
 
+// ErrNoModels means no provider has credentials or models configured. The
+// TUI starts anyway and shows NoModelsHint; atto -p fails with it.
+var ErrNoModels error = noModelsError{}
+
+type noModelsError struct{}
+
+func (noModelsError) Error() string { return NoModelsHint() }
+
+// NoModelsHint tells a first-time user how to get a model (pi:
+// formatNoModelsAvailableMessage).
+func NoModelsHint() string {
+	return "No models available. Use /login (or run: atto login) to sign in or save an API key, or add a provider to " + config.ModelsPath() + "."
+}
+
 // PickModel resolves id (provider/id or a bare id). Without one it takes
 // the default from settings.json, else the first configured model.
 func PickModel(models config.ModelsFile, settings config.Settings, id string) (config.ModelRef, error) {
@@ -56,7 +70,7 @@ func PickModel(models config.ModelsFile, settings config.Settings, id string) (c
 	}
 	all := models.List()
 	if len(all) == 0 {
-		return config.ModelRef{}, fmt.Errorf("no models configured; add a provider to %s", config.ModelsPath())
+		return config.ModelRef{}, ErrNoModels
 	}
 	return all[0], nil
 }
