@@ -196,13 +196,20 @@ func Fork(src, cwd string, entries []Entry, leaf string) *Writer {
 		}
 	}
 	var copied [][2]string // old ID, new ID
+	newID := map[string]string{}
 	for _, e := range Path(entries, leaf) {
 		if e.Type == TypeBranch || e.Type == TypeLabel {
 			continue
 		}
 		old := e.ID
+		if e.Type == TypeBlockDisplay { // follows its message to its new ID
+			if e.TargetID = newID[e.TargetID]; e.TargetID == "" {
+				continue
+			}
+		}
 		w.Append(e)
 		copied = append(copied, [2]string{old, w.Leaf()})
+		newID[old] = w.Leaf()
 	}
 	for _, c := range copied {
 		if l, ok := labels[c[0]]; ok && l.Label != "" {

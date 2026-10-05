@@ -66,6 +66,8 @@ func (e *ext) install() *goja.Object {
 	_ = atto.Set("exec", e.jsExec)
 	_ = atto.Set("fs", e.fsObject())
 	_ = atto.Set("fetch", e.jsFetch)
+	_ = atto.Set("complete", e.jsComplete)
+	_ = atto.Set("setCompleteConcurrency", e.jsSetCompleteConcurrency)
 	_ = atto.Set("mcp", e.mcpObject())
 	_ = atto.Set("sendMessage", func(text string) { e.m.host().SendMessage(text) })
 	_ = atto.Set("log", e.jsLog)
@@ -85,7 +87,7 @@ func (e *ext) install() *goja.Object {
 }
 
 // eventNames are the events atto.on accepts.
-var eventNames = []string{"session_start", "session_end", "turn_start", "turn_end", "tool_call", "tool_result", "user_prompt"}
+var eventNames = []string{"session_start", "session_end", "turn_start", "turn_end", "tool_call", "tool_result", "user_prompt", "message_end", "reasoning_end"}
 
 func (e *ext) jsOn(event string, v goja.Value) {
 	if !slices.Contains(eventNames, event) {

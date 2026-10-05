@@ -49,6 +49,17 @@ type ext struct {
 	events    []string
 	timers    map[int64]*time.Timer
 	nextTimer int64
+
+	// atto.complete: slots limit the requests in flight; reqCtx is
+	// canceled when the session ends or the extension stops (see
+	// api_complete.go); completes counts the requests made, per model.
+	slotMu    sync.Mutex // guards limit, inflight and slotWake
+	limit     int
+	inflight  int
+	slotWake  chan struct{}
+	reqCtx    context.Context
+	reqCancel context.CancelFunc
+	completes []CompleteStat
 }
 
 func newExt(m *Manager, s Spec, code string) *ext {
@@ -326,6 +337,9 @@ func (e *ext) report(what string, err error) {
 		return
 	}
 	msg := what + ": " + jsError(err)
+	if strings.Contains(msg, canceledMsg) { // the session moved on: nobody is waiting
+		return
+	}
 	e.m.log(e.spec.Name, msg)
 	e.m.host().Notify(e.spec.Name, msg, "error")
 }
@@ -349,6 +363,7 @@ func (e *ext) fail(reason string) {
 func (e *ext) halt() {
 	e.stopOnce.Do(func() {
 		close(e.stop)
+		e.cancelRequests()
 		e.mu.Lock()
 		for id, t := range e.timers {
 			t.Stop()

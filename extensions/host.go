@@ -24,6 +24,14 @@ type Host interface {
 	// choice (a string, nil when canceled) for "select" and "input", or a
 	// bool for "confirm".
 	Ask(ext string, q Question, answer func(any))
+	// SetBlockStatus sets (text "" removes) the short status ext shows on
+	// the header of the block id: display only. A block that does not exist
+	// is ignored.
+	SetBlockStatus(ext, id, text string)
+	// SetBlockDisplay sets (text "" restores) what the block id shows in
+	// place of its own text: display only, the model and the session's
+	// messages never change. A block that does not exist is ignored.
+	SetBlockDisplay(ext, id, text string)
 	// ClearUI removes every status item and widget of ext.
 	ClearUI(ext string)
 	// SendMessage queues text as a user message for the model.
@@ -71,7 +79,11 @@ func (h *Headless) Notify(ext, text, level string) {
 
 func (h *Headless) SetStatus(string, string, string)   {}
 func (h *Headless) SetWidget(string, string, []string) {}
-func (h *Headless) ClearUI(string)                     {}
+
+// Blocks are shown by the TUI only.
+func (h *Headless) SetBlockStatus(string, string, string)  {}
+func (h *Headless) SetBlockDisplay(string, string, string) {}
+func (h *Headless) ClearUI(string)                         {}
 
 func (h *Headless) Ask(_ string, q Question, answer func(any)) {
 	if q.Kind == "confirm" {

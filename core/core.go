@@ -164,9 +164,9 @@ func SetHooks(ag *agent.Agent, hk *hooks.Runner) {
 func Bind(ag *agent.Agent, hk *hooks.Runner, file *session.Writer, start time.Time, record bool) {
 	ag.SetStart(start)
 	ag.SetSession(file.ID, Env(file.ID))
-	ag.Record = nil
+	ag.Record, ag.EntryID = nil, nil
 	if record {
-		ag.Record = file.Append
+		ag.Record, ag.EntryID = file.Append, file.Leaf
 	}
 	hk.SetSession(file.ID, file.Path)
 	if m := ExtensionsOf(ag); m != nil {

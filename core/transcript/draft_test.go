@@ -45,7 +45,7 @@ func TestPendingToolIsTheRunningTool(t *testing.T) {
 	)
 	ag := agent.New(config.ModelRef{ProviderName: "t", Provider: config.Provider{BaseURL: url}, Model: config.Model{ID: "m"}}, "", t.TempDir())
 	w := session.New(t.TempDir())
-	ag.Record = w.Append
+	ag.Record, ag.EntryID = w.Append, w.Leaf
 
 	var log []string
 	live := Builder{IDPrefix: "x-i"}

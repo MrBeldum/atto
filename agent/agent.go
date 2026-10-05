@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -58,6 +59,11 @@ type Extensions interface {
 	ToolResult(ctx context.Context, args BashArgs, res BashResult, output string) (string, HookOutcome)
 	TurnStart(prompt string)
 	TurnEnd(err error)
+	// BlockEnd reports that an assistant text or reasoning block (kind is
+	// session.BlockText or session.BlockReasoning) is complete and saved:
+	// id is its stable block ID, text its text and model the "provider/id"
+	// that wrote it. It only observes and must not wait for extensions.
+	BlockEnd(kind, id, text, model string)
 }
 
 // MCPServers names the MCP servers configured for a session, sorted. They
@@ -145,6 +151,12 @@ type (
 		Result BashResult
 		Text   string
 	}
+	// MessageSaved fires when the model's response is complete and recorded,
+	// before StepEnd (and on its own for a response cut short by an error).
+	// EntryID names it: the session entry's ID, or when nothing is recorded
+	// an ID that is unique for the agent. The text and reasoning items of the
+	// response are the blocks session.BlockID(sessionID, EntryID, ...) names.
+	MessageSaved struct{ EntryID string }
 	// StepEnd fires after each model response. Context is the estimated
 	// context size afterwards.
 	StepEnd struct {
@@ -182,6 +194,13 @@ type Agent struct {
 	// Record, if set, receives every change to the conversation, for
 	// persistence. Called on the goroutine running Run/Compact.
 	Record func(session.Entry)
+	// EntryID, if set, returns the ID of the entry Record wrote last; it
+	// names the blocks of the assistant message just recorded.
+	EntryID func() string
+	// lastEntry and blockSeq make block IDs when nothing is recorded. Used
+	// on the goroutine running the turn.
+	lastEntry string
+	blockSeq  int
 
 	// The system prompt and what it was built from (a snapshot taken at
 	// session start and on Reload). srcMu guards writes, and reads from
@@ -620,6 +639,38 @@ func (a *Agent) appendMessage(m provider.Message, meta session.Entry) {
 	}
 }
 
+// messageSaved announces the assistant message just recorded: the event
+// that gives its blocks their IDs, then the extensions' block_end events.
+func (a *Agent) messageSaved(m provider.Message, emit func(any)) {
+	id := ""
+	if a.EntryID != nil {
+		id = a.EntryID()
+	}
+	if id == "" || id == a.lastEntry { // nothing was recorded (no file, or read only)
+		a.blockSeq++
+		id = "n" + strconv.Itoa(a.blockSeq)
+	} else {
+		a.lastEntry = id
+	}
+	emit(MessageSaved{EntryID: id})
+	if a.Extensions == nil {
+		return
+	}
+	a.cfgMu.Lock()
+	sid, cur := a.sessID, a.model.ProviderName+"/"+a.model.Model.ID
+	a.cfgMu.Unlock()
+	model := cur
+	if m.Model != "" {
+		model = m.Provider + "/" + m.Model
+	}
+	if strings.TrimSpace(m.ReasoningContent) != "" {
+		a.Extensions.BlockEnd(session.BlockReasoning, session.BlockID(sid, id, session.BlockReasoning), m.ReasoningContent, model)
+	}
+	if strings.TrimSpace(m.Content) != "" {
+		a.Extensions.BlockEnd(session.BlockText, session.BlockID(sid, id, session.BlockText), m.Content, model)
+	}
+}
+
 func (a *Agent) tools() []provider.Tool {
 	return []provider.Tool{{
 		Type: "function",
@@ -816,11 +867,13 @@ func (a *Agent) loop(ctx context.Context, emit func(any)) error {
 			if res.Message.Content != "" && !a.DiscardPartial.Load() {
 				res.Message.ToolCalls = nil
 				a.appendMessage(res.Message, session.Entry{ThinkingMs: thinkMs})
+				a.messageSaved(res.Message, emit)
 			}
 			return err
 		}
 		usage := res.Usage
 		a.appendMessage(res.Message, session.Entry{Usage: &usage, ThinkingMs: thinkMs})
+		a.messageSaved(res.Message, emit)
 		a.LastUsage, a.sinceUsage = usage, 0
 		emit(StepEnd{Usage: usage, Context: a.ContextTokens()})
 

@@ -25,6 +25,19 @@ interface AttoSession {
 }
 
 interface AttoUI {
+  /**
+   * A short dim suffix on the header of an assistant block ("translating…"),
+   * or null to remove yours. Display only; TUI only (a no-op in atto -p and
+   * the server). A block that no longer exists is ignored.
+   */
+  setBlockStatus(blockId: string, text: string | null): void;
+  /**
+   * Show text (Markdown) in place of an assistant block's own, or null to
+   * restore it. atto adds a line to flip to the original (click or ctrl+o).
+   * Display only: the model's context and the session's messages never
+   * change. Saved in the session file; TUI only.
+   */
+  setBlockDisplay(blockId: string, text: string | null): void;
   /** Show a notice in the transcript (stderr in atto -p). */
   notify(text: string, level?: "info" | "warning" | "error"): void;
   /** Set (or with null, remove) an item of the status line. TUI only. */
@@ -92,6 +105,15 @@ interface AttoUserPromptEvent {
 /** A string (or {context}) is added to the prompt; {block: true} rejects it. */
 type AttoUserPromptResult = string | { context?: string; block?: boolean; reason?: string } | void;
 
+interface AttoBlockEvent {
+  /** Stable for the session's life, also after a resume. */
+  blockId: string;
+  /** The block's full text. */
+  text: string;
+  /** provider/id of the model that wrote it. */
+  model: string;
+}
+
 type Awaitable<T> = T | Promise<T>;
 
 interface AttoEvents {
@@ -102,6 +124,25 @@ interface AttoEvents {
   tool_call: [AttoToolCallEvent, AttoToolCallResult];
   tool_result: [AttoToolResultEvent, AttoToolResultResult];
   user_prompt: [AttoUserPromptEvent, AttoUserPromptResult];
+  /** An assistant text block finished. Never waited for, no timeout. */
+  message_end: [AttoBlockEvent, void];
+  /** A reasoning block finished. Never waited for, no timeout. */
+  reasoning_end: [AttoBlockEvent, void];
+}
+
+interface AttoCompleteOptions {
+  /** "provider/id" of a model in models.json. */
+  model: string;
+  prompt: string;
+  system?: string;
+  maxTokens?: number;
+  /**
+   * One of the model's effort levels, or sent as reasoning_effort for
+   * chat-completions models ("none" turns thinking off on LM Studio).
+   */
+  reasoningEffort?: string;
+  /** Milliseconds from the start of the request; default 30000. */
+  timeoutMs?: number;
 }
 
 interface AttoExecResult {
@@ -167,7 +208,7 @@ interface Atto {
   /**
    * Handle an event. tool_call, tool_result and user_prompt are waited for
    * (5 s by default; settings.json "extensions": {"timeout": seconds}), the
-   * others are not.
+   * others are not (message_end and reasoning_end have no timeout at all).
    */
   on<K extends keyof AttoEvents>(
     event: K,
@@ -197,6 +238,16 @@ interface Atto {
   };
 
   fetch(url: string, options?: AttoFetchOptions): Promise<AttoResponse>;
+
+  /**
+   * One reply from a model of models.json: no tools, no streaming, none of
+   * the conversation. Rejects on a server that is down, a timeout (the
+   * request is cancelled), an HTTP error or an unknown model, and when the
+   * session ends or extensions reload. Counted per model in the Loaded block.
+   */
+  complete(options: AttoCompleteOptions): Promise<{ text: string }>;
+  /** Requests of complete() in flight at once (1 to 16; default 1); others wait. */
+  setCompleteConcurrency(n: number): void;
 
   /**
    * The session's MCP servers, the ones "atto mcp" reaches in the agent's

@@ -41,6 +41,18 @@ func (e *ext) uiObject() *goja.Object {
 		}
 		e.m.host().SetWidget(e.spec.Name, key, ls)
 	})
+	text := func(v goja.Value) string {
+		if v == nil || goja.IsUndefined(v) || goja.IsNull(v) {
+			return ""
+		}
+		return v.String()
+	}
+	_ = ui.Set("setBlockStatus", func(id string, s goja.Value) {
+		e.m.host().SetBlockStatus(e.spec.Name, id, text(s))
+	})
+	_ = ui.Set("setBlockDisplay", func(id string, s goja.Value) {
+		e.m.host().SetBlockDisplay(e.spec.Name, id, text(s))
+	})
 	_ = ui.Set("select", func(title string, options []string) goja.Value {
 		return e.ask(Question{Kind: "select", Title: title, Options: options})
 	})

@@ -67,6 +67,9 @@ type Info struct {
 	Commands []string `json:"commands,omitempty"`
 	Events   []string `json:"events,omitempty"`
 	Hash     string   `json:"hash,omitempty"` // of the bundled code
+	// Completes counts the atto.complete requests the extension made, per
+	// model, since it loaded.
+	Completes []CompleteStat `json:"completes,omitempty"`
 }
 
 // Command is a slash command an extension registered.
@@ -318,6 +321,7 @@ func (e *ext) info() Info {
 		in.Commands = append(in.Commands, c.Name)
 	}
 	in.Events = slices.Clone(e.events)
+	in.Completes = slices.Clone(e.completes)
 	return in
 }
 

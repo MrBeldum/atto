@@ -89,9 +89,13 @@ extensions in load order (user before project, then by name).
 | `user_prompt` | `{prompt}` | a string (or `{context}`) to add to the prompt; `{block: true, reason}` rejects it |
 | `tool_call` | `{toolName, command, description, timeout, background}` | `{block: true, reason}` (the model gets the reason), `{command}` to run another command |
 | `tool_result` | `{toolName, command, description, output, exitCode, timedOut, canceled, durationMs, job}` | a string (or `{output}`) to replace what the model receives |
+| `message_end` | `{blockId, text, model}`: an assistant text block finished | ignored |
+| `reasoning_end` | `{blockId, text, model}`: a reasoning block finished | ignored |
 
 `tool_call`, `tool_result` and `user_prompt` are waited for; the others are
-not. A later handler sees what an earlier one changed (a rewritten command,
+not. `message_end` and `reasoning_end` never delay anything, not even a
+handler that takes minutes (a model call, say): they have no timeout, and
+a handler that throws or rejects is reported like any other. A later handler sees what an earlier one changed (a rewritten command,
 a redacted output).
 
 **Order with Claude Code hooks.** Extensions run inside the hooks:
@@ -99,6 +103,68 @@ a redacted output).
 `tool_call`, the command, `tool_result`, then `PostToolUse` hooks (which
 see the rewritten output, so a redaction reaches them too). A hook that
 blocks wins before extensions see the call.
+
+## Blocks: events, display-only changes and side model calls
+
+When the model's response is complete and saved, atto fires `message_end`
+for its text (one block) and `reasoning_end` for its thinking (another),
+in the TUI, in `atto -p` and in the server alike. `model` is `provider/id`.
+`blockId` names the block for as long as the session exists: it is built
+from the session entry of the response, so it is the same after a resume,
+and it cannot clash with a block of another session. (Events fire when the
+response ends, so `reasoning_end` comes with `message_end`, not when the
+thinking stops.) A response with no text, or no thinking, fires nothing
+for it.
+
+An extension can change how a block is shown, never what the model sees:
+
+- `ctx.ui.setBlockStatus(blockId, text | null)`: a short dim suffix on the
+  block's header ("translating…", "failed"). Each extension has its own.
+- `ctx.ui.setBlockDisplay(blockId, text | null)`: shows `text` (Markdown)
+  in place of the block's own text; `null` restores it. atto adds a line
+  under the block, `· shown: <extension> (click or ctrl+o to show original)`:
+  a click on that line flips that block between the replacement and the
+  original, and ctrl+o flips all of them. (Clicking the header still
+  expands and collapses a reasoning block.) The latest extension to set a
+  text owns it; only the owner can restore the original.
+
+The model's context and the session's messages are never changed:
+requests are built from what the model wrote, and "copy last answer"
+copies the original. What the extension showed is saved in the session
+file as `block_display` entries (the status and text as last set), so a
+resumed session shows it without the extension running again; a result for
+a block that no longer exists (the session was switched meanwhile) is
+ignored, and the view does not jump when a block above it changes height.
+These calls are TUI-only: in `atto -p` and the server they do nothing and
+nothing is saved. Example, in a few lines:
+
+```ts
+export default function (atto: Atto) {
+  atto.on("reasoning_end", (e, ctx) => {
+    ctx.ui.setBlockDisplay(e.blockId, e.text.toUpperCase());
+    ctx.ui.setBlockStatus(e.blockId, "uppercased");
+  });
+}
+```
+
+**`atto.complete({model, prompt, system?, maxTokens?, reasoningEffort?, timeoutMs?})`**
+asks a model for one reply and resolves to `{text}`: no tools, no
+streaming, nothing of the conversation. `model` is `provider/id` of a model
+in `models.json`; it uses that provider's URL, key and headers. The request
+is cancelled (the connection closed) after `timeoutMs` (default 30000) and
+when the session ends or extensions reload. It rejects with a plain message
+for a server that is down ("connection refused"), a timeout, an HTTP error,
+an unknown model. `reasoningEffort` sets the reasoning effort: one of the
+model's levels, or else sent as `reasoning_effort` (`"none"` turns thinking
+off on LM Studio) for chat-completions models. An extension has one request
+in flight at a time (local servers get slower, and may hang, when asked in
+parallel); the others wait their turn, and the timeout counts from when a
+request starts. `atto.setCompleteConcurrency(n)` (1 to 16) raises that.
+
+atto lists these requests, only counts and model names, never prompts: the
+Loaded block (after a `/reload`) and `/extensions` show "model calls: 3 to
+p/m (1 failed)" per extension, and every call is a line in
+`~/.atto/extensions.log` with the model, the outcome and the time.
 
 ## The context and the UI
 
@@ -109,6 +175,8 @@ blocks wins before extensions see the call.
 - `ctx.ui.notify(text, level?)`: `info` (default), `warning`, `error`.
 - `ctx.ui.setStatus(key, text | null)`: an item in the status line.
 - `ctx.ui.setWidget(key, lines[] | null)`: lines shown above the input.
+- `ctx.ui.setBlockStatus(blockId, text | null)` and
+  `ctx.ui.setBlockDisplay(blockId, text | null)`: see above.
 - `ctx.ui.select(title, options)`: `Promise<string | undefined>`.
 - `ctx.ui.confirm(text)`: `Promise<boolean>`.
 - `ctx.ui.input(prompt)`: `Promise<string | undefined>`.

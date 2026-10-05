@@ -58,6 +58,11 @@ type Item struct {
 	// handoff notes (compaction), the summary (branchSummary) or the
 	// message of a hook or notice.
 	Text string
+	// EntryID is the session entry of the assistant message an assistant
+	// or reasoning item belongs to, known once the message is recorded
+	// (Handler.Saved fires then; "n<k>" when nothing is recorded). Front
+	// ends make the item's block ID of it with session.BlockID.
+	EntryID string
 	// Images are a user message's images, without their bytes.
 	Images []provider.Image
 	// Duration is the thinking time (reasoning), the run time (tool) or

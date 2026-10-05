@@ -32,6 +32,9 @@ type fakeHost struct {
 	answers []any // given in order; then the default
 	sent    []string
 	cleared []string
+	// block status and display text, by ext/blockID.
+	blockStatus  map[string]string
+	blockDisplay map[string]string
 }
 
 func newHost(ui bool) *fakeHost {
@@ -39,6 +42,24 @@ func newHost(ui bool) *fakeHost {
 }
 
 func (h *fakeHost) HasUI() bool { return h.ui }
+
+func (h *fakeHost) SetBlockStatus(ext, id, text string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.blockStatus == nil {
+		h.blockStatus = map[string]string{}
+	}
+	h.blockStatus[ext+"/"+id] = text
+}
+
+func (h *fakeHost) SetBlockDisplay(ext, id, text string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.blockDisplay == nil {
+		h.blockDisplay = map[string]string{}
+	}
+	h.blockDisplay[ext+"/"+id] = text
+}
 
 func (h *fakeHost) Notify(ext, text, level string) {
 	h.mu.Lock()

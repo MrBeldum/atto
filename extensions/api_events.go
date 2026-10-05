@@ -12,6 +12,7 @@ import (
 	"github.com/dop251/goja"
 
 	"github.com/sebastianrcnt/atto/agent"
+	"github.com/sebastianrcnt/atto/session"
 )
 
 // The Manager is the agent's Extensions.
@@ -111,6 +112,21 @@ func (m *Manager) SessionStart(reason string) {
 // reason is "exit", "clear", "resume" or "other".
 func (m *Manager) SessionEnd(reason string) {
 	m.fireWait("session_end", map[string]any{"reason": reason}, sessionEndWait)
+	for _, e := range m.running() { // model calls for the session that ended
+		e.cancelRequests()
+	}
+}
+
+// BlockEnd fires message_end (an assistant text block) or reasoning_end
+// (a reasoning block) for kind session.BlockText or session.BlockReasoning.
+// Like turn_start it never waits: the handlers run on the extensions' own
+// goroutines, and a slow one (a model call, a sleep) delays nothing.
+func (m *Manager) BlockEnd(kind, id, text, model string) {
+	event := "message_end"
+	if kind == session.BlockReasoning {
+		event = "reasoning_end"
+	}
+	m.fire(event, map[string]any{"blockId": id, "text": text, "model": model})
 }
 
 func (m *Manager) TurnStart(prompt string) {

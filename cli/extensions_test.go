@@ -112,3 +112,39 @@ func TestExtensionsCLI(t *testing.T) {
 		t.Fatalf("atto context lists them: %v\n%s", err, ctx.String())
 	}
 }
+
+// message_end fires in atto -p too (there is no UI: the display calls are
+// no-ops), once, with the block's ID, text and model.
+func TestRunPrintBlockEvents(t *testing.T) {
+	imageModelServer(t, `["text"]`)
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	ext := filepath.Join(os.Getenv("ATTO_DIR"), "extensions", "blocks.ts")
+	if err := os.MkdirAll(filepath.Dir(ext), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := `export default function (atto: any) {
+  atto.on("message_end", async (e: any, ctx: any) => {
+    ctx.ui.setBlockDisplay(e.blockId, "ignored");
+    atto.fs.writeFile("ev.txt", [e.blockId, e.text, e.model].join("|"));
+    await new Promise((r) => setTimeout(r, 50));
+    atto.fs.writeFile("ev2.txt", "after");
+  });
+  atto.on("reasoning_end", () => atto.fs.writeFile("reasoning.txt", "fired"));
+}`
+	if err := os.WriteFile(ext, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	quiet(t)
+	if err := RunPrint(PrintOptions{Prompt: "hi", NoSave: true}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(cwd, "ev.txt"))
+	parts := strings.Split(string(data), "|")
+	if len(parts) != 3 || !strings.HasSuffix(parts[0], ".n1:text") || parts[1] != "a gray square" || parts[2] != "fake/m" {
+		t.Fatalf("event %q", data)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "reasoning.txt")); err == nil {
+		t.Fatal("no reasoning, no reasoning_end")
+	}
+}

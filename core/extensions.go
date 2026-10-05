@@ -73,6 +73,25 @@ func extensionSummary(exts []extensions.Info) string {
 	return text
 }
 
+// completeSummary counts an extension's atto.complete requests per model:
+// "model calls: 3 to p/m, 1 to p/n (1 failed)", "" when there are none.
+func completeSummary(stats []extensions.CompleteStat) string {
+	var parts []string
+	failed := 0
+	for _, s := range stats {
+		parts = append(parts, fmt.Sprintf("%d to %s", s.Calls, s.Model))
+		failed += s.Failed
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	text := "model calls: " + strings.Join(parts, ", ")
+	if failed > 0 {
+		text += fmt.Sprintf(" (%d failed)", failed)
+	}
+	return text
+}
+
 // extensionRow describes one extension for the expanded Loaded block.
 func extensionRow(e extensions.Info) Row {
 	text := e.Status + " · " + e.Source + " · " + ShortPath(e.Path)
@@ -89,6 +108,9 @@ func extensionRow(e extensions.Info) Row {
 	}
 	if len(e.Events) > 0 {
 		text += " · on " + strings.Join(e.Events, ", ")
+	}
+	if c := completeSummary(e.Completes); c != "" {
+		text += " · " + c
 	}
 	return Row{e.Name, text}
 }

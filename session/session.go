@@ -53,7 +53,25 @@ const (
 	// TypeBashExecution is a shell command the user ran with "!" or "!!"
 	// in the prompt; unless excluded, the model sees it as a user message.
 	TypeBashExecution = "bash_execution"
+	// TypeBlockDisplay is display-only data an extension set on an
+	// assistant message's text or reasoning block: a status suffix and a
+	// replacement text the block shows. It never reaches the model.
+	TypeBlockDisplay = "block_display"
 )
+
+// Blocks of an assistant message, as TypeBlockDisplay entries name them.
+const (
+	BlockText      = "text"
+	BlockReasoning = "reasoning"
+)
+
+// BlockID is the ID extensions and front ends use for a block of the
+// assistant message recorded as entry entryID in session sessionID. It is
+// stable for the life of the session file, and unlike entry IDs (which an
+// old file numbers by position) cannot collide between sessions.
+func BlockID(sessionID, entryID, block string) string {
+	return sessionID + "." + entryID + ":" + block
+}
 
 // Entry is one line of a session file. Fields are used according to Type.
 type Entry struct {
@@ -110,6 +128,16 @@ type Entry struct {
 
 	// bash_execution
 	Bash *BashExec `json:"bash,omitempty"`
+
+	// block_display: the block Block (BlockText or BlockReasoning) of the
+	// assistant message TargetID, and what extension Ext shows there: a
+	// short Status for the block's header and a Display text that replaces
+	// what the block shows. Each entry is the extension's whole state for
+	// the block (both empty clears it); the latest wins.
+	Block   string `json:"block,omitempty"`
+	Ext     string `json:"ext,omitempty"`
+	Status  string `json:"status,omitempty"`
+	Display string `json:"display,omitempty"`
 }
 
 // BashExec is a command the user ran with "!" (or "!!", which keeps it

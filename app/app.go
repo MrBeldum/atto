@@ -114,8 +114,15 @@ type App struct {
 	steered   []string
 	replaying bool
 
-	// details expands every collapsible block (ctrl+t).
-	details details
+	// details expands every collapsible block (ctrl+t); origView shows the
+	// original text of blocks an extension replaced (ctrl+o).
+	details  details
+	origView details
+	// itemBlocks are the blocks of streamed reasoning and assistant items
+	// by item ID, until they are saved; blocks are those saved, by block ID
+	// (see blockdisplay.go).
+	itemBlocks map[string]displayBlock
+	blocks     map[string]displayBlock
 	// Last model/effort written to the session, to record changes.
 	recModel, recEffort string
 	sessName            string
@@ -442,6 +449,10 @@ func (a *App) onInput(data string) bool {
 	case "ctrl+t":
 		a.details.on = !a.details.on
 		a.details.gen++ // the expanded blocks are confirmation enough
+		return true
+	case "ctrl+o": // original text of the blocks an extension replaced
+		a.origView.on = !a.origView.on
+		a.origView.gen++
 		return true
 	case "escape":
 		if a.cancelShell() {

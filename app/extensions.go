@@ -135,6 +135,14 @@ func (h *tuiHost) SetWidget(ext, key string, lines []string) {
 	h.do(func() { h.a.extUI.setWidget(ext+"/"+key, lines) })
 }
 
+func (h *tuiHost) SetBlockStatus(ext, id, text string) {
+	h.do(func() { h.a.blockStatus(ext, id, text) })
+}
+
+func (h *tuiHost) SetBlockDisplay(ext, id, text string) {
+	h.do(func() { h.a.blockText(ext, id, text) })
+}
+
 func (h *tuiHost) ClearUI(ext string) {
 	h.do(func() { h.a.extUI.clear(ext) })
 }

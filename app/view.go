@@ -51,17 +51,25 @@ func (u *userBlock) pinLine(width int) string {
 // prompt. Output is cached until the text or width changes.
 type textBlock struct {
 	text strings.Builder
+	// disp is what extensions changed about how the block shows (see
+	// blockdisplay.go): a status and a replacement text.
+	disp blockDisplay
 
 	cacheLen   int
 	cacheWidth int
+	cacheVer   int  // disp.key(): what a cached render also depends on
+	cacheOrig  bool //
 	cache      []string
 }
 
+func (t *textBlock) Click(line int) bool { return t.disp.click(line) }
+
 func (t *textBlock) Render(width int) []string {
-	if t.cache != nil && t.cacheLen == t.text.Len() && t.cacheWidth == width {
+	ver, orig := t.disp.key()
+	if t.cache != nil && t.cacheLen == t.text.Len() && t.cacheWidth == width && t.cacheVer == ver && t.cacheOrig == orig {
 		return t.cache
 	}
-	lines := tui.Markdown(strings.TrimSpace(t.text.String()), max(1, width-2))
+	lines := tui.Markdown(strings.TrimSpace(t.disp.shown(t.text.String())), max(1, width-2))
 	for i, l := range lines {
 		if i == 0 && !startsWithMarker(l) {
 			lines[i] = tui.Dim("• ") + l
@@ -69,7 +77,17 @@ func (t *textBlock) Render(width int) []string {
 			lines[i] = "  " + l
 		}
 	}
-	t.cache, t.cacheLen, t.cacheWidth = lines, t.text.Len(), width
+	// The status and the toggle share a line under the text.
+	t.disp.metaLine = -1
+	if toggle, status := t.disp.toggleLine(width), t.disp.header(); toggle != "" || status != "" {
+		t.disp.metaLine = len(lines)
+		if toggle == "" {
+			t.disp.metaLine = -1
+			toggle = tui.Dim("  ·")
+		}
+		lines = append(lines, tui.Truncate(toggle+status, width, "…"))
+	}
+	t.cache, t.cacheLen, t.cacheWidth, t.cacheVer, t.cacheOrig = lines, t.text.Len(), width, ver, orig
 	return lines
 }
 
@@ -155,6 +173,7 @@ func (g gap) Click(line int) bool {
 type thinkingBlock struct {
 	expander
 	clickable
+	disp  blockDisplay // see blockdisplay.go
 	text  strings.Builder
 	start time.Time
 	dur   time.Duration
@@ -169,6 +188,9 @@ func (t *thinkingBlock) finish() {
 }
 
 func (t *thinkingBlock) Click(line int) bool {
+	if t.disp.click(line) {
+		return true
+	}
 	if !t.hit(line) {
 		return false
 	}
@@ -177,7 +199,22 @@ func (t *thinkingBlock) Click(line int) bool {
 }
 
 func (t *thinkingBlock) Render(width int) []string {
-	text := strings.TrimSpace(t.text.String())
+	out := t.render(width)
+	if h := t.disp.header(); h != "" {
+		out[0] = tui.Truncate(out[0]+h, width, "…")
+	}
+	// A replacement text has its toggle on the line under the header.
+	t.disp.metaLine = -1
+	if toggle := t.disp.toggleLine(width); toggle != "" {
+		t.disp.metaLine = 1
+		out = append(out[:1:1], append([]string{toggle}, out[1:]...)...)
+		t.lines++
+	}
+	return out
+}
+
+func (t *thinkingBlock) render(width int) []string {
+	text := strings.TrimSpace(t.disp.shown(t.text.String()))
 	has := text != "" // Wrap("") is one empty line
 	body := tui.Wrap(text, max(1, width-4))
 	style := func(s string) string { return tui.Dim(tui.Italic(s)) }

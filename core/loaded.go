@@ -269,6 +269,17 @@ func Collect(ag *agent.Agent, hookSrc []config.HookSource, modelFrom, effortFrom
 			l.Context = append(l.Context, Part{Name: ev + " extensions", Detail: what + " (" + strings.Join(names, ", ") + ")"})
 		}
 	}
+	// Side requests extensions made (atto.complete) go to the models they
+	// name, with only what the extension sent: none of this conversation.
+	var calls []string
+	for _, e := range l.Extensions {
+		if c := completeSummary(e.Completes); c != "" {
+			calls = append(calls, e.Name+" "+c)
+		}
+	}
+	if len(calls) > 0 {
+		l.Context = append(l.Context, Part{Name: "extension model calls", Detail: "side requests, not part of the conversation: " + strings.Join(calls, "; ")})
+	}
 	return l
 }
 

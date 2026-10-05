@@ -56,6 +56,22 @@ type Handler struct {
 	// complete from the start (messages, hooks) get Started and Completed
 	// back to back.
 	Completed func(it *Item)
+	// Saved fires for the reasoning and assistant items of a model response
+	// once it is recorded and they have their EntryID: before Completed
+	// live, and on replay too.
+	Saved func(it *Item)
+	// Display fires for a saved block_display entry (replay only; live,
+	// extensions act on the front end directly).
+	Display func(d Display)
+}
+
+// Display is what an extension showed on a block: see session.Entry.
+type Display struct {
+	EntryID string // of the assistant message
+	Block   string // session.BlockText or session.BlockReasoning
+	Ext     string
+	Status  string
+	Text    string
 }
 
 // Builder makes items from agent events (Event) and saved entries
@@ -76,6 +92,7 @@ type Builder struct {
 	summary                  *Item // a branch summary being written
 	shell                    *Item // a command the user is running
 	pendReasoning, pendText  string
+	step                     []*Item // reasoning and text items of the response being streamed
 	thinkStart               time.Time
 	tools                    map[string]*Item // by call ID, while running
 	drafts                   map[int]*Item    // by index in the response, while the model writes the call
@@ -118,6 +135,7 @@ func (b *Builder) Add(it Item) {
 func (b *Builder) End() { b.end(time.Now()) }
 
 func (b *Builder) end(at time.Time) {
+	b.step = nil
 	b.closeText(at)
 	for _, it := range b.items { // in order, unlike the maps
 		if it.Kind == Tool && it.Pending {
@@ -139,7 +157,16 @@ func (b *Builder) end(at time.Time) {
 func (b *Builder) apply(ev any, at time.Time) {
 	switch e := ev.(type) {
 	case Input:
+		b.step = nil
 		b.input(e.Text, e.Images)
+	case agent.MessageSaved:
+		for _, it := range b.step {
+			it.EntryID = e.EntryID
+			if b.Handler.Saved != nil {
+				b.Handler.Saved(it)
+			}
+		}
+		b.step = nil
 	case ShellStart:
 		b.shell = b.start(Item{Kind: Shell, Status: InProgress, Command: e.Command, Excluded: e.Exclude})
 	case ShellOutput:
@@ -268,6 +295,7 @@ func (b *Builder) stream(cur **Item, pend *string, kind Kind, text string) {
 		}
 		text, *pend = *pend, ""
 		*cur = b.start(Item{Kind: kind, Status: InProgress})
+		b.step = append(b.step, *cur)
 	}
 	it := *cur
 	it.Text += text
@@ -452,6 +480,10 @@ func (b *Builder) Replay(entries []session.Entry) {
 			b.interruptCalls()
 			b.apply(agent.BranchSummaryStart{}, e.Time)
 			b.apply(agent.BranchSummaryEnd{Summary: e.Summary, Elapsed: time.Duration(e.ElapsedMs) * time.Millisecond}, e.Time)
+		case session.TypeBlockDisplay:
+			if b.Handler.Display != nil {
+				b.Handler.Display(Display{EntryID: e.TargetID, Block: e.Block, Ext: e.Ext, Status: e.Status, Text: e.Display})
+			}
 		case session.TypeBashExecution:
 			if x := e.Bash; x != nil {
 				b.interruptCalls()
@@ -472,6 +504,7 @@ func (b *Builder) Replay(entries []session.Entry) {
 				answer := e.Time.Add(time.Duration(e.ThinkingMs) * time.Millisecond)
 				b.apply(agent.ReasoningDelta{Text: m.ReasoningContent}, e.Time)
 				b.apply(agent.TextDelta{Text: m.Content}, answer)
+				b.apply(agent.MessageSaved{EntryID: e.ID}, answer)
 				b.apply(agent.StepEnd{}, answer)
 				b.calls = append(b.calls, m.ToolCalls...)
 			}

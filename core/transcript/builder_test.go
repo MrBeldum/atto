@@ -137,7 +137,7 @@ func TestLiveMatchesReplay(t *testing.T) {
 		Model: config.Model{ID: "m", ContextWindow: 100000, Input: []string{"text", "image"}}}, "", t.TempDir())
 	ag.Hooks = &stopOnce{}
 	w := session.New(t.TempDir())
-	ag.Record = w.Append
+	ag.Record, ag.EntryID = w.Append, w.Leaf
 
 	live := Builder{IDPrefix: "x-i"}
 	var started, completed []string

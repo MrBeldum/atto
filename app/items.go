@@ -20,7 +20,8 @@ import (
 // tr is the App's transcript builder, wired to the blocks.
 func (a *App) tr() *transcript.Builder {
 	if a.items.Handler.Started == nil {
-		a.items.Handler = transcript.Handler{Started: a.itemStarted, Delta: a.itemDelta, Updated: a.itemUpdated, Completed: a.itemCompleted}
+		a.items.Handler = transcript.Handler{Started: a.itemStarted, Delta: a.itemDelta, Updated: a.itemUpdated, Completed: a.itemCompleted,
+			Saved: a.itemSaved, Display: a.itemDisplay}
 	}
 	return &a.items
 }
@@ -39,6 +40,8 @@ func (a *App) resetItems() {
 	a.tr().Reset()
 	a.thinking, a.text, a.compact, a.summaryBlk, a.shellBlk = nil, nil, nil, nil, nil
 	clear(a.tools)
+	clear(a.itemBlocks)
+	clear(a.blocks) // late results for blocks of the old transcript find nothing
 }
 
 func (a *App) itemStarted(it *transcript.Item) {
@@ -76,9 +79,13 @@ func (a *App) itemStarted(it *transcript.Item) {
 		a.add(&noticeBlock{text: it.Text, style: tui.Dim})
 	case transcript.Reasoning:
 		a.thinking = &thinkingBlock{start: time.Now(), expander: expander{d: &a.details}}
+		a.thinking.disp.orig.d = &a.origView
+		a.trackBlock(it, a.thinking)
 		a.add(a.thinking)
 	case transcript.Assistant:
 		a.text = &textBlock{}
+		a.text.disp.orig.d = &a.origView
+		a.trackBlock(it, a.text)
 		a.add(a.text)
 	case transcript.Tool:
 		b := &toolBlock{args: agent.BashArgs{Description: it.Description, Command: it.Command},
@@ -96,6 +103,15 @@ func (a *App) itemStarted(it *transcript.Item) {
 	case transcript.Shell:
 		a.shellItemStarted(it)
 	}
+}
+
+// trackBlock remembers the block of an item until the item is saved and
+// has its block ID (itemSaved).
+func (a *App) trackBlock(it *transcript.Item, b displayBlock) {
+	if a.itemBlocks == nil {
+		a.itemBlocks = map[string]displayBlock{}
+	}
+	a.itemBlocks[it.ID] = b
 }
 
 func (a *App) itemDelta(it *transcript.Item, d string) {

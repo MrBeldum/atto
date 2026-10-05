@@ -91,6 +91,8 @@ type TUI struct {
 	prevFrame   []string
 	bar         scrollbar // see scrollbar.go
 
+	anchor anchorState // keeps the view put while the body changes, see anchor.go
+
 	// FullRepaint rewrites every visible row, from column 1, on every frame
 	// that changes anything, instead of only the rows that differ. It trades
 	// bandwidth for robustness on terminals that mishandle sparse positioned
@@ -599,12 +601,22 @@ func (t *TUI) positionCursor(b *strings.Builder, cur *cursorPos, total int) {
 func (t *TUI) doRenderFullscreen() {
 	width, height := t.term.Size()
 	inner := t.fullscreenWidth(width)
+	anchor, anchored := t.anchorBefore()
 	body := t.pad(t.Body.Render(inner))
 
-	// Keep the view anchored while scrolled up and new output arrives.
-	if t.scroll > 0 && len(body) > t.prevBodyLen {
-		t.scroll += len(body) - t.prevBodyLen
-		t.newBelow = true
+	// Keep the view anchored while scrolled up and the body changes height:
+	// to the line at its top (see anchor.go), else to the bottom, for output
+	// arriving below.
+	if t.scroll > 0 && len(body) != t.prevBodyLen {
+		was := t.scroll
+		if s, ok := t.anchorScroll(anchor, len(body)); anchored && ok {
+			t.scroll = s
+		} else if len(body) > t.prevBodyLen {
+			t.scroll += len(body) - t.prevBodyLen
+		}
+		if t.scroll > was {
+			t.newBelow = true
+		}
 	}
 	t.prevBodyLen = len(body)
 
@@ -632,6 +644,7 @@ func (t *TUI) doRenderFullscreen() {
 	end = len(body) - t.scroll
 	start = max(0, end-avail)
 	t.footerTop = height - len(footer)
+	t.anchor.scroll = t.scroll
 
 	t.viewTop, t.viewStart, t.viewRows = gap, start, end-start
 	t.lastBody = body
