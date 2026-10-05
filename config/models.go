@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -44,27 +45,37 @@ type Provider struct {
 // ResolveAPIKey finds the key for provider name: an explicit apiKey (literal
 // or "$ENV_VAR"), then auth.json, then the provider's env vars.
 func (p Provider) ResolveAPIKey(name string, auth map[string]AuthEntry) string {
+	key, _ := p.resolveKey(name, auth)
+	return key
+}
+
+// resolveKey is ResolveAPIKey that also reports whether the key is an OAuth
+// access token, which expires and must be fetched through OAuthToken.
+func (p Provider) resolveKey(name string, auth map[string]AuthEntry) (key string, oauth bool) {
 	if strings.HasPrefix(p.APIKey, "$") {
 		if v := os.Getenv(p.APIKey[1:]); v != "" {
-			return v
+			return v, false
 		}
 	} else if p.APIKey != "" {
-		return p.APIKey
+		return p.APIKey, false
 	}
-	if e, ok := auth[name]; ok && e.Key != "" {
-		return e.Key
+	if e, ok := auth[name]; ok && e.Secret() != "" {
+		return e.Secret(), e.Type == "oauth"
 	}
 	for _, env := range p.Env {
 		if v := os.Getenv(env); v != "" {
-			return v
+			return v, false
 		}
 	}
-	return ""
+	return "", false
 }
 
 type Model struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name,omitempty"`
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+	// API overrides the provider's wire API for this model (e.g. GPT models
+	// on a gateway that serves the rest over chat completions).
+	API     string   `json:"api,omitempty"`
 	Efforts []string `json:"efforts,omitempty"` // reasoning effort levels, in order
 	// EffortMap works like pi's thinkingLevelMap: each level maps to the
 	// value sent for "$effort", and null marks a level as unsupported
@@ -158,6 +169,21 @@ type ModelRef struct {
 	Provider     Provider
 	Model        Model
 	APIKey       string
+	// KeyFunc, set for OAuth logins, returns a fresh access token per
+	// request; APIKey then only marks that credentials exist.
+	KeyFunc func(context.Context) (string, error)
+}
+
+// API returns the wire API for the model: its own, else the provider's,
+// else chat completions.
+func (r ModelRef) API() string {
+	if r.Model.API != "" {
+		return r.Model.API
+	}
+	if r.Provider.API != "" {
+		return r.Provider.API
+	}
+	return "openai-completions"
 }
 
 // LoadModels returns the configured providers: built-in catalog providers
@@ -248,6 +274,9 @@ func mergeModel(base, over Model) Model {
 	if over.Name != "" {
 		base.Name = over.Name
 	}
+	if over.API != "" {
+		base.API = over.API
+	}
 	if len(over.Efforts) > 0 {
 		base.Efforts = over.Efforts
 	}
@@ -290,8 +319,13 @@ func (m ModelsFile) List() []ModelRef {
 	var out []ModelRef
 	for _, n := range names {
 		p := m.Providers[n]
+		key, oauth := p.resolveKey(n, m.auth)
 		for _, mod := range p.Models {
-			out = append(out, ModelRef{ProviderName: n, Provider: p, Model: mod, APIKey: p.ResolveAPIKey(n, m.auth)})
+			ref := ModelRef{ProviderName: n, Provider: p, Model: mod, APIKey: key}
+			if oauth {
+				ref.KeyFunc = func(ctx context.Context) (string, error) { return OAuthToken(ctx, n) }
+			}
+			out = append(out, ref)
 		}
 	}
 	return out

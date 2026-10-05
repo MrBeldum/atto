@@ -152,3 +152,56 @@ func TestSystemPromptStableAcrossDays(t *testing.T) {
 		t.Fatalf("system prompt changed or lacks the start date:\n%s", first)
 	}
 }
+
+// A Responses-API model runs a tool turn end to end; the encrypted reasoning
+// item survives the session record/restore round trip and is sent back.
+func TestResponsesModelToolTurnAndRestore(t *testing.T) {
+	var mu sync.Mutex
+	var inputs [][]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Input []any `json:"input"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		inputs = append(inputs, body.Input)
+		n := len(inputs)
+		mu.Unlock()
+		if n == 1 {
+			args, _ := json.Marshal(map[string]string{"description": "t", "command": "echo hi"})
+			a, _ := json.Marshal(string(args))
+			fmt.Fprintf(w, "data: %s\n\n", `{"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_1","encrypted_content":"ENC"}}`)
+			fmt.Fprintf(w, "data: %s\n\n", `{"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","call_id":"c1","name":"bash","arguments":`+string(a)+`}}`)
+		} else {
+			fmt.Fprintf(w, "data: %s\n\n", `{"type":"response.output_text.delta","delta":"fin"}`)
+		}
+		fmt.Fprintf(w, "data: %s\n\n", `{"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":1}}}`)
+	}))
+	defer srv.Close()
+
+	ref := config.ModelRef{ProviderName: "t", Provider: config.Provider{BaseURL: srv.URL, API: "openai-responses"}, Model: config.Model{ID: "gpt-x", Efforts: []string{"low", "high"}}}
+	a := New(ref, "low", "/tmp")
+	var rec []session.Entry
+	a.Record = func(e session.Entry) { rec = append(rec, e) }
+	if err := a.Run(context.Background(), "go", func(any) {}); err != nil {
+		t.Fatal(err)
+	}
+	if len(inputs) != 2 || !strings.Contains(fmt.Sprint(inputs[1]), "ENC") || !strings.Contains(fmt.Sprint(inputs[1]), "function_call_output") {
+		t.Fatalf("second request input: %v", inputs)
+	}
+
+	// Persist and restore, then continue: the reasoning item must still be sent.
+	data, _ := json.Marshal(rec)
+	var back []session.Entry
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatal(err)
+	}
+	b := New(ref, "low", "/tmp")
+	b.Restore(back)
+	if err := b.Run(context.Background(), "again", func(any) {}); err != nil {
+		t.Fatal(err)
+	}
+	if len(inputs) != 3 || !strings.Contains(fmt.Sprint(inputs[2]), "ENC") {
+		t.Fatalf("restored request lost reasoning: %v", inputs[len(inputs)-1])
+	}
+}

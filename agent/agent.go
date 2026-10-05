@@ -112,7 +112,7 @@ type Agent struct {
 	// Model settings may change from the UI while a turn runs; they are
 	// read once per request.
 	cfgMu   sync.Mutex
-	client  *provider.Client
+	client  provider.Streamer
 	model   config.ModelRef
 	effort  string
 	env     []string // extra environment for bash commands
@@ -202,18 +202,33 @@ func (a *Agent) SetModel(m config.ModelRef) {
 	a.cfgMu.Lock()
 	defer a.cfgMu.Unlock()
 	a.model = m
-	a.client = &provider.Client{
-		BaseURL:        m.Provider.BaseURL,
-		APIKey:         m.APIKey,
-		MaxTokensField: m.Provider.MaxTokensField,
-		ExtraBody:      m.RequestBody(),
-		EffortMap:      m.Model.WireEfforts(),
-		Headers:        m.Provider.Headers,
-		OnRequest: func(b []byte) {
-			a.cfgMu.Lock()
-			a.lastReq = b
-			a.cfgMu.Unlock()
-		},
+	onRequest := func(b []byte) {
+		a.cfgMu.Lock()
+		a.lastReq = b
+		a.cfgMu.Unlock()
+	}
+	if m.API() == provider.APIResponses {
+		a.client = &provider.ResponsesClient{
+			BaseURL:     m.Provider.BaseURL,
+			APIKey:      m.APIKey,
+			KeyFunc:     m.KeyFunc,
+			EffortMap:   m.Model.WireEfforts(),
+			NoReasoning: len(m.Model.Levels()) == 0,
+			ExtraBody:   m.RequestBody(),
+			Headers:     m.Provider.Headers,
+			OnRequest:   onRequest,
+		}
+	} else {
+		a.client = &provider.Client{
+			BaseURL:        m.Provider.BaseURL,
+			APIKey:         m.APIKey,
+			KeyFunc:        m.KeyFunc,
+			MaxTokensField: m.Provider.MaxTokensField,
+			ExtraBody:      m.RequestBody(),
+			EffortMap:      m.Model.WireEfforts(),
+			Headers:        m.Provider.Headers,
+			OnRequest:      onRequest,
+		}
 	}
 	if lv := m.Model.Levels(); len(lv) > 0 && !contains(lv, a.effort) {
 		a.effort = lv[len(lv)/2]
@@ -387,7 +402,7 @@ func (a *Agent) tools() []provider.Tool {
 }
 
 // request builds a request and returns the client to send it with.
-func (a *Agent) request(extra ...provider.Message) (*provider.Client, provider.Request) {
+func (a *Agent) request(extra ...provider.Message) (provider.Streamer, provider.Request) {
 	model, effort := a.Current()
 	a.cfgMu.Lock()
 	client, sessID := a.client, a.sessID

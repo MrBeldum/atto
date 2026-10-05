@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -27,13 +29,23 @@ type catalogProvider struct {
 	name    string
 	display string
 	baseURL string
+	api     string // wire API of the provider's models ("" = chat completions)
 	env     []string
 	headers map[string]string
 }
 
 // OpenCode Zen and Go: OpenAI-compatible chat completions, API key auth,
-// and a per-conversation routing header (pi: opencode-headers.ts).
+// and a per-conversation routing header (pi: opencode-headers.ts). Zen's GPT
+// models are served over the Responses API instead.
+//
+// OpenAI itself uses the Responses API with an API key or Sign in with
+// ChatGPT (atto login openai); the session headers let it route turns of one
+// conversation to the same cache.
 var catalogProviders = []catalogProvider{
+	{
+		name: "openai", display: "OpenAI", baseURL: "https://api.openai.com/v1", api: "openai-responses",
+		env: []string{"OPENAI_API_KEY"}, headers: map[string]string{"session_id": "$session", "x-client-request-id": "$session"},
+	},
 	{
 		name: "opencode", display: "OpenCode Zen", baseURL: "https://opencode.ai/zen/v1",
 		env: []string{"OPENCODE_API_KEY"}, headers: map[string]string{"x-opencode-session": "$session"},
@@ -129,11 +141,14 @@ func CatalogProviders() map[string]Provider {
 			continue
 		}
 		p := Provider{
-			Name: cp.display, BaseURL: cp.baseURL, API: "openai-completions",
+			Name: cp.display, BaseURL: cp.baseURL, API: cp.api,
 			Env: cp.env, Headers: cp.headers, MaxTokensField: "max_tokens",
 		}
+		if p.API == "" {
+			p.API = "openai-completions"
+		}
 		for id, m := range src.Models {
-			if mod, ok := catalogModel(cp.name, id, m); ok {
+			if mod, ok := catalogModel(cp, id, m); ok {
 				p.Models = append(p.Models, mod)
 			}
 		}
@@ -147,15 +162,30 @@ func CatalogProviders() map[string]Provider {
 // leave little room for context; most turns need far less.
 const catalogMaxTokens = 32768
 
-// catalogModel converts a models.dev entry. Only models served over chat
-// completions are kept; GPT, Claude and Gemini models on OpenCode use the
-// Responses, Anthropic and Google APIs, which atto does not speak yet.
-func catalogModel(provider, id string, m modelsDevModel) (Model, bool) {
+// catalogModel converts a models.dev entry. Models are kept when served over
+// chat completions or the Responses API; Claude and Gemini models on
+// OpenCode use the Anthropic and Google APIs, which atto does not speak.
+func catalogModel(cp catalogProvider, id string, m modelsDevModel) (Model, bool) {
+	provider := cp.name
 	if !m.ToolCall || m.Status == "deprecated" {
 		return Model{}, false
 	}
-	if m.Provider != nil && m.Provider.NPM != "" && m.Provider.NPM != "@ai-sdk/openai-compatible" {
-		return Model{}, false
+	responses := cp.api == "openai-responses"
+	for _, no := range []string{"realtime", "audio", "image", "transcribe", "tts"} {
+		if responses && strings.Contains(id, no) {
+			return Model{}, false // not usable through text Responses requests
+		}
+	}
+	if m.Provider != nil {
+		switch npm := m.Provider.NPM; {
+		case npm == "" || npm == "@ai-sdk/openai-compatible":
+		case npm == "@ai-sdk/openai" && strings.HasPrefix(id, "gpt-"):
+			// A gateway's GPT models speak Responses while the rest of its
+			// models use chat completions.
+			responses = true
+		default:
+			return Model{}, false
+		}
 	}
 	ctx := m.Limit.Context
 	if m.Limit.Input > 0 {
@@ -168,7 +198,14 @@ func catalogModel(provider, id string, m modelsDevModel) (Model, bool) {
 	if mod.MaxTokens == 0 {
 		mod.MaxTokens = catalogMaxTokens
 	}
+	if responses && cp.api != "openai-responses" {
+		mod.API = "openai-responses"
+	}
 	if !m.Reasoning {
+		return mod, true
+	}
+	if responses {
+		mod.Efforts, mod.EffortMap = responsesEfforts(id)
 		return mod, true
 	}
 	// Default: OpenAI-style reasoning_effort. Reasoning models on OpenCode
@@ -218,4 +255,53 @@ var catalogEffortMaps = []struct {
 	{"", "glm-5.3!", map[string]*string{"off": nil}},
 	{"", "kimi-k2.7-code", map[string]*string{"off": nil}},
 	{"", "longcat-", map[string]*string{"off": nil}},
+}
+
+var gptVersion = regexp.MustCompile(`^gpt-(\d+)(?:\.(\d+))?`)
+
+// responsesEfforts derives reasoning levels for a Responses-API model from
+// its ID, since models.dev does not list them. The rules follow OpenAI's
+// documented ranges: gpt-5 has minimal..high; 5.1 added "none" (sent for
+// "off"); 5.2 added xhigh; codex models never take "none"; pro models only
+// the top levels. Unknown models get nothing, so no reasoning field is sent.
+// Override per model with effortMap in models.json.
+func responsesEfforts(id string) ([]string, map[string]*string) {
+	if len(id) > 1 && id[0] == 'o' && id[1] >= '0' && id[1] <= '9' {
+		return []string{"low", "medium", "high"}, nil
+	}
+	v := gptVersion.FindStringSubmatch(id)
+	if v == nil {
+		return nil, nil
+	}
+	major, _ := strconv.Atoi(v[1])
+	minor := -1
+	if v[2] != "" {
+		minor, _ = strconv.Atoi(v[2])
+	}
+	if major < 5 {
+		return nil, nil
+	}
+	xhigh := major > 5 || minor >= 2 || strings.Contains(id, "-max")
+	var levels []string
+	switch {
+	case strings.Contains(id, "-pro"):
+		levels = []string{"high"}
+		if minor >= 2 || major > 5 {
+			levels = []string{"medium", "high", "xhigh"}
+		}
+		return levels, nil
+	case strings.Contains(id, "codex"):
+		levels = []string{"low", "medium", "high"}
+	case major == 5 && minor < 0:
+		levels = []string{"minimal", "low", "medium", "high"}
+	default:
+		levels = []string{"off", "low", "medium", "high"}
+	}
+	if xhigh && (major > 5 || minor >= 0) {
+		levels = append(levels, "xhigh")
+	}
+	if levels[0] == "off" {
+		return levels, map[string]*string{"off": str("none")}
+	}
+	return levels, nil
 }

@@ -55,11 +55,11 @@ func TestCatalogAndMerge(t *testing.T) {
 }
 
 func TestCatalogEffortOff(t *testing.T) {
-	m, _ := catalogModel("opencode-go", "deepseek-v4.1-flash", modelsDevModel{ToolCall: true, Reasoning: true})
+	m, _ := catalogModel(catalogProvider{name: "opencode-go"}, "deepseek-v4.1-flash", modelsDevModel{ToolCall: true, Reasoning: true})
 	if *m.EffortMap["off"] != "none" || m.Levels()[0] != "off" {
 		t.Fatalf("deepseek off: %+v", m)
 	}
-	g, _ := catalogModel("opencode-go", "glm-5.3", modelsDevModel{ToolCall: true, Reasoning: true})
+	g, _ := catalogModel(catalogProvider{name: "opencode-go"}, "glm-5.3", modelsDevModel{ToolCall: true, Reasoning: true})
 	for _, e := range g.Levels() {
 		if e == "off" {
 			t.Fatalf("glm-5.3 cannot disable thinking: %v", g.Efforts)
@@ -68,11 +68,11 @@ func TestCatalogEffortOff(t *testing.T) {
 }
 
 func TestEffortMapLikePi(t *testing.T) {
-	ds, _ := catalogModel("opencode-go", "deepseek-v4-pro", modelsDevModel{ToolCall: true, Reasoning: true})
+	ds, _ := catalogModel(catalogProvider{name: "opencode-go"}, "deepseek-v4-pro", modelsDevModel{ToolCall: true, Reasoning: true})
 	if got := ds.Levels(); strings.Join(got, ",") != "off,high,max" {
 		t.Fatalf("deepseek-v4-pro levels %v", got)
 	}
-	fl, _ := catalogModel("opencode-go", "glm-5.3-flash", modelsDevModel{ToolCall: true, Reasoning: true})
+	fl, _ := catalogModel(catalogProvider{name: "opencode-go"}, "glm-5.3-flash", modelsDevModel{ToolCall: true, Reasoning: true})
 	if fl.Levels()[0] != "off" {
 		t.Fatalf("glm-5.3-flash should keep off: %v", fl.Levels())
 	}

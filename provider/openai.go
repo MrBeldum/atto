@@ -33,6 +33,9 @@ type Message struct {
 	ReasoningContent string     `json:"reasoning_content,omitempty"`
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string     `json:"tool_call_id,omitempty"`
+	// Reasoning carries opaque Responses API reasoning items so they can be
+	// replayed on later requests. Chat completions never sees it.
+	Reasoning *ReasoningState `json:"responses_reasoning,omitempty"`
 }
 
 type ToolFunction struct {
@@ -79,6 +82,9 @@ type Result struct {
 type Client struct {
 	BaseURL string
 	APIKey  string
+	// KeyFunc, if set, supplies the key per request (OAuth refresh) and
+	// takes precedence over APIKey.
+	KeyFunc func(context.Context) (string, error)
 	// MaxTokensField names the output limit field ("max_tokens" by default).
 	MaxTokensField string
 	// ExtraBody is merged into every request body. String placeholders:
@@ -148,7 +154,7 @@ func (c *Client) body(req Request) ([]byte, error) {
 		}
 	}
 	b["model"] = req.Model
-	b["messages"] = req.Messages
+	b["messages"] = withoutReasoning(req.Messages)
 	b["stream"] = true
 	b["stream_options"] = map[string]any{"include_usage": true}
 	if req.MaxTokens > 0 {
@@ -212,25 +218,15 @@ func (c *Client) Stream(ctx context.Context, req Request, h Handler) (Result, er
 	if c.OnRequest != nil {
 		c.OnRequest(body)
 	}
+	key, err := bearerKey(ctx, c.APIKey, c.KeyFunc)
+	if err != nil {
+		return res, err
+	}
 	hr, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(c.BaseURL, "/")+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return res, err
 	}
-	hr.Header.Set("Content-Type", "application/json")
-	hr.Header.Set("User-Agent", UserAgent)
-	hr.Header.Set("Accept", "text/event-stream")
-	if c.APIKey != "" {
-		hr.Header.Set("Authorization", "Bearer "+c.APIKey)
-	}
-	for k, v := range c.Headers {
-		if v == "$session" {
-			if req.SessionID == "" {
-				continue
-			}
-			v = req.SessionID
-		}
-		hr.Header.Set(k, v)
-	}
+	setCommonHeaders(hr, key, c.Headers, req.SessionID)
 	hc := c.HTTP
 	if hc == nil {
 		hc = http.DefaultClient

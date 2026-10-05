@@ -21,6 +21,8 @@ usage:
   cat file | atto -p "explain"      stdin is appended to the prompt
   atto models [refresh]             list available models
   atto auth set <provider>          store an API key
+  atto login openai                 sign in with ChatGPT (subscription)
+  atto logout <provider>            remove stored credentials
   atto history grep|show ...        search a session transcript
   atto serve [-listen addr]         JSON-RPC over HTTP + SSE, with a web client
   atto app-server                   JSON-RPC over stdio (JSON lines)
@@ -34,6 +36,8 @@ func main() {
 			"history": app.RunHistory,
 			"auth":    app.RunAuth,
 			"models":  app.RunModels,
+			"login":   app.RunLogin,
+			"logout":  app.RunLogout,
 			"serve": func(args []string, out io.Writer) error {
 				provider.UserAgent = "atto/" + app.Version
 				return server.RunHTTP(app.Version, args, out)
