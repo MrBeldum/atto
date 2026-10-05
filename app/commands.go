@@ -31,6 +31,7 @@ func init() {
 		{"reload", "", "Re-read AGENTS.md, skills, hooks, extensions, settings and models", (*App).cmdReload},
 		{"extensions", "[approve <name>]", "List extensions, or approve a project extension", (*App).cmdExtensions},
 		{"request", "", "Save the raw last request to a file", (*App).cmdRequest},
+		{"debug", "", "Save a heap profile and memory figures to ~/.atto/debug", (*App).cmdDebug},
 		{"login", "[provider]", "Sign in with an account or save an API key", (*App).cmdLogin},
 		{"logout", "[provider]", "Remove stored credentials", (*App).cmdLogout},
 		{"resume", "", "Resume a saved conversation", (*App).cmdResume},
@@ -336,7 +337,7 @@ func (a *App) cmdClear(string) {
 	a.notice("Started a new conversation.")
 }
 
-func (a *App) cmdQuit(string) { a.doQuit() }
+func (a *App) cmdQuit(string) { a.requestQuit() }
 
 func (a *App) cmdName(arg string) {
 	if arg == "" {

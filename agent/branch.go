@@ -112,6 +112,10 @@ func HasBranchContent(branch []session.Entry) bool {
 			}
 		case session.TypeCompaction, session.TypeBranchSummary:
 			return true
+		case session.TypeBashExecution:
+			if e.Bash != nil && !e.Bash.Exclude {
+				return true
+			}
 		}
 	}
 	return false
@@ -132,6 +136,10 @@ func branchStart(branch []session.Entry) string {
 			return "the latest handoff notes (and the work they describe since that point)"
 		case session.TypeBranchSummary:
 			return "the branch summary that begins " + quote(e.Summary)
+		case session.TypeBashExecution:
+			if e.Bash != nil && !e.Bash.Exclude {
+				return "the user's shell command " + quote(e.Bash.Command)
+			}
 		case session.TypeMessage:
 			m := e.Message
 			if m == nil {

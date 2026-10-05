@@ -91,6 +91,13 @@ func wireItem(it *transcript.Item) Item {
 				w.ExitCode, w.Job, w.Background = nil, r.Job, r.Background
 			}
 		}
+	case transcript.Shell:
+		// A command the user ran in the TUI ("!cmd"), shown as a command.
+		w.Type, w.Description, w.Command, w.Output = ItemCommand, "user command", it.Command, it.Output
+		if r := it.Result; r != nil {
+			code := r.ExitCode
+			w.ExitCode, w.DurationMs = &code, it.Duration.Milliseconds()
+		}
 	case transcript.BranchSummary:
 		w.Type, w.DurationMs = ItemBranchSummary, it.Duration.Milliseconds()
 	case transcript.Compaction:

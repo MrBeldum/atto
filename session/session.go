@@ -50,6 +50,9 @@ const (
 	// summary of the branch left behind (pi's branch_summary), which the
 	// model sees on the new branch.
 	TypeBranchSummary = "branch_summary"
+	// TypeBashExecution is a shell command the user ran with "!" or "!!"
+	// in the prompt; unless excluded, the model sees it as a user message.
+	TypeBashExecution = "bash_execution"
 )
 
 // Entry is one line of a session file. Fields are used according to Type.
@@ -104,6 +107,26 @@ type Entry struct {
 	// branch_summary: the summary of the branch from FromID back to where
 	// it meets the new one (ElapsedMs is how long writing it took)
 	Summary string `json:"summary,omitempty"`
+
+	// bash_execution
+	Bash *BashExec `json:"bash,omitempty"`
+}
+
+// BashExec is a command the user ran with "!" (or "!!", which keeps it
+// out of the model's context).
+type BashExec struct {
+	Command string `json:"command"`
+	// Output is the command's output as shown and as sent to the model:
+	// tidied, and cut in the middle when long (Truncated; the whole of it
+	// is in FullOutputPath).
+	Output         string `json:"output,omitempty"`
+	ExitCode       int    `json:"exitCode"`
+	Cancelled      bool   `json:"cancelled,omitempty"`
+	Truncated      bool   `json:"truncated,omitempty"`
+	FullOutputPath string `json:"fullOutputPath,omitempty"`
+	// Exclude keeps the command and its output from the model ("!!").
+	Exclude    bool  `json:"excludeFromContext,omitempty"`
+	DurationMs int64 `json:"durationMs,omitempty"`
 }
 
 // ToolMeta records how a tool call went, for redisplay on resume.
@@ -133,6 +156,26 @@ type Writer struct {
 	hasLeaf bool   // leaf is known; else read from the file on open
 	f       *os.File
 	err     error
+	// readOnly, when set, is why nothing is written (see lock.go).
+	readOnly string
+}
+
+// SetReadOnly makes w drop every entry, for a session another process is
+// writing; why is shown to the user.
+func (w *Writer) SetReadOnly(why string) {
+	w.mu.Lock()
+	w.readOnly = why
+	w.mu.Unlock()
+}
+
+// ReadOnly returns why w writes nothing, "" if it does.
+func (w *Writer) ReadOnly() string {
+	if w == nil {
+		return ""
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.readOnly
 }
 
 func newID() string {
@@ -261,6 +304,9 @@ func (w *Writer) BranchSummary(to string, e Entry) {
 
 // appendLocked writes e as a child of parent, or of the leaf if nil.
 func (w *Writer) appendLocked(e Entry, parent *string) {
+	if w.readOnly != "" {
+		return
+	}
 	if e.Time.IsZero() {
 		e.Time = time.Now()
 	}
@@ -344,6 +390,7 @@ type Summary struct {
 	Messages int    // user + assistant messages
 	Branch   string // git branch when the session began; "" if unknown
 	Size     int64  // file size in bytes
+	Running  int    // pid of the background process writing it; 0 if none
 }
 
 // List returns sessions, newest first. If cwd is non-empty only sessions
@@ -393,6 +440,9 @@ func summarize(path string) (Summary, error) {
 	s := Summary{Path: path, ID: h.ID, Cwd: h.Cwd, Created: h.Time, Updated: h.Time, Branch: h.GitBranch}
 	if st, err := os.Stat(path); err == nil {
 		s.Size = st.Size()
+	}
+	if l, ok := LockedBy(path); ok {
+		s.Running = l.PID
 	}
 	for _, e := range entries {
 		s.Updated = e.Time

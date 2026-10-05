@@ -216,6 +216,9 @@ func (a *App) renderStatus(width int) []string {
 	} else {
 		out = append(out, a.builtinStatus(width))
 	}
+	if len(out) > 0 {
+		out[0] = a.withToast(out[0], width)
+	}
 	// Transient indicators go on their own line so custom output is untouched.
 	flags := a.extensionStatus()
 	if p := a.goalPill(); p != "" {

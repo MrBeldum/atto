@@ -99,6 +99,12 @@ type App struct {
 	compact  *compactBlock
 	// summaryBlk is the branch summary block being streamed.
 	summaryBlk *summaryBlock
+	// shell is the command the user is running with "!", shellBlk the
+	// block of the latest one, and pendingShell those that finished during
+	// a run (see usershell.go).
+	shell        *shellRun
+	shellBlk     *shellBlock
+	pendingShell []pendingShell
 	// steered collects the user messages of a committed steer, shown as
 	// one block; replaying is set while blocks come from saved entries.
 	steered   []string
@@ -128,6 +134,8 @@ type App struct {
 	jobCount, timerCount int
 
 	goal core.GoalDriver
+	// bgx is the experimental exit menu (background_exit.go).
+	bgx bgExit
 
 	// Slash command list: selection, the text it belongs to, and the text
 	// for which Esc closed it.
@@ -183,6 +191,7 @@ func Run(opts Options) error {
 		a.ui.Mode = tui.Inline
 	}
 	a.escAction = settings.DoubleEscapeAction
+	a.bgx.off = settings.BackgroundExit != nil && !*settings.BackgroundExit
 	a.skipSummary = settings.BranchSummary != nil && settings.BranchSummary.SkipPrompt
 	a.ui.NoMouse = mouseDisabled(settings.Mouse, os.Getenv)
 	a.build()
@@ -242,7 +251,13 @@ func Run(opts Options) error {
 	})
 	a.ui.Stop()
 	a.sess.Close()
-	if n := core.Leave(a.sess.ID); n > 0 {
+	if a.printExit() { // the run goes on in the background
+		if a.ext != nil {
+			a.ext.Close() // the session's extensions run on there; no session_end
+		}
+		return nil
+	}
+	if n := a.leaveCore(); n > 0 {
 		fmt.Printf("atto: stopped %d background job(s)\n", n)
 	}
 	if a.hooks != nil {
@@ -265,7 +280,7 @@ func (a *App) build() {
 
 	// The command list sits above the input, as in Claude Code, so the
 	// input and the status line keep their place as it opens and closes.
-	a.ui.Footer.Add(tui.Func(a.renderActivity), tui.Func(a.renderPending), jumpPill{a}, tui.Func(a.renderToast), tui.Func(a.renderWidgets), tui.Func(a.renderSuggestions), tui.Func(a.renderInput), tui.Func(a.renderStatus))
+	a.ui.Footer.Add(tui.Func(a.renderActivity), tui.Func(a.renderPending), jumpPill{a}, tui.Func(a.renderReadOnly), tui.Func(a.renderWidgets), tui.Func(a.renderSuggestions), tui.Func(a.renderInput), tui.Func(a.renderStatus))
 	a.ui.SetFocus(a.editor)
 	a.ui.OnInput = a.onInput
 	a.ui.OnCopy = a.copySelection
@@ -283,10 +298,11 @@ func (a *App) leaveSession(reason string) {
 		return
 	}
 	a.sessionEndHook(reason)
-	if n := core.Leave(a.sess.ID); n > 0 {
+	if n := a.leaveCore(); n > 0 {
 		a.notice("Stopped %d background job(s) of the previous conversation.", n)
 	}
 	a.jobCount, a.timerCount, a.pendingEvents = 0, 0, nil
+	a.dropShell()
 }
 
 // newSession starts recording into a fresh session file.
@@ -399,6 +415,9 @@ func (a *App) onInput(data string) bool {
 	if a.modal != nil {
 		return false // the focused modal handles everything
 	}
+	if a.readOnlyKey(data) {
+		return true
+	}
 	if a.suggestionKey(tui.Key(data)) {
 		a.esc.reset() // an Esc that closed the "/" list is not a first Esc
 		return true
@@ -415,6 +434,10 @@ func (a *App) onInput(data string) bool {
 		a.details.gen++ // the expanded blocks are confirmation enough
 		return true
 	case "escape":
+		if a.cancelShell() {
+			a.esc.reset()
+			return true
+		}
 		if a.busy {
 			a.esc.reset()
 			if len(a.pendingSteers) > 0 {
@@ -426,17 +449,18 @@ func (a *App) onInput(data string) bool {
 		return a.onEscape()
 	case "ctrl+c":
 		switch {
+		case a.cancelShell():
 		case a.busy:
 			a.cancel()
 		case a.editor.Text() != "":
 			a.editor.SetText("")
 		default:
-			a.doQuit()
+			a.requestQuit()
 		}
 		return true
 	case "ctrl+d":
-		if a.editor.Text() == "" && !a.busy {
-			a.doQuit()
+		if a.editor.Text() == "" && (!a.busy || a.exitMenuAvailable()) {
+			a.requestQuit()
 			return true
 		}
 	case "ctrl+b":
@@ -470,7 +494,14 @@ func (a *App) onInput(data string) bool {
 }
 
 func (a *App) submit(text string, att []tui.Attachment) {
+	if a.refuseReadOnly(text) {
+		return
+	}
 	a.ui.ScrollToBottom()
+	if cmd, exclude, ok := parseShell(text); ok && len(att) == 0 {
+		a.submitShell(text, cmd, exclude)
+		return
+	}
 	if len(att) > 0 && !strings.HasPrefix(text, "/") {
 		a.submitWithImages(text, att)
 		return
@@ -511,6 +542,9 @@ func (a *App) recordSettings() {
 
 // startTurn runs a turn for text and its image attachments.
 func (a *App) startTurn(text string, att []tui.Attachment) {
+	if a.refuseReadOnly(text) {
+		return
+	}
 	imgs := attachedImages(att)
 	for _, im := range imgs {
 		if err := images.Save(im); err != nil {
@@ -634,7 +668,24 @@ func (a *App) renderInput(width int) []string {
 	if a.modal != nil {
 		return append([]string{""}, a.modal.Render(width)...)
 	}
-	return a.editor.Render(width)
+	return a.renderEditor(width)
+}
+
+// renderEditor draws the editor, in bash mode (green rule, "!" prompt and
+// a hint) while its text starts a shell command.
+func (a *App) renderEditor(width int) []string {
+	mode := shellMode(a.editor.Text())
+	if mode == "" {
+		a.editor.Rule, a.editor.Prompt = tui.Dim, tui.FG(6, "› ")
+		return a.editor.Render(width)
+	}
+	a.editor.Rule = func(s string) string { return tui.FG(2, s) }
+	a.editor.Prompt = tui.FG(2, "! ")
+	hint := "bash mode · runs in " + shortPath(a.cwd) + " · output goes to the model"
+	if mode == "!!" {
+		hint = "bash mode · not sent to the model"
+	}
+	return append(a.editor.Render(width), tui.Truncate(" "+tui.FG(2, hint), width, "…"))
 }
 
 // jumpPill is the centered "Jump to bottom" pill above the input while the

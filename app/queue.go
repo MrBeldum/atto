@@ -44,8 +44,8 @@ func (a *App) queueFromEditor() {
 	if text == "" {
 		return
 	}
-	if !a.busy {
-		a.submit(text, att)
+	if _, _, isShell := parseShell(text); !a.busy || isShell && len(att) == 0 {
+		a.submit(text, att) // a shell command runs at once, even during a turn
 		return
 	}
 	a.enqueue(text, att)
@@ -73,6 +73,10 @@ func (a *App) restoreToEditor(texts []string, att ...tui.Attachment) {
 
 // afterRun settles pending input once a turn or compaction finishes.
 func (a *App) afterRun(err error) {
+	a.flushShell()
+	if a.backgroundAfterRun(err) {
+		return
+	}
 	if a.runKind == "branchSummary" {
 		a.runKind = ""
 		if a.afterBranchSummary(err) {

@@ -125,6 +125,8 @@ atto -p -goal "make the tests pass" -goal-budget 200k
 | `Ctrl+C` | copy the selection if there is one; otherwise interrupt, clear the input when idle, or quit when the input is empty |
 | `Ctrl+V` / `Alt+V` | attach the image on the clipboard (use `Alt+V` where the terminal pastes text on `Ctrl+V`, as on Windows) |
 
+Shell commands, as in pi: start the prompt with `!` to run a command yourself, in the working directory, with the shell and environment the agent's own commands use and its output cut (the full text is saved to a temp file). It shows in the conversation as a `! command` block, and the command and its output go to the model as a user message the next time it runs (`Ran` followed by the command and its output). `!!command` runs it the same way but keeps it from the model; the block says so. The input turns green while the text starts with `!`. `Esc` or `Ctrl+C` cancels the command. It runs at once even while the agent works, but its result joins the conversation only when the turn ends, so it never lands between a tool call and its result; one command runs at a time (another is refused and stays in the input). `!` alone is an ordinary message. Commands are saved in the session and come back on resume, `/tree` and fork. No hooks run for them, and `atto -p` has no such prefix.
+
 Pasting the path of an image file, or dropping the file on the terminal, attaches it too. Images show as `[image 1: 1024x768 PNG]` in the input; delete the placeholder to drop the image. Images larger than 2048 pixels are scaled down. Clipboard images need `osascript` (macOS; `pngpaste` is used if installed), `wl-paste` or `xclip` (Linux), or PowerShell (Windows, WSL).
 
 `atto -p` attaches images given with `-image` and an image piped to stdin (PNG, JPEG, GIF or WebP, recognized by its first bytes); the prompt argument is then the text. In `atto serve`'s web client, attach images with the `+` button, by pasting or by dropping them; over JSON-RPC, `turn/start` takes `images: [{mimeType, data}]` (base64 or a `data:` URL, at most 10 of 10 MB each). Either way the model must accept images.
@@ -251,7 +253,7 @@ Everything lives in `~/.atto`. Set `ATTO_DIR` to move it.
 
 | Path | Contents |
 | --- | --- |
-| `settings.json` | default model and effort, renderer, `mouse`, status line, hooks, `updateCheck`, `doubleEscapeAction` (`tree`, `fork` or `none`), `branchSummary.skipPrompt`, `extensions` (`disabled` names, handler `timeout` in seconds) |
+| `settings.json` | default model and effort, renderer, `mouse`, status line, hooks, `updateCheck`, `doubleEscapeAction` (`tree`, `fork` or `none`), `branchSummary.skipPrompt`, `toolOutputTokenLimit` (how much of a command's output the model gets, default 10000 tokens; the middle is cut and the full output saved to a file, as in codex), `backgroundExit` (experimental: `false` turns off the exit menu that offers "Run in background" while a turn runs), `extensions` (`disabled` names, handler `timeout` in seconds) |
 | `extensions/` | your extensions; `extension-approvals.json` holds approved project extensions, `extensions.log` their logs |
 | `models.json` | your providers and models |
 | `auth.json` | keys and logins (mode 0600) |

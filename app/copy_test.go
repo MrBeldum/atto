@@ -118,19 +118,20 @@ func TestCopySelectionToast(t *testing.T) {
 	if !strings.Contains(out, tui.OSC52("hi")) {
 		t.Fatalf("no OSC 52: %q", out)
 	}
-	var shown []string
-	a.ui.Do(func() { shown = a.renderToast(60) })
-	if len(shown) != 1 || !strings.Contains(tui.StripEscapes(shown[0]), text) {
-		t.Fatalf("toast line %q", shown)
+	var shown string
+	a.ui.Do(func() { shown = tui.StripEscapes(a.withToast("status", 60)) })
+	if !strings.HasPrefix(shown, "status ") || !strings.HasSuffix(shown, text) || tui.VisibleWidth(shown) != 59 {
+		t.Fatalf("status with toast %q", shown)
 	}
-	// A new toast replaces the old one; an old one disappears.
+	// A new toast replaces the old one; a long status line is cut for it.
 	a.showToast("second")
-	if got := tui.StripEscapes(a.renderToast(60)[0]); got != "  second" {
+	if got := tui.StripEscapes(a.withToast(strings.Repeat("x", 80), 30)); got != strings.Repeat("x", 21)+"… second" {
 		t.Fatalf("replaced: %q", got)
 	}
+	// An old one disappears.
 	a.toast.until = time.Now().Add(-time.Second)
-	if a.renderToast(60) != nil {
-		t.Fatal("expired toast still shown")
+	if got := a.withToast("status", 60); got != "status" {
+		t.Fatalf("expired toast still shown: %q", got)
 	}
 }
 

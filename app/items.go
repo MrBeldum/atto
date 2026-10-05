@@ -37,7 +37,7 @@ func (a *App) replay(entries []session.Entry) {
 // resetItems forgets the items of a cleared transcript.
 func (a *App) resetItems() {
 	a.tr().Reset()
-	a.thinking, a.text, a.compact, a.summaryBlk = nil, nil, nil, nil
+	a.thinking, a.text, a.compact, a.summaryBlk, a.shellBlk = nil, nil, nil, nil, nil
 	clear(a.tools)
 }
 
@@ -93,6 +93,8 @@ func (a *App) itemStarted(it *transcript.Item) {
 		a.add(a.compact)
 	case transcript.BranchSummary:
 		a.summaryItem(it, true, "")
+	case transcript.Shell:
+		a.shellItemStarted(it)
 	}
 }
 
@@ -116,6 +118,8 @@ func (a *App) itemDelta(it *transcript.Item, d string) {
 		}
 	case transcript.BranchSummary:
 		a.summaryItem(it, false, d)
+	case transcript.Shell:
+		a.shellItemDelta(d)
 	}
 }
 
@@ -168,6 +172,8 @@ func (a *App) itemCompleted(it *transcript.Item) {
 		c.before, c.after, c.elapsed = it.TokensBefore, it.TokensAfter, it.Duration
 	case transcript.BranchSummary:
 		a.summaryItem(it, false, "")
+	case transcript.Shell:
+		a.shellItemCompleted(it)
 	}
 }
 
@@ -233,6 +239,7 @@ func (a *App) onEvent(ev any) {
 	}
 	a.tr().Event(ev)
 	a.goal.Event(ev)
+	a.backgroundEvent(ev)
 	switch e := ev.(type) {
 	case agent.ToolDraft:
 		a.activity = "Writing command"

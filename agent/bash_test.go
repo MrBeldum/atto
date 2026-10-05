@@ -57,7 +57,7 @@ func TestTruncateMiddle(t *testing.T) {
 	if !strings.Contains(out, "\nline 0\n") || !strings.Contains(out, "line 19999") || !strings.Contains(out, "lines omitted") {
 		t.Fatal("start and end must both survive")
 	}
-	if len(out) > maxOutputBytes+300 {
+	if len(out) > int(maxOutputBytes.Load())+300 {
 		t.Fatalf("kept %d bytes", len(out))
 	}
 	if s := "short\n"; truncateMiddle(s) != s {
@@ -69,5 +69,18 @@ func TestTidy(t *testing.T) {
 	got := tidy("\r\nUptime  Free\r\n------  ----\r\n3h      3.9\r\n        \r\n        \r\n\r\n\r")
 	if got != "\nUptime  Free\n------  ----\n3h      3.9" {
 		t.Fatalf("%q", got)
+	}
+}
+
+func TestToolOutputTokenLimit(t *testing.T) {
+	defer SetToolOutputTokenLimit(0)
+	SetToolOutputTokenLimit(100) // 400 bytes
+	out := truncateMiddle(strings.Repeat("line of output\n", 200))
+	if !strings.Contains(out, "[output truncated:") || len(out) > 400+300 {
+		t.Fatalf("not cut to the limit: %d bytes", len(out))
+	}
+	SetToolOutputTokenLimit(0)
+	if maxOutputBytes.Load() != DefaultToolOutputTokens*4 {
+		t.Fatal("0 is the default")
 	}
 }

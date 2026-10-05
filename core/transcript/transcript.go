@@ -33,6 +33,9 @@ const (
 	// BranchSummary is the summary of a branch the user went back from
 	// (/tree), which the model sees on the new branch.
 	BranchSummary Kind = "branchSummary"
+
+	// Shell is a command the user ran with "!" or "!!" in the prompt.
+	Shell Kind = "shell"
 )
 
 // Status is where an item stands. Messages are complete when they start;
@@ -82,6 +85,14 @@ type Item struct {
 	Auto         bool
 	TokensBefore int
 	TokensAfter  int
+
+	// Shell: Command and Output (as for a tool; Output is replaced by the
+	// saved text, cut as the model sees it, when the command ends) and
+	// Result (Canceled, ExitCode). Excluded commands ("!!") are not sent
+	// to the model; FullOutput is the file with all of a long output.
+	Excluded   bool
+	Truncated  bool
+	FullOutput string
 
 	// Hook
 	HookEvent string // UserPromptSubmit, PreToolUse, Stop...

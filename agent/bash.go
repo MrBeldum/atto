@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sebastianrcnt/atto/jobs"
@@ -20,13 +21,29 @@ const (
 	DefaultBashTimeout = 60 * time.Second
 	MaxBashTimeout     = 30 * time.Minute
 
-	// What goes back to the model, as in codex: about 10k tokens (4 bytes
-	// per token), cut from the middle so both the start (the first error)
-	// and the end (the summary) survive. The full output is saved to a file.
-	maxOutputBytes = 40_000
+	// DefaultToolOutputTokens is how much output goes back to the model
+	// unless settings.json says otherwise (SetToolOutputTokenLimit).
+	DefaultToolOutputTokens = 10_000
 	// Hard cap on what is buffered in memory per command.
 	maxCaptureBytes = 8 * 1024 * 1024
 )
+
+// maxOutputBytes is what goes back to the model, as in codex: about
+// DefaultToolOutputTokens tokens (4 bytes per token), cut from the middle so
+// both the start (the first error) and the end (the summary) survive. The
+// full output is saved to a file.
+var maxOutputBytes atomic.Int64
+
+func init() { SetToolOutputTokenLimit(0) }
+
+// SetToolOutputTokenLimit sets the output budget in tokens; n <= 0 is the
+// default.
+func SetToolOutputTokenLimit(n int) {
+	if n <= 0 {
+		n = DefaultToolOutputTokens
+	}
+	maxOutputBytes.Store(int64(n) * 4)
+}
 
 var bashSchema = json.RawMessage(`{
   "type": "object",
@@ -422,10 +439,26 @@ func tidy(s string) string {
 // truncateMiddle keeps the first and last maxOutputBytes/2 bytes (on line
 // boundaries) and saves the full text to a temp file when it had to cut.
 func truncateMiddle(s string) string {
-	if len(s) <= maxOutputBytes {
+	body, note, path, cut := cutMiddle(s)
+	if !cut {
 		return s
 	}
-	half := maxOutputBytes / 2
+	if path != "" {
+		note += "; full output: " + path
+	}
+	return note + "]\n" + body
+}
+
+// cutMiddle is truncateMiddle in parts: the text with its middle
+// replaced by a marker, the start of the note saying so (no closing
+// bracket) and the file holding the full text ("" if it could not be
+// written). cut is false when s was short enough to keep whole.
+func cutMiddle(s string) (body, note, path string, cut bool) {
+	limit := int(maxOutputBytes.Load())
+	if len(s) <= limit {
+		return s, "", "", false
+	}
+	half := limit / 2
 	head := s[:half]
 	if i := strings.LastIndexByte(head, '\n'); i > 0 {
 		head = head[:i]
@@ -435,12 +468,12 @@ func truncateMiddle(s string) string {
 		tail = tail[i+1:]
 	}
 	total := strings.Count(s, "\n") + 1
-	cut := total - (strings.Count(head, "\n") + 1) - (strings.Count(tail, "\n") + 1)
-	note := fmt.Sprintf("[output truncated: %d lines, ~%d tokens; showing the start and the end", total, len(s)/4)
+	omitted := total - (strings.Count(head, "\n") + 1) - (strings.Count(tail, "\n") + 1)
+	note = fmt.Sprintf("[output truncated: %d lines, ~%d tokens; showing the start and the end", total, len(s)/4)
 	if f, err := os.CreateTemp("", "atto-bash-*.log"); err == nil {
 		_, _ = f.WriteString(s)
 		f.Close()
-		note += "; full output: " + f.Name()
+		path = f.Name()
 	}
-	return fmt.Sprintf("%s]\n%s\n[… %d lines omitted …]\n%s", note, head, max(cut, 0), tail)
+	return fmt.Sprintf("%s\n[… %d lines omitted …]\n%s", head, max(omitted, 0), tail), note, path, true
 }

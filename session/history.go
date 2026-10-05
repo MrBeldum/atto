@@ -102,6 +102,10 @@ func Items(entries []Entry) []Item {
 			out = append(out, Item{N: n, Label: "compaction notes", Text: e.Notes})
 		case TypeBranchSummary:
 			out = append(out, Item{N: n, Label: "branch summary", Text: e.Summary})
+		case TypeBashExecution:
+			if b := e.Bash; b != nil {
+				out = append(out, Item{N: n, Label: "user shell", Text: "! " + b.Command + "\n" + b.Output})
+			}
 		case TypeMessage:
 			m := e.Message
 			if m == nil {

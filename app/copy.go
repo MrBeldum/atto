@@ -142,8 +142,10 @@ func lastAnswer(children []tui.Component) string {
 // toastFor is how long a toast stays.
 const toastFor = 4 * time.Second
 
-// toast is a short-lived line above the input, for confirmations that
-// shouldn't pile up in the transcript (a copy). A new one replaces the old.
+// toast is a short-lived note at the right end of the status line, for
+// confirmations that shouldn't pile up in the transcript (a copy). It
+// takes no row of its own, so nothing moves when it comes and goes. A new
+// one replaces the old.
 type toast struct {
 	text  string
 	until time.Time
@@ -154,11 +156,18 @@ func (a *App) showToast(text string) {
 	time.AfterFunc(toastFor+50*time.Millisecond, a.ui.RequestRender)
 }
 
-func (a *App) renderToast(width int) []string {
+// withToast puts the toast at the right end of line, cutting line short
+// when both don't fit.
+func (a *App) withToast(line string, width int) string {
 	if a.toast.text == "" || time.Now().After(a.toast.until) {
-		return nil
+		return line
 	}
-	return []string{tui.Truncate(tui.Dim("  "+a.toast.text), width, "…")}
+	t := tui.Truncate(a.toast.text, max(1, width-2), "…")
+	room := width - tui.VisibleWidth(t) - 1
+	if tui.VisibleWidth(line) > room-1 {
+		line = tui.Truncate(line, max(0, room-1), "…")
+	}
+	return line + strings.Repeat(" ", max(1, room-tui.VisibleWidth(line))) + tui.Dim(t)
 }
 
 // tmuxMouseHint is shown at startup inside tmux when its mouse option is

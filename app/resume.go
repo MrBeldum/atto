@@ -418,6 +418,9 @@ func (p *resumePicker) row(it tui.SelectItem, selected bool, mark string, width 
 		marker = tui.Dim(mark + " ")
 	}
 	parts := []string{session.RelTime(s.Updated)}
+	if s.Running > 0 {
+		parts = append(parts, "running")
+	}
 	if s.Branch != "" {
 		parts = append(parts, s.Branch)
 	}
@@ -511,6 +514,10 @@ func (a *App) resume(path string) {
 	saved, file, err := core.Open(path)
 	if err != nil {
 		a.errorNotice(err)
+		return
+	}
+	if l, ok := session.LockedBy(path); ok { // left running in the background
+		a.resumeLocked(saved, file, l)
 		return
 	}
 	h := saved.Header

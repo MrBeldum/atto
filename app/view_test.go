@@ -85,14 +85,17 @@ func TestClickTogglesOnlyHeaderAndDisclosure(t *testing.T) {
 	b.args.Description = "list"
 	b.args.Command = "ls"
 	b.append("1\n2\n3\n4\n5\n6\n")
-	out := b.Render(60) // header, $ ls, 3 output lines, "+ 3 lines"
-	if b.Click(1) || b.Click(2) || b.expanded() {
+	out := b.Render(60) // header, $ ls, 1, 2, "… +2 lines", 5, 6
+	if got := StripLine(out[4]); got != "    … +2 lines (click or ctrl+t to expand)" || StripLine(out[6]) != "    6" {
+		t.Fatalf("preview %q", out)
+	}
+	if b.Click(1) || b.Click(2) || b.Click(len(out)-1) || b.expanded() {
 		t.Fatal("a click on the command or the output toggled")
 	}
-	if !b.Click(len(out)-1) || !b.expanded() {
+	if !b.Click(4) || !b.expanded() {
 		t.Fatal("the disclosure line expands")
 	}
-	out = b.Render(60)
+	b.Render(60)
 	if b.Click(3) || !b.expanded() {
 		t.Fatal("a click in the expanded output toggled")
 	}
@@ -133,5 +136,20 @@ func TestClickTogglesOnlyHeaderAndDisclosure(t *testing.T) {
 	n := len(c.Render(60))
 	if c.Click(1) || !c.Click(n-1) {
 		t.Fatal("compaction: only header and Show less toggle")
+	}
+}
+
+func TestCommandLinesWrap(t *testing.T) {
+	cmd := "cd /some/long/project/path && npm run build && npm test -- --watch=false"
+	got := commandLines(cmd, 30, 0)
+	if len(got) < 3 || !strings.HasPrefix(tui.StripEscapes(got[0]), "  $ cd") || !strings.HasPrefix(tui.StripEscapes(got[1]), "    ") {
+		t.Fatalf("wrapped: %q", got)
+	}
+	short := commandLines(cmd, 30, commandPreviewLines)
+	if len(short) != 2 || !strings.HasSuffix(tui.StripEscapes(short[1]), "…") || tui.VisibleWidth(short[1]) > 30 {
+		t.Fatalf("collapsed: %q", short)
+	}
+	if one := commandLines("ls", 30, commandPreviewLines); len(one) != 1 || tui.StripEscapes(one[0]) != "  $ ls" {
+		t.Fatalf("short command: %q", one)
 	}
 }

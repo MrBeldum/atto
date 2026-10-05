@@ -69,13 +69,13 @@ func TestDiscoveryRules(t *testing.T) {
 	// Duplicate: the user copy wins.
 	write(t, filepath.Join(proj, "alpha", "SKILL.md"), "---\nname: alpha\ndescription: The project alpha\n---\n")
 	write(t, filepath.Join(proj, "gamma", "SKILL.md"), "---\nname: gamma\ndescription: Project gamma\n---\n")
-	// Compatibility directories.
+	// The tool-neutral directory is read; Claude Code's own is not.
 	write(t, filepath.Join(home, ".claude", "skills", "delta", "SKILL.md"), "---\nname: delta\ndescription: Claude one\n---\n")
 	write(t, filepath.Join(home, ".agents", "skills", "eps", "SKILL.md"), "---\nname: eps\ndescription: Agents one\n---\n")
 
 	root := filepath.Join(tmp, "proj")
 	got, warns := Load(Dirs(user, root, home))
-	if n := names(got); n != "alpha,beta,loose,gamma,delta,eps" {
+	if n := names(got); n != "alpha,beta,loose,gamma,eps" {
 		t.Fatalf("skills = %s", n)
 	}
 	if got[0].Description != "The user alpha" || got[0].BaseDir != filepath.Join(user, "alpha") {

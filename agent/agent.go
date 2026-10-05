@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sebastianrcnt/atto/config"
@@ -199,6 +200,11 @@ type Agent struct {
 	steerMu  sync.Mutex
 	steers   []string
 	boundary []func() string
+
+	// DiscardPartial makes an interrupted model call leave nothing behind,
+	// instead of its streamed text (experimental: set when the run goes on
+	// in another process, which repeats the call).
+	DiscardPartial atomic.Bool
 
 	// bg, while a command runs, moves it to the background (Background).
 	bgMu sync.Mutex
@@ -525,6 +531,12 @@ func (a *Agent) Restore(entries []session.Entry) {
 			m := BranchSummaryMessage(e.Summary)
 			a.messages = append(a.messages, m)
 			a.sinceUsage += messageChars(m)
+		case session.TypeBashExecution:
+			if e.Bash != nil && !e.Bash.Exclude {
+				m := BashExecutionMessage(*e.Bash)
+				a.messages = append(a.messages, m)
+				a.sinceUsage += messageChars(m)
+			}
 		case session.TypeCompaction:
 			a.messages = nil
 			for _, m := range e.Replacement {
@@ -672,6 +684,30 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(any)) error {
 	return a.RunWithImages(ctx, input, nil, emit)
 }
 
+// modelChangeNote tells the model that the conversation's last reply came
+// from another model, so it doesn't take that reply's words or habits for
+// its own. It goes with the next user message only: once this model has
+// replied, the last reply is its own.
+func (a *Agent) modelChangeNote() string {
+	a.cfgMu.Lock()
+	cur := a.model.ProviderName + "/" + a.model.Model.ID
+	a.cfgMu.Unlock()
+	for i := len(a.messages) - 1; i >= 0; i-- {
+		m := a.messages[i]
+		if m.Role != "assistant" {
+			continue
+		}
+		if m.Model == "" { // written before atto recorded models
+			return ""
+		}
+		if prev := m.Provider + "/" + m.Model; prev != cur {
+			return fmt.Sprintf("[atto] The model changed from %s to %s. Earlier assistant messages were written by %s.", prev, cur, prev)
+		}
+		return ""
+	}
+	return ""
+}
+
 // RunWithImages is Run with images attached to the user message. Their
 // bytes must be loaded, and saved with images.Save for the session to
 // resume with them.
@@ -702,12 +738,28 @@ func (a *Agent) RunWithImages(ctx context.Context, input string, imgs []provider
 			input += "\n\n" + o.Context
 		}
 	}
+	if note := a.modelChangeNote(); note != "" {
+		input += "\n\n" + note
+	}
 	if a.needsCompact() {
 		if err := a.compact(ctx, emit, true); err != nil {
 			return err
 		}
 	}
 	a.appendMessage(provider.Message{Role: "user", Content: input, Images: imgs}, session.Entry{})
+	return a.loop(ctx, emit)
+}
+
+// Continue runs the rest of a turn that was stopped, without a new user
+// message: the conversation ends with the user's message or tool results
+// the model has not answered yet (experimental, for runs left in the
+// background).
+func (a *Agent) Continue(ctx context.Context, emit func(any)) error {
+	return a.loop(ctx, emit)
+}
+
+// loop is the turn: model calls and tool calls until the model stops.
+func (a *Agent) loop(ctx context.Context, emit func(any)) error {
 	stopBlocks := 0 // Stop hook continuations in this turn
 
 	for step := 1; ; step++ {
@@ -745,7 +797,7 @@ func (a *Agent) RunWithImages(ctx context.Context, input string, imgs []provider
 			// Keep partial text so the transcript matches what the user saw,
 			// but drop half-formed tool calls.
 			drafts.endAll()
-			if res.Message.Content != "" {
+			if res.Message.Content != "" && !a.DiscardPartial.Load() {
 				res.Message.ToolCalls = nil
 				a.appendMessage(res.Message, session.Entry{ThinkingMs: thinkMs})
 			}

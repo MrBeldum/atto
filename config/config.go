@@ -100,6 +100,15 @@ type Settings struct {
 	BranchSummary *BranchSummary `json:"branchSummary,omitempty"`
 	// Extensions configures JavaScript extensions (package extensions).
 	Extensions *ExtensionSettings `json:"extensions,omitempty"`
+	// ToolOutputTokenLimit caps how much of a command's output goes back to
+	// the model, in tokens (about 4 bytes each), as codex's
+	// tool_output_token_limit. 0 means the default, 10000. The cut is in
+	// the middle, and the full output is saved to a file the model is told
+	// about.
+	ToolOutputTokenLimit int `json:"toolOutputTokenLimit,omitempty"`
+	// BackgroundExit: false turns off the exit menu that offers "Run in
+	// background" while a turn is running (experimental; default on).
+	BackgroundExit *bool `json:"backgroundExit,omitempty"`
 }
 
 // ExtensionSettings is settings.json's "extensions".

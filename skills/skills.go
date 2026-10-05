@@ -28,20 +28,18 @@ type Skill struct {
 
 // Dirs lists where skills are looked for, highest priority first (the first
 // skill of a name wins). userDir is ~/.atto/skills; the others are the
-// Claude Code and generic agent locations, in the project and in the home
-// directory, for compatibility.
+// project's .atto/skills and the tool-neutral .agents/skills, in the project
+// and in the home directory. Like pi, other tools' own directories
+// (.claude/skills) are not read: what they hold is set up for that tool.
 func Dirs(userDir, root, home string) []string {
 	dirs := []string{userDir}
 	if root != "" {
 		dirs = append(dirs,
 			filepath.Join(root, ".atto", "skills"),
-			filepath.Join(root, ".claude", "skills"),
 			filepath.Join(root, ".agents", "skills"))
 	}
 	if home != "" {
-		dirs = append(dirs,
-			filepath.Join(home, ".claude", "skills"),
-			filepath.Join(home, ".agents", "skills"))
+		dirs = append(dirs, filepath.Join(home, ".agents", "skills"))
 	}
 	return dirs
 }

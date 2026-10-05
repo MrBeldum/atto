@@ -290,17 +290,39 @@ func InstallRelease(ctx context.Context, tag, exe string) error {
 	return replace(exe, bin)
 }
 
+// fetchTries is how many times fetch tries a download: GitHub's release
+// downloads now and then answer 500 or 502 for a moment.
+var fetchTries, fetchWait = 3, 2 * time.Second
+
+// fetch downloads url, retrying network errors and 5xx answers.
 func fetch(ctx context.Context, url string, limit int64) ([]byte, error) {
+	var err error
+	for try := 1; ; try++ {
+		var b []byte
+		var retry bool
+		if b, retry, err = fetchOnce(ctx, url, limit); err == nil || !retry || try >= fetchTries {
+			return b, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(fetchWait):
+		}
+	}
+}
+
+func fetchOnce(ctx context.Context, url string, limit int64) (b []byte, retry bool, err error) {
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, ctx.Err() == nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("%s: %s", url, resp.Status)
+		return nil, resp.StatusCode >= 500, fmt.Errorf("%s: %s", url, resp.Status)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, limit))
+	b, err = io.ReadAll(io.LimitReader(resp.Body, limit))
+	return b, err != nil, err
 }
 
 // checksum finds name in a sha256sum-style list.

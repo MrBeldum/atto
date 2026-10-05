@@ -396,6 +396,9 @@ func (s *Server) resumeThread(id string) (any, error) {
 	if err != nil {
 		return nil, invalid("%v", err)
 	}
+	if l, ok := session.LockedBy(path); ok { // running in the background
+		return nil, invalid("%v", session.LockError(l))
+	}
 	saved, file, err := core.Open(path)
 	if err != nil {
 		return nil, err
