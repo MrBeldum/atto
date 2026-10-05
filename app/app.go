@@ -154,6 +154,10 @@ func Run(opts Options) error {
 		a.notice("%s", core.NoModelsHint())
 	}
 	a.newSession()
+	_, skillWarnings := a.agent.Skills()
+	for _, w := range skillWarnings {
+		a.notice("Skill: %s", w)
+	}
 	a.sessionStartHook("startup")
 	a.statusCmd = settings.StatusLine != nil && settings.StatusLine.Command != ""
 	a.startStatusLine(settings.StatusLine)

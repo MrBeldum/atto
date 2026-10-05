@@ -2,11 +2,13 @@ package app
 
 import (
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/sebastianrcnt/atto/config"
 	"github.com/sebastianrcnt/atto/core"
 	"github.com/sebastianrcnt/atto/session"
+	"github.com/sebastianrcnt/atto/skills"
 	"github.com/sebastianrcnt/atto/tui"
 )
 
@@ -53,17 +55,15 @@ const maxSuggestions = 5
 // text rather than its own filter. It is closed (matches nothing) unless the
 // text is a partly typed "/name", or after Esc for that same text.
 func (a *App) suggestions() *tui.SelectList {
+	cmds := a.allCommands()
 	if a.sugList != nil {
+		// A resumed or cleared session rescans the skills; follow it.
+		if len(a.sugList.Items) != len(cmds) {
+			a.sugList.Items = commandItems(cmds)
+		}
 		return a.sugList
 	}
-	l := &tui.SelectList{MaxVisible: maxSuggestions, Indent: " ", LabelWidth: 18}
-	for _, c := range commands {
-		name := "/" + c.name
-		if c.args != "" {
-			name += " " + c.args
-		}
-		l.Items = append(l.Items, tui.SelectItem{Label: name, Detail: c.desc, Value: c.name, Data: c})
-	}
+	l := &tui.SelectList{MaxVisible: maxSuggestions, Indent: " ", LabelWidth: 18, Items: commandItems(cmds)}
 	l.Source = a.editor.Text
 	l.Match = func(it tui.SelectItem, t string) bool {
 		if !strings.HasPrefix(t, "/") || strings.ContainsAny(t, " \n") || t == a.sugDismissed {
@@ -73,6 +73,18 @@ func (a *App) suggestions() *tui.SelectList {
 	}
 	a.sugList = l
 	return l
+}
+
+func commandItems(cmds []command) []tui.SelectItem {
+	var items []tui.SelectItem
+	for _, c := range cmds {
+		name := "/" + c.name
+		if c.args != "" {
+			name += " " + c.args
+		}
+		items = append(items, tui.SelectItem{Label: name, Detail: c.desc, Value: c.name, Data: c})
+	}
+	return items
 }
 
 // suggestionKey handles the keys of an open command list, like pi: up/down
@@ -114,7 +126,48 @@ func (a *App) renderSuggestions(width int) []string {
 	return a.suggestions().Render(width)
 }
 
+// allCommands is the built-in commands plus one /skill:<name> per skill of
+// this session, like pi. Skills hidden from the model are listed too: the
+// command is how you run them.
+func (a *App) allCommands() []command {
+	if a.agent == nil {
+		return commands
+	}
+	sk, _ := a.agent.Skills()
+	all := slices.Clone(commands)
+	for _, s := range sk {
+		all = append(all, command{"skill:" + s.Name, "[text]", s.Description, (*App).cmdSkill})
+	}
+	return all
+}
+
+// cmdSkill sends "/skill:name text" as a user message made of the skill's
+// instructions and the text, the way pi expands it. It takes the whole
+// command text, not just an argument (see runCommand).
+func (a *App) cmdSkill(text string) {
+	sk, _ := a.agent.Skills()
+	msg, ok, err := skills.Expand(sk, text)
+	switch {
+	case err != nil:
+		a.errorNotice(err)
+	case !ok:
+		a.notice("Unknown skill: %s", strings.Fields(text)[0])
+	case a.noModel():
+		a.restoreToEditor([]string{text})
+	case a.busy && a.runKind == "turn":
+		a.steer(msg)
+	case a.busy:
+		a.enqueue(msg, nil)
+	default:
+		a.startTurn(msg, nil)
+	}
+}
+
 func (a *App) runCommand(text string) {
+	if strings.HasPrefix(text, "/skill:") {
+		a.cmdSkill(text)
+		return
+	}
 	name, arg, _ := strings.Cut(strings.TrimPrefix(text, "/"), " ")
 	arg = strings.TrimSpace(arg)
 	var match []command
