@@ -340,11 +340,12 @@ var notifyAfter = 15 * time.Second
 // notify runs Notification hooks in the background, for when atto needs
 // the user's attention (kind is the notification type).
 func (a *App) notify(kind, message string) {
-	if a.hooks == nil {
+	hk := a.hooks // /reload may replace a.hooks while this runs
+	if hk == nil {
 		return
 	}
 	go func() {
-		notices := a.hooks.Notification(context.Background(), kind, message)
+		notices := hk.Notification(context.Background(), kind, message)
 		a.ui.Do(func() {
 			for _, n := range notices {
 				a.notice("%s", n)
@@ -358,11 +359,12 @@ func (a *App) sessionStartHook(source string) {
 	if a.ext != nil {
 		a.ext.SessionStart(source)
 	}
-	if a.hooks == nil {
+	hk := a.hooks // /reload may replace a.hooks while this runs
+	if hk == nil {
 		return
 	}
 	go func() {
-		notices := a.hooks.SessionStart(context.Background(), source)
+		notices := hk.SessionStart(context.Background(), source)
 		a.ui.Do(func() {
 			for _, n := range notices {
 				a.notice("%s", n)
