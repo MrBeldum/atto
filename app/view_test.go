@@ -135,3 +135,18 @@ func TestClickTogglesOnlyHeaderAndDisclosure(t *testing.T) {
 		t.Fatal("compaction: only header and Show less toggle")
 	}
 }
+
+func TestCommandLinesWrap(t *testing.T) {
+	cmd := "cd /some/long/project/path && npm run build && npm test -- --watch=false"
+	got := commandLines(cmd, 30, 0)
+	if len(got) < 3 || !strings.HasPrefix(tui.StripEscapes(got[0]), "  $ cd") || !strings.HasPrefix(tui.StripEscapes(got[1]), "    ") {
+		t.Fatalf("wrapped: %q", got)
+	}
+	short := commandLines(cmd, 30, commandPreviewLines)
+	if len(short) != 2 || !strings.HasSuffix(tui.StripEscapes(short[1]), "…") || tui.VisibleWidth(short[1]) > 30 {
+		t.Fatalf("collapsed: %q", short)
+	}
+	if one := commandLines("ls", 30, commandPreviewLines); len(one) != 1 || tui.StripEscapes(one[0]) != "  $ ls" {
+		t.Fatalf("short command: %q", one)
+	}
+}

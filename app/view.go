@@ -247,6 +247,41 @@ func (b *toolBlock) Click(line int) bool {
 	return true
 }
 
+// commandPreviewLines is how many lines a collapsed block gives its
+// command: one line hides what comes after "cd x &&", all of it can fill
+// the screen.
+const commandPreviewLines = 2
+
+// commandLines wraps a command line under "  $ ", continuation lines
+// indented to match, dim. With limit > 0 it keeps that many lines and ends
+// the last with "…". Selection copies the wrapped lines back as one.
+func commandLines(cmd string, width, limit int) []string {
+	return wrapCommand(cmd, width, limit, true)
+}
+
+// wrapCommand is commandLines for one line of a script; only the first
+// line gets the "$".
+func wrapCommand(cmd string, width, limit int, first bool) []string {
+	wrapped := tui.Wrap(cmd, max(1, width-4))
+	cut := limit > 0 && len(wrapped) > limit
+	if cut {
+		wrapped = wrapped[:limit]
+	}
+	out := make([]string, len(wrapped))
+	for i, l := range wrapped {
+		prefix := "    "
+		if i == 0 && first {
+			prefix = "  $ "
+		}
+		l = prefix + l
+		if cut && i == len(wrapped)-1 {
+			l = tui.Truncate(l, width-1, "") + "…"
+		}
+		out[i] = tui.Dim(l)
+	}
+	return out
+}
+
 // displayLines turns raw output into printable lines: escapes stripped,
 // carriage-return progress bars collapsed to their final state, trailing
 // spaces dropped, and blank lines at either end removed (PowerShell pads
@@ -315,21 +350,19 @@ func (b *toolBlock) Render(width int) []string {
 	head := icon + " " + tui.Bold(desc) + tui.Dim(" · ") + tui.Dim(status)
 	out := []string{tui.Truncate(head, width, tui.Dim("…"))}
 
-	multiLine := strings.Contains(strings.TrimSpace(b.args.Command), "\n")
+	full := strings.TrimSpace(b.args.Command)
+	multiLine := strings.Contains(full, "\n")
 	lines := displayLines(b.output.String())
-	collapsible := len(lines) > toolPreviewLines || multiLine
+	long := len(commandLines(cmd, width, 0)) > commandPreviewLines
+	collapsible := len(lines) > toolPreviewLines || multiLine || long
 	expanded := collapsible && b.expanded()
 
-	if expanded && multiLine {
-		for i, l := range strings.Split(strings.TrimSpace(b.args.Command), "\n") {
-			prefix := "    "
-			if i == 0 {
-				prefix = "  $ "
-			}
-			out = append(out, tui.Truncate(tui.Dim(prefix+l), width, tui.Dim("…")))
+	if expanded {
+		for i, l := range strings.Split(full, "\n") {
+			out = append(out, wrapCommand(l, width, 0, i == 0)...)
 		}
 	} else {
-		out = append(out, tui.Truncate(tui.Dim("  $ "+cmd), width, tui.Dim("…")))
+		out = append(out, commandLines(cmd, width, commandPreviewLines)...)
 	}
 	hidden := 0
 	if !expanded && len(lines) > toolPreviewLines {
