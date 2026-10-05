@@ -39,6 +39,10 @@ usage:
   atto history grep|show ...        search a session transcript
   atto job|monitor|timer|sleep ...  background jobs and wake-ups (atto job for details)
   atto goal [complete|blocked|set]  the session goal (set one with /goal or -goal)
+  atto context [-json]              what a session here loads: AGENTS.md, skills,
+                                    hooks, settings, model
+  atto reload                       from the agent's shell: reload AGENTS.md, skills,
+                                    hooks and settings in the running session
   atto update [-check]              install the latest release
   atto serve [-listen addr]         JSON-RPC over HTTP + SSE, with a web client
   atto app-server                   JSON-RPC over stdio (JSON lines)
@@ -48,7 +52,9 @@ flags:
 
 // nestedRefused are the commands an atto agent may not run from its shell:
 // starting another agent (which would recurse and spend tokens unseen) or
-// changing credentials. "" is atto itself (interactive or -p).
+// changing credentials. "" is atto itself (interactive or -p). Commands
+// that work on the agent's own session (history, job, goal, reload...) or
+// only read (context, models) are allowed.
 var nestedRefused = map[string]bool{"": true, "serve": true, "app-server": true, "resume": true, "login": true, "logout": true, "auth": true, "update": true, "channel": true}
 
 func refuseNested(cmd string) {
@@ -87,6 +93,8 @@ func subcommands() map[string]func([]string, io.Writer) error {
 		"timer":      cli.RunTimer,
 		"sleep":      cli.RunSleep,
 		"goal":       cli.RunGoal,
+		"context":    cli.RunContext,
+		"reload":     cli.RunReload,
 		"update":     cli.RunUpdate,
 		"channel":    cli.RunChannel,
 		"_supervise": cli.RunSupervise,

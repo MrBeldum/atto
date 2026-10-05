@@ -154,6 +154,7 @@ To use the terminal's own selection instead, hold the key that bypasses mouse re
 | `/compact` | compact the conversation now |
 | `/copy` | copy the last answer; works over SSH in terminals with OSC 52 |
 | `/context` | show what fills the context and how much is cached |
+| `/reload` | read AGENTS.md, skills, hooks, `settings.json` and `models.json` again, keeping the conversation |
 | `/resume` | resume a saved session |
 | `/tree` | go back to any point of the session; earlier branches are kept |
 | `/fork` | start a new session from an earlier message |
@@ -173,11 +174,18 @@ To use the terminal's own selection instead, hold the key that bypasses mouse re
 - `atto job start` runs a command in the background. With `-notify REGEXP` (and `-notify-limit N`, default 50) each matching output line wakes the agent while the job keeps running; matches within a second are batched.
 - `atto monitor` and `atto timer` wake the agent when something happens. `atto timer every 30m [-count N] [-until HH:MM|duration] <message>` repeats (minimum 1m, no drift; missed intervals fire once).
 - `atto goal complete` reports that a goal is done.
+- `atto reload` reloads the session's AGENTS.md files, skills, hooks and settings after the agent edited them; the result comes back as an `[atto event]`.
+
+**Nothing loads unseen.** When a session starts, resumes or forks, the conversation opens with a dim "Loaded" block: the AGENTS.md (or AGENTS.override.md, CLAUDE.md) files in the system prompt with their sizes (and whether the 32 KiB cap cut them), files that were found but skipped and why, the skills and where they came from, the hooks, the settings and models files read, and the model and effort with where each came from (`-m`, the session, `settings.json`). Click its header or press `Ctrl+T` for the full list. `/reload` shows it again with what changed. The same report:
+
+- `atto context` prints it for the current directory (`-json` for the data).
+- `atto -p -v` prints the one-line-per-kind summary to stderr at the start, and stream-json's `init` event has it as `context`.
+- The server's `thread/start` and `thread/resume` results include it as `context`.
 
 **Prefix-cache friendly.**
 
 - The history is append-only.
-- The system prompt and the tool schema don't change during a session.
+- The system prompt and the tool schema don't change during a session, unless `/reload` (or `atto reload`) finds that AGENTS.md files or skills changed; the next request then reads the new prompt in full, and the reload says so.
 - Compaction keeps the latest user messages plus a summary, the way codex does it. Run `/context` to see the cache hit rate.
 
 **Sessions** are JSONL files under `~/.atto/sessions/`. As in pi, entries form a tree: going back with `/tree` starts a new branch in the same file and keeps the old one. When that leaves work behind, atto asks whether to summarize the branch being left (optionally with your own instructions); the current model writes the summary, `Esc` cancels it, and the model sees it on the new branch. `"branchSummary": {"skipPrompt": true}` in `settings.json` never asks. `atto history grep` searches every branch and marks entries on other branches; `-active` limits it to the current one.

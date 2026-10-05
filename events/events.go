@@ -35,6 +35,28 @@ type Event struct {
 	Title  string    `json:"title"`  // one-line summary for the UI
 }
 
+// SourceReload marks a request to reload the session's configuration
+// (`atto reload`). The front end applies it between steps instead of
+// passing it to the model, and reports the result in an event of its own.
+const SourceReload = "reload"
+
+// RequestReload asks the front end running session to reload.
+func RequestReload(session string) error {
+	return Push(session, Event{Source: SourceReload, Title: "reload requested"})
+}
+
+// SplitReload separates reload requests from the other events.
+func SplitReload(evs []Event) (reload bool, rest []Event) {
+	for _, e := range evs {
+		if e.Source == SourceReload {
+			reload = true
+		} else {
+			rest = append(rest, e)
+		}
+	}
+	return reload, rest
+}
+
 // Dir is the inbox for a session.
 func Dir(session string) string { return filepath.Join(config.Dir(), "inbox", session) }
 

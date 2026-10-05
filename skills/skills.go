@@ -46,14 +46,34 @@ func Dirs(userDir, root, home string) []string {
 	return dirs
 }
 
+// Issue is a problem with a skill file. Skipped ones are not loaded
+// (unreadable, bad frontmatter, no description, a name already taken);
+// the others load with a warning (an invalid name, say), as in pi.
+type Issue struct {
+	Path    string `json:"path"`
+	Reason  string `json:"reason"`
+	Skipped bool   `json:"skipped,omitempty"`
+}
+
+func (i Issue) String() string { return i.Path + ": " + i.Reason }
+
 // Load discovers the skills of dirs. The warnings (invalid names, duplicates,
 // unreadable files) are for the user; the skills are still usable.
 func Load(dirs []string) (skills []Skill, warnings []string) {
+	skills, issues := LoadIssues(dirs)
+	for _, is := range issues {
+		warnings = append(warnings, is.String())
+	}
+	return skills, warnings
+}
+
+// LoadIssues is Load with the warnings as Issues.
+func LoadIssues(dirs []string) (skills []Skill, issues []Issue) {
 	byName := map[string]string{} // name -> winner's path
 	seen := map[string]bool{}     // real paths, so symlinked copies are silent
 	for _, dir := range dirs {
 		found, warns := loadDir(dir, true)
-		warnings = append(warnings, warns...)
+		issues = append(issues, warns...)
 		for _, s := range found {
 			real, err := filepath.EvalSymlinks(s.FilePath)
 			if err != nil {
@@ -63,7 +83,7 @@ func Load(dirs []string) (skills []Skill, warnings []string) {
 				continue
 			}
 			if winner, dup := byName[s.Name]; dup {
-				warnings = append(warnings, fmt.Sprintf("skill %q at %s ignored: %s already defines it", s.Name, s.FilePath, winner))
+				issues = append(issues, Issue{s.FilePath, fmt.Sprintf("skill %q ignored: %s already defines it", s.Name, winner), true})
 				continue
 			}
 			byName[s.Name] = s.FilePath
@@ -71,13 +91,13 @@ func Load(dirs []string) (skills []Skill, warnings []string) {
 			skills = append(skills, s)
 		}
 	}
-	return skills, warnings
+	return skills, issues
 }
 
 // loadDir applies pi's discovery rules: a directory with SKILL.md is a skill
 // root and is not searched further; otherwise subdirectories are searched,
 // and (only at the top) loose .md files that have a description count too.
-func loadDir(dir string, top bool) (skills []Skill, warnings []string) {
+func loadDir(dir string, top bool) (skills []Skill, warnings []Issue) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, nil
@@ -123,16 +143,16 @@ func loadDir(dir string, top bool) (skills []Skill, warnings []string) {
 
 var validName = regexp.MustCompile(`^[a-z0-9-]+$`)
 
-func loadFile(path string) (*Skill, []string) {
+func loadFile(path string) (*Skill, []Issue) {
 	declared := filepath.Base(path) == "SKILL.md"
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, []string{fmt.Sprintf("%s: %v", path, err)}
+		return nil, []Issue{{path, err.Error(), true}}
 	}
 	fm, _, err := ParseFrontmatter(string(data))
 	if err != nil {
 		if declared {
-			return nil, []string{fmt.Sprintf("%s: %v", path, err)}
+			return nil, []Issue{{path, err.Error(), true}}
 		}
 		return nil, nil
 	}
@@ -141,9 +161,9 @@ func loadFile(path string) (*Skill, []string) {
 	if !declared && !hasDesc {
 		return nil, nil // a plain markdown file, not a skill
 	}
-	var warns []string
+	var warns []Issue
 	warn := func(format string, args ...any) {
-		warns = append(warns, path+": "+fmt.Sprintf(format, args...))
+		warns = append(warns, Issue{Path: path, Reason: fmt.Sprintf(format, args...)})
 	}
 	switch {
 	case !hasDesc:
@@ -169,6 +189,9 @@ func loadFile(path string) (*Skill, []string) {
 		warn("name must not contain consecutive hyphens")
 	}
 	if !hasDesc {
+		for i := range warns {
+			warns[i].Skipped = true
+		}
 		return nil, warns // without a description there is nothing to show the model
 	}
 	return &Skill{

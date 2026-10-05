@@ -61,32 +61,53 @@ func NoModelsHint() string {
 // PickModel resolves id (provider/id or a bare id). Without one it takes
 // the default from settings.json, else the first configured model.
 func PickModel(models config.ModelsFile, settings config.Settings, id string) (config.ModelRef, error) {
-	if id != "" {
-		if r, ok := models.Find("", id); ok {
-			return r, nil
+	r, _, err := PickModelFrom(models, settings, id, "")
+	return r, err
+}
+
+// PickModelFrom is PickModel for a flag and a resumed session's last model
+// (saved, used if still configured), and says which one it took.
+func PickModelFrom(models config.ModelsFile, settings config.Settings, flag, saved string) (config.ModelRef, Origin, error) {
+	if flag != "" {
+		if r, ok := models.Find("", flag); ok {
+			return r, FromFlag, nil
 		}
-		return config.ModelRef{}, fmt.Errorf("unknown model %q (see: atto models)", id)
+		return config.ModelRef{}, FromFlag, fmt.Errorf("unknown model %q (see: atto models)", flag)
+	}
+	if saved != "" {
+		if r, ok := models.Find("", saved); ok {
+			return r, FromSession, nil
+		}
 	}
 	if r, ok := models.Find(settings.DefaultProvider, settings.DefaultModel); ok {
-		return r, nil
+		return r, FromSettings, nil
 	}
 	all := models.List()
 	if len(all) == 0 {
-		return config.ModelRef{}, ErrNoModels
+		return config.ModelRef{}, FromDefault, ErrNoModels
 	}
-	return all[0], nil
+	return all[0], FromDefault, nil
 }
 
 // Effort returns the first effort set: the given one, settings.json's
 // default, else DefaultEffort.
 func Effort(settings config.Settings, given string) string {
+	e, _ := EffortFrom(settings, given, "")
+	return e
+}
+
+// EffortFrom is Effort for a flag and a resumed session's last effort, and
+// says which one it took.
+func EffortFrom(settings config.Settings, flag, saved string) (string, Origin) {
 	switch {
-	case given != "":
-		return given
+	case flag != "":
+		return flag, FromFlag
+	case saved != "":
+		return saved, FromSession
 	case settings.DefaultEffort != "":
-		return settings.DefaultEffort
+		return settings.DefaultEffort, FromSettings
 	}
-	return DefaultEffort
+	return DefaultEffort, FromDefault
 }
 
 // CheckEffort reports an effort the model doesn't offer.
@@ -100,16 +121,40 @@ func CheckEffort(m config.ModelRef, effort string) error {
 // NewAgent builds an agent for cwd with the hooks configured for it. The
 // hooks runner is nil when there are none.
 func NewAgent(cwd string, model config.ModelRef, effort string) (*agent.Agent, *hooks.Runner, error) {
+	ag, hk, _, err := NewAgentSources(cwd, model, effort)
+	return ag, hk, err
+}
+
+// NewAgentSources is NewAgent that also returns the settings files the
+// hooks came from, for Collect.
+func NewAgentSources(cwd string, model config.ModelRef, effort string) (*agent.Agent, *hooks.Runner, []config.HookSource, error) {
+	hk, src, err := LoadHooks(cwd)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	ag := agent.New(model, effort, cwd)
-	cfg, err := config.LoadHooks(cwd)
+	SetHooks(ag, hk)
+	return ag, hk, src, nil
+}
+
+// LoadHooks reads the hooks configured for cwd: the runner (nil when there
+// are none) and the settings files they came from.
+func LoadHooks(cwd string) (*hooks.Runner, []config.HookSource, error) {
+	src, err := config.LoadHookSources(cwd)
 	if err != nil {
 		return nil, nil, err
 	}
-	hk := hooks.New(cfg, cwd)
-	if hk != nil {
-		ag.Hooks = hk
+	return hooks.New(config.MergeHooks(src), cwd), src, nil
+}
+
+// SetHooks makes ag run hk's hooks; nil removes them. Call it while no
+// request is in flight.
+func SetHooks(ag *agent.Agent, hk *hooks.Runner) {
+	if hk == nil {
+		ag.Hooks = nil // not a typed nil in the interface
+		return
 	}
-	return ag, hk, nil
+	ag.Hooks = hk
 }
 
 // Bind points ag and hk at a session file. start fixes the date in the

@@ -39,22 +39,29 @@ func (a *App) watchInbox() {
 			return
 		case <-tick.C:
 		}
-		s, _ := liveSession.Load().(string)
-		if s == "" {
-			continue
+		if s, _ := liveSession.Load().(string); s != "" {
+			a.pollInbox(s)
 		}
-		evs := core.Poll(s)
-		nJobs, nTimers := jobs.ActiveCount(s), len(events.Timers(s))
-		a.ui.Do(func() {
-			if s != a.sess.ID {
-				return // session switched; leave events for when it is resumed
-			}
-			a.jobCount, a.timerCount = nJobs, nTimers
-			a.goal.Poll()
-			a.pendingEvents = append(a.pendingEvents, evs...)
-			a.deliverEvents()
-		})
 	}
+}
+
+// pollInbox takes session s's events and hands them over (one tick of
+// watchInbox). Call it off the UI goroutine.
+func (a *App) pollInbox(s string) {
+	reload, evs := events.SplitReload(core.Poll(s))
+	nJobs, nTimers := jobs.ActiveCount(s), len(events.Timers(s))
+	a.ui.Do(func() {
+		if s != a.sess.ID {
+			return // session switched; leave events for when it is resumed
+		}
+		a.jobCount, a.timerCount = nJobs, nTimers
+		a.goal.Poll()
+		a.pendingEvents = append(a.pendingEvents, evs...)
+		if reload { // atto reload, run by the agent
+			a.requestReload(true)
+		}
+		a.deliverEvents()
+	})
 }
 
 // deliverEvents hands pending events to the agent: a new turn when idle,

@@ -11,8 +11,11 @@
 //
 //	initialize                                     → {name, version, protocolVersion}
 //	models/list                                    → {models: [{id, name, contextWindow, efforts, hasKey, images}]}
-//	thread/start   {cwd?, model?, effort?}         → thread
-//	thread/resume  {threadId}                      → thread + items
+//	thread/start   {cwd?, model?, effort?}         → thread + context
+//	thread/resume  {threadId}                      → thread + items + context
+//	               context: what the thread loaded (AGENTS files, skills,
+//	               hooks, configuration, model and effort and where they
+//	               came from), as stream-json's init event has it
 //	thread/read    {threadId}                      → thread + items
 //	thread/list    {cwd?, archived?}               → {threads: [...]}
 //	thread/setModel {threadId, model}              → thread
@@ -36,10 +39,15 @@
 //	item/completed {turnId, item}
 //	hook           {event, message, blocked}  (also a hook item during a turn)
 //	event          {title}  (inbox event delivered to the thread)
+//	thread/reloaded {context, changes, promptChanged, error?}  (atto reload run by the agent)
 //	turn/completed {turnId, status, error?, usage, contextTokens}
 package server
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/sebastianrcnt/atto/core"
+)
 
 const ProtocolVersion = 1
 
@@ -143,4 +151,6 @@ type ThreadInfo struct {
 	Busy          bool     `json:"busy"`
 	TurnID        string   `json:"turnId,omitempty"`
 	Items         []Item   `json:"items,omitempty"`
+	// Context is set in thread/start and thread/resume results.
+	Context *core.Loaded `json:"context,omitempty"`
 }

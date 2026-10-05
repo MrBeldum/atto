@@ -57,7 +57,10 @@ func (s *Server) watchInbox() {
 		}
 		s.mu.Unlock()
 		for _, t := range threads {
-			evs := core.Poll(t.id)
+			reload, evs := events.SplitReload(core.Poll(t.id))
+			if reload {
+				s.reload(t)
+			}
 			if len(evs) == 0 {
 				continue
 			}
@@ -88,6 +91,8 @@ type thread struct {
 	agent     *agent.Agent
 	sess      *session.Writer
 	hooks     *hooks.Runner
+	hookSrc   []config.HookSource
+	loaded    core.Loaded        // what it loaded, as of the last reload
 	tr        transcript.Builder // used by the running turn, or by restore while idle
 	items     []Item             // completed items
 	busy      bool
@@ -291,13 +296,15 @@ func (s *Server) listModels() (any, error) {
 }
 
 // newThread wires an agent, its hooks and a session file for cwd.
-func (s *Server) newThread(cwd string, model config.ModelRef, effort string, file *session.Writer, start time.Time) (*thread, error) {
-	ag, hk, err := core.NewAgent(cwd, model, effort)
+// modelFrom and effortFrom say where model and effort came from.
+func (s *Server) newThread(cwd string, model config.ModelRef, effort string, file *session.Writer, start time.Time, modelFrom, effortFrom core.Origin) (*thread, error) {
+	ag, hk, src, err := core.NewAgentSources(cwd, model, effort)
 	if err != nil {
 		return nil, err
 	}
 	core.Bind(ag, hk, file, start, true)
-	t := &thread{id: file.ID, cwd: cwd, agent: ag, sess: file, hooks: hk}
+	t := &thread{id: file.ID, cwd: cwd, agent: ag, sess: file, hooks: hk, hookSrc: src}
+	t.loaded = core.Collect(ag, src, modelFrom, effortFrom)
 	t.tr.IDPrefix = itemPrefix(t.id)
 	s.mu.Lock()
 	s.threads[t.id] = t
@@ -310,11 +317,11 @@ func (s *Server) startThread(p threadParams) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	model, err := core.PickModel(models, settings, p.Model)
+	model, modelFrom, err := core.PickModelFrom(models, settings, p.Model, "")
 	if err != nil {
 		return nil, invalid("%v", err)
 	}
-	effort := core.Effort(settings, p.Effort)
+	effort, effortFrom := core.EffortFrom(settings, p.Effort, "")
 	cwd := p.Cwd
 	if cwd == "" {
 		cwd = s.Cwd
@@ -322,14 +329,17 @@ func (s *Server) startThread(p threadParams) (any, error) {
 	if st, err := os.Stat(cwd); err != nil || !st.IsDir() {
 		return nil, invalid("cwd %q is not a directory", cwd)
 	}
-	t, err := s.newThread(cwd, model, effort, session.New(cwd), time.Now())
+	t, err := s.newThread(cwd, model, effort, session.New(cwd), time.Now(), modelFrom, effortFrom)
 	if err != nil {
 		return nil, err
 	}
 	s.sessionStart(t, "startup")
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.info(), nil
+	info := t.info()
+	loaded := t.loaded
+	info.Context = &loaded
+	return info, nil
 }
 
 func (s *Server) sessionStart(t *thread, source string) {
@@ -367,15 +377,13 @@ func (s *Server) resumeThread(id string) (any, error) {
 		file.Close()
 		return nil, err
 	}
-	model, err := core.PickModel(models, settings, "")
-	if r, ok := models.Find("", saved.Model); ok {
-		model, err = r, nil
-	}
+	model, modelFrom, err := core.PickModelFrom(models, settings, "", saved.Model)
 	if err != nil {
 		file.Close()
 		return nil, err
 	}
-	t, err := s.newThread(saved.Header.Cwd, model, core.Effort(settings, saved.Effort), file, saved.Header.Time)
+	effort, effortFrom := core.EffortFrom(settings, "", saved.Effort)
+	t, err := s.newThread(saved.Header.Cwd, model, effort, file, saved.Header.Time, modelFrom, effortFrom)
 	if err != nil {
 		file.Close()
 		return nil, err
@@ -387,6 +395,8 @@ func (s *Server) resumeThread(id string) (any, error) {
 	defer t.mu.Unlock()
 	info := t.info()
 	info.Items = append([]Item(nil), t.items...)
+	loaded := t.loaded
+	info.Context = &loaded
 	return info, nil
 }
 
@@ -470,6 +480,13 @@ func (s *Server) begin(t *thread, fn func(ctx context.Context, emit func(any)) e
 	go func() {
 		err := fn(ctx, m.event)
 		m.closeOpen()
+		// A reload no step boundary reached runs now, while the thread is
+		// still busy; its report for the model waits in the inbox.
+		for _, f := range t.agent.TakeBoundary() {
+			if text := f(); text != "" {
+				_ = events.Push(t.id, events.Event{Source: sourceReloaded, Title: "reload applied", Text: strings.TrimPrefix(text, events.Prefix)})
+			}
+		}
 		t.mu.Lock()
 		t.busy, t.cancel, t.turnID = false, nil, ""
 		t.ctxTokens = t.agent.ContextTokens()
@@ -528,4 +545,36 @@ func (s *Server) startCompact(id string) (any, error) {
 		return nil, err
 	}
 	return map[string]any{"turnId": turnID}, nil
+}
+
+// sourceReloaded is the source of the event that reports a reload.
+const sourceReloaded = "reloaded"
+
+// reload applies an `atto reload` the thread's agent asked for: between
+// steps when a turn runs, else in a turn of its own that tells the model
+// the result.
+func (s *Server) reload(t *thread) {
+	apply := func() string {
+		t.mu.Lock()
+		prev, path := t.loaded, t.sess.Path
+		t.mu.Unlock()
+		r, err := core.Reload(t.agent, t.id, path, prev)
+		if err != nil {
+			s.notify(t, "thread/reloaded", map[string]any{"error": err.Error()})
+			return events.Format([]events.Event{{Text: "Reload failed, nothing changed: " + err.Error()}})
+		}
+		t.mu.Lock()
+		t.loaded, t.hooks, t.hookSrc = r.Loaded, r.Hooks, r.HookSrc
+		t.mu.Unlock()
+		s.notify(t, "thread/reloaded", map[string]any{"context": r.Loaded, "changes": r.Changes, "promptChanged": r.PromptChanged})
+		return events.Format([]events.Event{{Text: r.ForModel()}})
+	}
+	_, err := s.begin(t, func(ctx context.Context, emit func(any)) error {
+		text := apply()
+		emit(transcript.Input{Text: text})
+		return t.agent.Run(ctx, text, emit)
+	})
+	if err != nil { // a turn is running: apply it at its next step boundary
+		t.agent.AtBoundary(apply)
+	}
 }

@@ -196,21 +196,11 @@ func RunPrint(o PrintOptions) error {
 
 	// Model and effort: flags, else what the session last used, else the
 	// defaults.
-	modelID := o.Model
-	if modelID == "" {
-		if _, ok := models.Find("", saved.Model); ok {
-			modelID = saved.Model
-		}
-	}
-	model, err := core.PickModel(models, settings, modelID)
+	model, modelFrom, err := core.PickModelFrom(models, settings, o.Model, saved.Model)
 	if err != nil {
 		return err
 	}
-	effort := o.Effort
-	if effort == "" {
-		effort = saved.Effort
-	}
-	effort = core.Effort(settings, effort)
+	effort, effortFrom := core.EffortFrom(settings, o.Effort, saved.Effort)
 	if err := core.CheckEffort(model, effort); err != nil {
 		return err
 	}
@@ -228,7 +218,7 @@ func RunPrint(o PrintOptions) error {
 		}
 	}
 
-	ag, hk, err := core.NewAgent(cwd, model, effort)
+	ag, hk, hookSrc, err := core.NewAgentSources(cwd, model, effort)
 	if err != nil {
 		return err
 	}
@@ -250,7 +240,14 @@ func RunPrint(o PrintOptions) error {
 
 	res := printResult{Type: "result", SessionID: sess.ID, Model: model.ProviderName + "/" + model.Model.ID}
 	p := &printer{format: o.Format, partial: o.Partial, verbose: o.Verbose, out: os.Stdout, errOut: os.Stderr, res: &res}
-	p.emit(map[string]any{"type": "init", "session_id": sess.ID, "model": res.Model, "effort": ag.Effort(), "cwd": cwd})
+	loaded := core.Collect(ag, hookSrc, modelFrom, effortFrom)
+	p.emit(map[string]any{"type": "init", "session_id": sess.ID, "model": res.Model, "effort": ag.Effort(), "cwd": cwd, "context": loaded})
+	if o.Verbose && p.textMode() {
+		fmt.Fprintln(os.Stderr, "◇ Loaded")
+		for _, line := range core.FormatRows(loaded.Summary(), "  ", 12) {
+			fmt.Fprintln(os.Stderr, line)
+		}
+	}
 
 	// The goal lives here; from the file only the model's complete/blocked
 	// report is taken (see goal.Adopt). Its snapshot goes into the session
