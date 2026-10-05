@@ -94,7 +94,9 @@ func ParseStreamingJSON(partial string) map[string]any {
 	if parseJSONWithRepair(partial, &out) == nil && out != nil {
 		return out
 	}
-	for _, s := range []string{partial, RepairJSON(partial)} {
+	// Repaired first: raw control characters make every prefix of the
+	// unrepaired text invalid down to "{}".
+	for _, s := range []string{RepairJSON(partial), partial} {
 		if m, ok := partialParse(s); ok {
 			return m
 		}
