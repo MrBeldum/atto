@@ -46,6 +46,7 @@ func init() {
 		{"timer", "<when> <msg>", "Wake the agent later (10m, 15:30)", (*App).cmdTimer},
 		{"timers", "", "List pending timers", (*App).cmdTimers},
 		{"tui", "[auto|fullscreen|inline]", "Choose the renderer (fullscreen or inline)", (*App).cmdTui},
+		{"remote", "[on [port]|off]", "Control this session from a phone or browser (QR code)", (*App).cmdRemote},
 		{"clear", "", "Start a new conversation", (*App).cmdClear},
 		{"quit", "", "Exit atto", (*App).cmdQuit},
 		{"exit", "", "Exit atto", (*App).cmdQuit},
@@ -270,6 +271,7 @@ func (a *App) setModel(ref config.ModelRef) {
 	}
 	a.notice("Model set to %s (%s).", ref.Model.DisplayName(), ref.ProviderName)
 	a.statusTrigger()
+	a.remoteUpdated()
 }
 
 func (a *App) cmdEffort(arg string) {
@@ -317,6 +319,7 @@ func (a *App) cmdCompact(string) {
 func (a *App) reset() {
 	a.agent.Reset()
 	a.queued, a.pendingSteers, a.queuePaused = nil, nil, false
+	a.remoteSteers = nil
 	a.ctxTokens = 0
 	a.usage = usageStats{}
 	a.ui.Body.Clear()
@@ -352,6 +355,7 @@ func (a *App) cmdName(arg string) {
 	a.sess.Append(session.Entry{Type: session.TypeName, Name: arg})
 	a.notice("Named this conversation %q.", arg)
 	a.statusTrigger()
+	a.remoteUpdated()
 }
 
 func (a *App) cmdArchive(string) {

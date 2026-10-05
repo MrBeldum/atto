@@ -159,6 +159,16 @@ type App struct {
 	statusLines []string // its latest output
 	statusWake  chan struct{}
 
+	// remote is the /remote server while it runs (remote.go); remoteHost
+	// and remotePort override where it listens (tests). fromRemote is set
+	// while input from it is submitted, and remoteSteers are its steers
+	// not yet delivered: their user messages get a "from remote" mark.
+	remote       *remote
+	remoteHost   string
+	remotePort   *int
+	fromRemote   bool
+	remoteSteers map[string]int
+
 	cwd      string
 	quit     chan struct{}
 	quitOnce sync.Once
@@ -261,6 +271,7 @@ func Run(opts Options) error {
 		if a.cancel != nil {
 			a.cancel()
 		}
+		a.stopRemote()
 	})
 	a.ui.Stop()
 	a.sess.Close()
@@ -325,12 +336,14 @@ func (a *App) newSession(reason string) {
 	a.leaveSession(reason)
 	a.sess.Close()
 	a.sess = session.New(a.cwd)
+	a.items.IDPrefix = a.sess.ID + "-i"
 	core.Bind(a.agent, a.hooks, a.sess, time.Now(), true)
 	a.setLiveSession(a.sess.ID)
 	a.resetGoal()
 	a.recModel, a.recEffort, a.sessName = "", "", ""
 	a.showLoaded()
 	a.statusTrigger()
+	a.remoteSwitched()
 }
 
 // sessionEndHook runs SessionEnd hooks and waits for them (they are bounded
@@ -417,11 +430,14 @@ func (a *App) headerModel() string {
 func (a *App) add(c tui.Component) { a.ui.Body.Add(gap{c}) }
 
 func (a *App) notice(format string, args ...any) {
-	a.add(&noticeBlock{text: fmt.Sprintf(format, args...), style: tui.Dim})
+	text := fmt.Sprintf(format, args...)
+	a.add(&noticeBlock{text: text, style: tui.Dim})
+	a.remoteNotice(text)
 }
 
 func (a *App) errorNotice(err error) {
 	a.add(&noticeBlock{text: "Error: " + err.Error(), style: func(s string) string { return tui.FG(1, s) }})
+	a.remoteNotice("Error: " + err.Error())
 }
 
 func (a *App) doQuit() { a.quitOnce.Do(func() { close(a.quit) }) }
@@ -455,16 +471,8 @@ func (a *App) onInput(data string) bool {
 		a.origView.gen++
 		return true
 	case "escape":
-		if a.cancelShell() {
+		if a.interrupt() {
 			a.esc.reset()
-			return true
-		}
-		if a.busy {
-			a.esc.reset()
-			if len(a.pendingSteers) > 0 {
-				a.sendSteersAfterInterrupt = true
-			}
-			a.cancel()
 			return true
 		}
 		return a.onEscape()
@@ -512,6 +520,22 @@ func (a *App) onInput(data string) bool {
 		return true
 	}
 	return false
+}
+
+// interrupt is Esc while something runs: it stops a "!" command, else the
+// turn (pending steers then go out at once). False when nothing runs.
+func (a *App) interrupt() bool {
+	if a.cancelShell() {
+		return true
+	}
+	if !a.busy {
+		return false
+	}
+	if len(a.pendingSteers) > 0 {
+		a.sendSteersAfterInterrupt = true
+	}
+	a.cancel()
+	return true
 }
 
 func (a *App) submit(text string, att []tui.Attachment) {
@@ -590,6 +614,7 @@ func (a *App) start(activity string, fn func(context.Context, func(any)) error) 
 	if a.runKind == "turn" {
 		a.goal.BeginTurn()
 	}
+	a.remoteTurnStarted()
 
 	go func() { // keep the spinner and timers moving
 		t := time.NewTicker(a.ui.AnimationInterval())
@@ -636,6 +661,7 @@ func (a *App) start(activity string, fn func(context.Context, func(any)) error) 
 				a.errorNotice(fmt.Errorf("saving session: %w", werr))
 			}
 			a.statusTrigger()
+			a.remoteTurnCompleted(err)
 			a.afterRun(err)
 		})
 	}()
@@ -663,6 +689,7 @@ func (a *App) setEffort(level string, announce bool) {
 	a.agent.SetEffort(level)
 	a.effortFrom = core.FromCommand
 	a.statusTrigger()
+	a.remoteUpdated()
 	if err := config.UpdateSettings(map[string]any{"defaultEffort": level}); err != nil {
 		a.errorNotice(err)
 	}

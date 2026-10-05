@@ -20,8 +20,13 @@ import (
 // tr is the App's transcript builder, wired to the blocks.
 func (a *App) tr() *transcript.Builder {
 	if a.items.Handler.Started == nil {
-		a.items.Handler = transcript.Handler{Started: a.itemStarted, Delta: a.itemDelta, Updated: a.itemUpdated, Completed: a.itemCompleted,
-			Saved: a.itemSaved, Display: a.itemDisplay}
+		// Blocks first, then the /remote clients, if any.
+		a.items.Handler = transcript.Handler{
+			Started:   func(it *transcript.Item) { a.itemStarted(it); a.remoteItem("item/started", it) },
+			Delta:     func(it *transcript.Item, d string) { a.itemDelta(it, d); a.remoteDelta(it, d) },
+			Updated:   func(it *transcript.Item) { a.itemUpdated(it); a.remoteItem("item/updated", it) },
+			Completed: func(it *transcript.Item) { a.itemCompleted(it); a.remoteItem("item/completed", it) },
+			Saved:     a.itemSaved, Display: a.itemDisplay}
 	}
 	return &a.items
 }
@@ -31,8 +36,10 @@ func (a *App) tr() *transcript.Builder {
 func (a *App) replay(entries []session.Entry) {
 	a.replaying = true
 	defer func() { a.replaying = false }()
+	a.items.IDPrefix = a.sess.ID + "-i"
 	a.resetItems()
 	a.tr().Replay(entries)
+	a.remoteSwitched()
 }
 
 // resetItems forgets the items of a cleared transcript.
@@ -51,7 +58,7 @@ func (a *App) itemStarted(it *transcript.Item) {
 			a.steered = append(a.steered, it.Text)
 			return
 		}
-		a.add(&userBlock{text: it.Text})
+		a.add(&userBlock{text: it.Text, remote: a.fromRemote && !a.replaying})
 	case transcript.Event:
 		// Live, events are shown with their titles when delivered.
 		if a.replaying {
@@ -240,7 +247,11 @@ func (a *App) onEvent(ev any) {
 		a.steered = []string{}
 		a.tr().Event(ev)
 		if len(a.steered) > 0 {
-			a.add(&userBlock{text: strings.Join(a.steered, "\n\n")})
+			remote := false
+			for _, t := range a.steered {
+				remote = a.takeRemoteSteer(t) || remote
+			}
+			a.add(&userBlock{text: strings.Join(a.steered, "\n\n"), remote: remote})
 		}
 		a.steered = nil
 		return

@@ -22,7 +22,9 @@ func (g gap) Spaced() (tui.Component, int) { return g.Component, 1 }
 // userBlock shows a submitted prompt on a shaded band, codex-style, with a
 // blank shaded row above and below.
 type userBlock struct {
-	text       string
+	text string
+	// remote marks a message sent from /remote's web client.
+	remote     bool
 	cache, pin tui.RenderCache[string]
 }
 
@@ -40,7 +42,11 @@ func (u *userBlock) Render(width int) []string {
 
 func (u *userBlock) render(width int) []string {
 	lines := tui.Wrap(u.text, max(1, width-2))
-	out := []string{band("", width)}
+	top := ""
+	if u.remote {
+		top = tui.Dim("  from remote")
+	}
+	out := []string{band(top, width)}
 	for i, l := range lines {
 		lead := "  "
 		if i == 0 {

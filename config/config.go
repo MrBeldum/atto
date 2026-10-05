@@ -111,6 +111,15 @@ type Settings struct {
 	// BackgroundExit: false turns off the exit menu that offers "Run in
 	// background" while a turn is running (experimental; default on).
 	BackgroundExit *bool `json:"backgroundExit,omitempty"`
+	// Remote configures /remote, which serves the TUI's session to a
+	// phone or browser.
+	Remote *RemoteSettings `json:"remote,omitempty"`
+}
+
+// RemoteSettings is settings.json's "remote".
+type RemoteSettings struct {
+	// Port is where /remote listens (all interfaces); default 7879.
+	Port int `json:"port,omitempty"`
 }
 
 // ExtensionSettings is settings.json's "extensions".

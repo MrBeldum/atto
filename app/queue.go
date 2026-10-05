@@ -29,12 +29,13 @@ func (a *App) steer(text string) {
 
 // queuedInput is a follow-up waiting for the current turn to end.
 type queuedInput struct {
-	text string
-	att  []tui.Attachment // images
+	text   string
+	att    []tui.Attachment // images
+	remote bool             // sent from /remote
 }
 
 func (a *App) enqueue(text string, att []tui.Attachment) {
-	a.queued = append(a.queued, queuedInput{text, att})
+	a.queued = append(a.queued, queuedInput{text, att, a.fromRemote})
 	a.maybeSendNextQueued()
 }
 
@@ -119,7 +120,11 @@ func (a *App) afterRun(err error) {
 		// to send right away with Esc, start the next turn. Otherwise (error,
 		// Ctrl+C) they go back into the editor.
 		if err == nil || (canceled && sendSteers) {
+			for _, t := range leftover {
+				a.fromRemote = a.takeRemoteSteer(t) || a.fromRemote
+			}
 			a.startTurn(strings.Join(leftover, "\n\n"), nil)
+			a.fromRemote = false
 			return
 		}
 		a.restoreToEditor(leftover)
@@ -162,7 +167,9 @@ func (a *App) maybeSendNextQueued() {
 			a.runCommand(next.text)
 			continue
 		}
+		a.fromRemote = next.remote
 		a.startTurn(next.text, next.att)
+		a.fromRemote = false
 		return
 	}
 	a.continueGoal()

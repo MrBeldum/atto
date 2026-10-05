@@ -129,7 +129,7 @@ Shell commands, as in pi: start the prompt with `!` to run a command yourself, i
 
 Pasting the path of an image file, or dropping the file on the terminal, attaches it too. Images show as `[image 1: 1024x768 PNG]` in the input; delete the placeholder to drop the image. Images larger than 2048 pixels are scaled down. Clipboard images need `osascript` (macOS; `pngpaste` is used if installed), `wl-paste` or `xclip` (Linux), or PowerShell (Windows, WSL).
 
-`atto -p` attaches images given with `-image` and an image piped to stdin (PNG, JPEG, GIF or WebP, recognized by its first bytes); the prompt argument is then the text. In `atto serve`'s web client, attach images with the `+` button, by pasting or by dropping them; over JSON-RPC, `turn/start` takes `images: [{mimeType, data}]` (base64 or a `data:` URL, at most 10 of 10 MB each). Either way the model must accept images.
+`atto -p` attaches images given with `-image` and an image piped to stdin (PNG, JPEG, GIF or WebP, recognized by its first bytes); the prompt argument is then the text. In the web client (`atto serve`, `/remote`), attach images with the image button, by pasting or by dropping them; over JSON-RPC, `turn/start` takes `images: [{mimeType, data}]` (base64 or a `data:` URL, at most 10 of 10 MB each). Either way the model must accept images.
 
 Pastes over 1000 characters show as `[Pasted Content 1234 chars]` and are sent in full.
 
@@ -166,6 +166,7 @@ To use the terminal's own selection instead, hold the key that bypasses mouse re
 | `/archive` | archive the session and start a new one |
 | `/clear` | start a new session |
 | `/goal [<objective>\|clear\|edit\|pause\|resume]` | set or view the goal for a long-running task, as in codex: bare `/goal` shows it, `edit` opens a prompt, a new objective asks before replacing an unfinished goal; `budget <n>` caps its tokens. The status shows at the right of the status line ("Pursuing goal (12.5K / 50K)"), Esc pauses it, and opening a session with a paused or stalled goal asks whether to resume |
+| `/remote [on [port]\|off]` | control this session from a phone or browser: serves atto's web client on port 7879 (or `"remote": {"port": N}` in `settings.json`), prints its link and a QR code, and marks messages sent from there "from remote"; `off` closes every connection and revokes the link |
 | `/jobs`, `/stop` | list or stop background jobs |
 | `/timer`, `/timers` | wake the agent later, or list pending timers |
 | `/quit` | exit atto |
@@ -254,8 +255,9 @@ echo '{"query": "atto"}' | atto mcp call docs search -    # arguments from stdin
 
 **Front end and back end are separate.** Both servers speak the same JSON-RPC protocol, built around threads, turns and items:
 
-- `atto serve` serves it over HTTP + SSE and includes a web client, so you can use atto from a phone.
+- `atto serve` serves it over HTTP + SSE and includes a web client, so you can use atto from a phone. Listening beyond this machine (`-listen 0.0.0.0:7878`), it prints the link with a QR code to scan.
 - `atto app-server` serves it over stdio.
+- `/remote` in the TUI serves the session you are in, with the same protocol and web client: the browser shows the conversation as it streams, and what you send from it goes in as if typed (a turn, or a steer while one runs); Stop, Background, model and effort work too. `/clear` and `/resume` take the browser along. Each `/remote on` makes a new token, so `/remote off` revokes the link; quitting atto stops it. There is no TLS: use it on a network you trust (or Tailscale).
 
 ## Safety
 
@@ -271,7 +273,7 @@ Everything lives in `~/.atto`. Set `ATTO_DIR` to move it.
 
 | Path | Contents |
 | --- | --- |
-| `settings.json` | default model and effort, renderer, `mouse`, status line, hooks, `updateCheck`, `doubleEscapeAction` (`tree`, `fork` or `none`), `branchSummary.skipPrompt`, `toolOutputTokenLimit` (how much of a command's output the model gets, default 10000 tokens; the middle is cut and the full output saved to a file, as in codex), `backgroundExit` (experimental: `false` turns off the exit menu that offers "Run in background" while a turn runs), `extensions` (`disabled` names, handler `timeout` in seconds) |
+| `settings.json` | default model and effort, renderer, `mouse`, status line, hooks, `updateCheck`, `doubleEscapeAction` (`tree`, `fork` or `none`), `branchSummary.skipPrompt`, `toolOutputTokenLimit` (how much of a command's output the model gets, default 10000 tokens; the middle is cut and the full output saved to a file, as in codex), `backgroundExit` (experimental: `false` turns off the exit menu that offers "Run in background" while a turn runs), `remote.port` (`/remote`'s port, default 7879), `extensions` (`disabled` names, handler `timeout` in seconds) |
 | `mcp.json` | MCP servers (Claude Code's `.mcp.json` format); `mcp-approvals.json` holds approved project servers, `mcp/` the endpoints of running sessions |
 | `extensions/` | your extensions; `extension-approvals.json` holds approved project extensions, `extensions.log` their logs |
 | `models.json` | your providers and models |
@@ -289,6 +291,8 @@ If text looks garbled, doubled or leaves fragments behind (seen with wide charac
 go install ./cmd/atto          # this machine
 scripts/deploy.sh win linux    # other machines over ssh, no GitHub involved
 ```
+
+The web client (`server/web`) is Preact and TypeScript styled with Tailwind; its built bundle in `server/web/dist` is committed, so `go build` needs nothing else. After changing `server/web/src`, run `go generate ./server/web` (it downloads the pinned Tailwind standalone CLI and Preact once, checking their SHA-256, and bundles with esbuild; no Node) and commit `dist/`; a test fails while `dist/` is stale.
 
 `scripts/deploy.sh` builds an edge binary of this checkout for each host's system and installs it where the install scripts would (`%LOCALAPPDATA%\Programs\atto` on Windows, `~/.local/bin` elsewhere), so `atto update` there keeps following edge. Its version ends in `.local`.
 
