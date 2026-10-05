@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -315,14 +314,7 @@ func (a *App) onInput(data string) bool {
 		return true
 	case "ctrl+t":
 		a.details.on = !a.details.on
-		a.details.gen++
-		// Confirm in the transcript rather than a status-line flag, which
-		// would nag for as long as details stay on.
-		if a.details.on {
-			a.notice("Details on")
-		} else {
-			a.notice("Details off")
-		}
+		a.details.gen++ // the expanded blocks are confirmation enough
 		return true
 	case "escape":
 		if a.busy {
@@ -682,12 +674,10 @@ func (a *App) pinnedPrompt(firstVisible, width int) string {
 	return last.pinLine(width)
 }
 
-// legacyConsole reports a classic Windows console (conhost), where the
-// alternate screen and mouse reporting are unreliable; Windows Terminal
-// and VS Code set WT_SESSION or TERM_PROGRAM. Over SSH the client's
-// terminal does the drawing (and sshd passes neither variable), so an SSH
-// session is never legacy. Set "renderer" in settings.json to override.
-func legacyConsole() bool {
-	return runtime.GOOS == "windows" && os.Getenv("WT_SESSION") == "" && os.Getenv("TERM_PROGRAM") == "" &&
-		os.Getenv("SSH_CONNECTION") == "" && os.Getenv("SSH_TTY") == ""
-}
+// legacyConsole reports a console that can't do the fullscreen renderer:
+// only Windows before 10 1809 (build 17763), whose conhost lacks the
+// alternate screen and VT input. Newer conhost and Windows Terminal both
+// work, and environment variables can't tell them apart reliably (Windows
+// Terminal as the default console sets no WT_SESSION, nor does sshd). Set
+// "renderer" in settings.json to override.
+func legacyConsole() bool { return windowsBuild() > 0 && windowsBuild() < 17763 }
