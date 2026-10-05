@@ -79,7 +79,7 @@ func TestRunUserShellCutsLongOutput(t *testing.T) {
 	skipOnWindows(t)
 	ag := New(config.ModelRef{ProviderName: "t", Model: config.Model{ID: "m"}}, "", t.TempDir())
 	x := ag.RunUserShell(context.Background(), "seq 1 20000", false, nil)
-	if !x.Truncated || x.FullOutputPath == "" || len(x.Output) > maxOutputBytes+200 {
+	if !x.Truncated || x.FullOutputPath == "" || len(x.Output) > int(maxOutputBytes.Load())+200 {
 		t.Fatalf("truncated=%v path=%q len=%d", x.Truncated, x.FullOutputPath, len(x.Output))
 	}
 	defer os.Remove(x.FullOutputPath)

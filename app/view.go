@@ -75,7 +75,7 @@ func (t *textBlock) Render(width int) []string {
 
 const (
 	thinkingPreviewLines = 6
-	toolPreviewLines     = 3 // codex shows the last 3 output lines
+	toolPreviewLines     = 5 // codex: TOOL_CALL_MAX_LINES, the "… +N lines" row included
 	toolKeepBytes        = 64 * 1024
 )
 
@@ -130,15 +130,16 @@ type clickable struct {
 	more  bool // something to expand or collapse
 	lines int  // lines rendered
 	foot  bool // the last line is a disclosure line
+	mid   int  // a disclosure line inside the block (the "… +N lines" of a tool's output), or 0
 }
 
 func (c *clickable) clicks(more bool, out []string, foot bool) []string {
-	c.more, c.lines, c.foot = more, len(out), foot
+	c.more, c.lines, c.foot, c.mid = more, len(out), foot, 0
 	return out
 }
 
 func (c clickable) hit(line int) bool {
-	return c.more && (line == 0 || c.foot && line == c.lines-1)
+	return c.more && (line == 0 || c.foot && line == c.lines-1 || c.mid > 0 && line == c.mid)
 }
 
 // gapped components forward clicks past the leading blank line.
@@ -364,10 +365,15 @@ func (b *toolBlock) Render(width int) []string {
 	} else {
 		out = append(out, commandLines(cmd, width, commandPreviewLines)...)
 	}
-	hidden := 0
+	// Collapsed, long output keeps its first and last lines around a
+	// "… +N lines" row, as codex does: the start says what ran, the end
+	// how it went.
+	hidden, mid := 0, 0
+	var tail []string
 	if !expanded && len(lines) > toolPreviewLines {
-		hidden = len(lines) - toolPreviewLines
-		lines = lines[hidden:]
+		keep := (toolPreviewLines - 1) / 2
+		hidden = len(lines) - 2*keep
+		lines, tail = lines[:keep], lines[len(lines)-keep:]
 	}
 	if expanded && b.total > b.output.Len() {
 		out = append(out, tui.Dim(fmt.Sprintf("    (earlier output not kept: %d bytes)", b.total-b.output.Len())))
@@ -382,16 +388,23 @@ func (b *toolBlock) Render(width int) []string {
 		}
 		out = append(out, tui.Truncate(tui.Dim(prefix+l), width, tui.Dim("…")))
 	}
+	if hidden > 0 {
+		mid = len(out)
+		out = append(out, tui.Truncate(tui.Dim(fmt.Sprintf("    … +%d lines (click or ctrl+t to expand)", hidden)), width, tui.Dim("…")))
+		for _, l := range tail {
+			out = append(out, tui.Truncate(tui.Dim("    "+l), width, tui.Dim("…")))
+		}
+	}
+	foot := false
 	switch {
 	case expanded:
-		out = append(out, disclosure(true, 0, ""))
-	case hidden > 0:
-		out = append(out, disclosure(false, hidden, "lines"))
-	case collapsible:
-		out = append(out, tui.Dim("    + Show details"))
+		out, foot = append(out, disclosure(true, 0, "")), true
+	case hidden == 0 && collapsible:
+		out, foot = append(out, tui.Dim("    + Show details")), true
 	}
-	// Every collapsible state ends with its disclosure line.
-	return b.clicks(collapsible, out, collapsible)
+	out = b.clicks(collapsible, out, foot)
+	b.mid = mid
+	return out
 }
 
 // compactBlock reports a compaction; the notes expand on click.
