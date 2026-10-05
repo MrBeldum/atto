@@ -13,6 +13,9 @@ import (
 	"strings"
 )
 
+// UserAgent identifies atto to providers (some CDNs reject generic agents).
+var UserAgent = "atto"
+
 type FunctionCall struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
@@ -209,6 +212,7 @@ func (c *Client) Stream(ctx context.Context, req Request, h Handler) (Result, er
 		return res, err
 	}
 	hr.Header.Set("Content-Type", "application/json")
+	hr.Header.Set("User-Agent", UserAgent)
 	hr.Header.Set("Accept", "text/event-stream")
 	if c.APIKey != "" {
 		hr.Header.Set("Authorization", "Bearer "+c.APIKey)

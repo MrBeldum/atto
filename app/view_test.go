@@ -3,6 +3,8 @@ package app
 import (
 	"strings"
 	"testing"
+
+	"atto/tui"
 )
 
 func TestExpanderOverridesDetails(t *testing.T) {
@@ -51,3 +53,18 @@ func TestThinkingClickWhileStreaming(t *testing.T) {
 		t.Fatalf("expanded %d <= collapsed %d", expanded, collapsed)
 	}
 }
+
+func TestAssistantBulletNotDoubled(t *testing.T) {
+	b := &textBlock{}
+	b.text.WriteString("- apple\n- pear")
+	if got := StripLine(b.Render(40)[0]); got != "  • apple" {
+		t.Fatalf("got %q", got)
+	}
+	c := &textBlock{}
+	c.text.WriteString("Plain answer.")
+	if got := StripLine(c.Render(40)[0]); got != "• Plain answer." {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func StripLine(s string) string { return tui.StripEscapes(s) }

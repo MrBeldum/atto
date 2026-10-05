@@ -55,6 +55,11 @@ type TUI struct {
 	// and the footer (fullscreen only).
 	GapY int
 
+	// Pin, if set, may return a line to pin over the first visible body row
+	// in fullscreen mode, given the index of the first visible body line —
+	// e.g. the prompt that scrolled out of view (codex does this).
+	Pin func(firstVisible, width int) string
+
 	term    Terminal
 	mu      sync.Mutex
 	focused Component
@@ -74,9 +79,10 @@ type TUI struct {
 	// Fullscreen state.
 	scroll      int // body lines scrolled up from the bottom
 	prevBodyLen int
-	viewTop     int // first screen row showing body
-	viewStart   int // body line shown at viewTop
-	viewRows    int // screen rows showing body
+	viewTop     int  // first screen row showing body
+	viewStart   int  // body line shown at viewTop
+	viewRows    int  // screen rows showing body
+	pinned      bool // the first body row shows the Pin line
 	prevFrame   []string
 
 	// FullRedraws counts full redraws; useful for tests and debugging.
@@ -233,6 +239,9 @@ func (t *TUI) handleScroll(data string) bool {
 			t.ScrollBy(3)
 		case btn == 65:
 			t.ScrollBy(-3)
+		case btn == 0 && press && t.pinned && y-1 == t.viewTop:
+			// Clicking the pinned line scrolls back up to it.
+			t.ScrollBy(t.viewRows / 2)
 		case btn == 0 && press && y-1 >= t.viewTop && y-1 < t.viewTop+t.viewRows:
 			t.Body.Click(t.viewStart + y - 1 - t.viewTop)
 		}
@@ -548,6 +557,13 @@ func (t *TUI) doRenderFullscreen() {
 	t.viewTop, t.viewStart, t.viewRows = gap, start, end-start
 	frame := make([]string, gap, height)
 	frame = append(frame, body[start:end]...)
+	t.pinned = false
+	if t.Pin != nil && end > start {
+		if p := t.Pin(start, inner); p != "" {
+			frame[gap] = t.pad([]string{p})[0]
+			t.pinned = true
+		}
+	}
 	for len(frame) < avail+2*gap {
 		frame = append(frame, "")
 	}

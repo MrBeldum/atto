@@ -66,11 +66,13 @@ type Model struct {
 	ID      string   `json:"id"`
 	Name    string   `json:"name,omitempty"`
 	Efforts []string `json:"efforts,omitempty"` // reasoning effort levels, in order
-	// EffortMap translates an effort level to the value sent for "$effort"
-	// (e.g. {"max": "xhigh"}). Unmapped levels are sent as-is.
-	EffortMap     map[string]string `json:"effortMap,omitempty"`
-	ContextWindow int               `json:"contextWindow,omitempty"`
-	MaxTokens     int               `json:"maxTokens,omitempty"`
+	// EffortMap works like pi's thinkingLevelMap: each level maps to the
+	// value sent for "$effort", and null marks a level as unsupported
+	// (it is removed from Efforts). A mapped level not in Efforts is added.
+	// Unmapped levels are sent as-is.
+	EffortMap     map[string]*string `json:"effortMap,omitempty"`
+	ContextWindow int                `json:"contextWindow,omitempty"`
+	MaxTokens     int                `json:"maxTokens,omitempty"`
 	// ExtraBody is merged over the provider's; a null value removes a key.
 	ExtraBody map[string]any `json:"extraBody,omitempty"`
 }
@@ -80,6 +82,58 @@ func (m Model) DisplayName() string {
 		return m.Name
 	}
 	return m.ID
+}
+
+// effortOrder is the canonical order for levels added through EffortMap.
+var effortOrder = []string{"off", "none", "minimal", "low", "medium", "high", "xhigh", "max", "on"}
+
+// Levels returns the available effort levels: Efforts minus levels mapped
+// to null, plus mapped levels not already listed.
+func (m Model) Levels() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, l := range m.Efforts {
+		if v, ok := m.EffortMap[l]; ok && v == nil {
+			continue
+		}
+		out = append(out, l)
+		seen[l] = true
+	}
+	for _, l := range effortOrder {
+		if v, ok := m.EffortMap[l]; ok && v != nil && !seen[l] {
+			out = insertOrdered(out, l)
+			seen[l] = true
+		}
+	}
+	return out
+}
+
+func insertOrdered(levels []string, l string) []string {
+	rank := func(x string) int {
+		for i, o := range effortOrder {
+			if o == x {
+				return i
+			}
+		}
+		return len(effortOrder)
+	}
+	for i, x := range levels {
+		if rank(x) > rank(l) {
+			return append(levels[:i], append([]string{l}, levels[i:]...)...)
+		}
+	}
+	return append(levels, l)
+}
+
+// WireEfforts returns the level -> value translations to send.
+func (m Model) WireEfforts() map[string]string {
+	out := map[string]string{}
+	for k, v := range m.EffortMap {
+		if v != nil {
+			out[k] = *v
+		}
+	}
+	return out
 }
 
 // RequestBody merges the provider's and the model's extra body fields.
@@ -177,7 +231,7 @@ func mergeProvider(base, over Provider) Provider {
 		replaced := false
 		for i := range models {
 			if models[i].ID == m.ID {
-				models[i], replaced = m, true
+				models[i], replaced = mergeModel(models[i], m), true
 			}
 		}
 		if !replaced {
@@ -185,6 +239,44 @@ func mergeProvider(base, over Provider) Provider {
 		}
 	}
 	base.Models = models
+	return base
+}
+
+// mergeModel overlays the fields set in over onto base. Maps merge per key,
+// so models.json can adjust a single effort mapping of a catalog model.
+func mergeModel(base, over Model) Model {
+	if over.Name != "" {
+		base.Name = over.Name
+	}
+	if len(over.Efforts) > 0 {
+		base.Efforts = over.Efforts
+	}
+	if over.ContextWindow > 0 {
+		base.ContextWindow = over.ContextWindow
+	}
+	if over.MaxTokens > 0 {
+		base.MaxTokens = over.MaxTokens
+	}
+	if len(over.EffortMap) > 0 {
+		merged := map[string]*string{}
+		for k, v := range base.EffortMap {
+			merged[k] = v
+		}
+		for k, v := range over.EffortMap {
+			merged[k] = v
+		}
+		base.EffortMap = merged
+	}
+	if len(over.ExtraBody) > 0 {
+		merged := map[string]any{}
+		for k, v := range base.ExtraBody {
+			merged[k] = v
+		}
+		for k, v := range over.ExtraBody {
+			merged[k] = v
+		}
+		base.ExtraBody = merged
+	}
 	return base
 }
 

@@ -16,19 +16,35 @@ func (g gap) Render(width int) []string {
 	return append([]string{""}, g.Component.Render(width)...)
 }
 
-// userBlock shows a submitted prompt.
+// userBlock shows a submitted prompt on a shaded band, codex-style, with a
+// blank shaded row above and below.
 type userBlock struct{ text string }
+
+// userBG is the band color: a dark gray that reads on dark themes and
+// stays subtle on light ones.
+const userBG = 237
+
+func band(content string, width int) string {
+	return tui.BG(userBG, content+strings.Repeat(" ", max(0, width-tui.VisibleWidth(content))))
+}
 
 func (u *userBlock) Render(width int) []string {
 	lines := tui.Wrap(u.text, max(1, width-2))
+	out := []string{band("", width)}
 	for i, l := range lines {
+		lead := "  "
 		if i == 0 {
-			lines[i] = tui.FG(6, "› ") + tui.Bold(l)
-		} else {
-			lines[i] = "  " + tui.Bold(l)
+			lead = tui.FG(6, "› ")
 		}
+		out = append(out, band(lead+l, width))
 	}
-	return lines
+	return append(out, band("", width))
+}
+
+// pinLine renders the one-line pinned form of a prompt.
+func (u *userBlock) pinLine(width int) string {
+	text := strings.Join(strings.Fields(u.text), " ")
+	return band(tui.Truncate(tui.FG(6, "› ")+text, width, "…"), width)
 }
 
 // textBlock shows assistant text rendered as markdown, indented under the
@@ -47,7 +63,11 @@ func (t *textBlock) Render(width int) []string {
 	}
 	lines := tui.Markdown(strings.TrimSpace(t.text.String()), max(1, width-2))
 	for i, l := range lines {
-		lines[i] = "  " + l
+		if i == 0 && !startsWithMarker(l) {
+			lines[i] = tui.Dim("• ") + l
+		} else {
+			lines[i] = "  " + l
+		}
 	}
 	t.cache, t.cacheLen, t.cacheWidth = lines, t.text.Len(), width
 	return lines
@@ -353,6 +373,8 @@ func fmtDur(d time.Duration) string {
 	switch {
 	case d < time.Second:
 		return fmt.Sprintf("%dms", d.Milliseconds())
+	case d < time.Minute && d%time.Second == 0:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
 	case d < time.Minute:
 		return fmt.Sprintf("%.1fs", d.Seconds())
 	default:
@@ -369,4 +391,18 @@ func fmtTokens(n int) string {
 		return fmt.Sprintf("%.1fk", float64(n)/1e3)
 	}
 	return fmt.Sprint(n)
+}
+
+// startsWithMarker reports whether a rendered markdown line begins with its
+// own marker (list bullet, number, quote or code bar, table border), where
+// an extra leading bullet would double up.
+func startsWithMarker(line string) bool {
+	plain := strings.TrimSpace(tui.StripEscapes(line))
+	for _, m := range []string{"•", "◦", "☐", "☑", "│", "╭", "┌", "─"} {
+		if strings.HasPrefix(plain, m) {
+			return true
+		}
+	}
+	i := strings.IndexFunc(plain, func(r rune) bool { return r < '0' || r > '9' })
+	return i > 0 && (plain[i] == '.' || plain[i] == ')')
 }

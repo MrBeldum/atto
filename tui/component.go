@@ -58,6 +58,13 @@ func (c *Container) Click(line int) bool {
 	return false
 }
 
+// Each calls fn for every child with its line range from the last Render.
+func (c *Container) Each(fn func(child Component, start, end int)) {
+	for _, r := range c.ranges {
+		fn(r.c, r.start, r.end)
+	}
+}
+
 func (c *Container) Add(children ...Component) { c.Children = append(c.Children, children...) }
 
 func (c *Container) Remove(child Component) {

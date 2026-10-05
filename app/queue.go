@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"atto/tui"
 )
@@ -60,6 +61,9 @@ func (a *App) restoreToEditor(texts []string) {
 
 // afterRun settles pending input once a turn or compaction finishes.
 func (a *App) afterRun(err error) {
+	if a.runKind == "turn" && err == nil {
+		a.notice("Worked for %s • %s", fmtDur(time.Since(a.runStart).Truncate(time.Second)), time.Now().Format("3:04 PM"))
+	}
 	a.runKind = ""
 	if p := a.pendingResume; p != "" {
 		a.pendingResume = ""

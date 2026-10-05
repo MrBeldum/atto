@@ -192,7 +192,10 @@ func runStatusCommand(command string, input []byte, cwd string) ([]string, error
 // renderStatus draws the custom status line if configured, otherwise the
 // built-in one:
 //
-//	◆ Orca Local · medium  ▰▰▱▱▱▱▱▱▱▱ 12% 31k/262k        name · ~/proj ⎇ main · 18MB
+//	◆ Orca Local · medium  ━━─────── 12% 31k/262k        name · ~/proj (main) · 18MB
+//
+// Only characters with an unambiguous width (box drawing renders as one
+// column everywhere the editor rules do) so CJK terminals line up.
 func (a *App) renderStatus(width int) []string {
 	var out []string
 	if a.statusCmd {
@@ -218,7 +221,7 @@ func (a *App) renderStatus(width int) []string {
 
 func contextBar(pct, cells int) string {
 	filled := min(cells, (pct*cells+50)/100)
-	return strings.Repeat("▰", filled) + strings.Repeat("▱", cells-filled)
+	return tui.FG(6, strings.Repeat("━", filled)) + strings.Repeat("─", cells-filled)
 }
 
 func (a *App) builtinStatus(width int) string {
@@ -226,7 +229,7 @@ func (a *App) builtinStatus(width int) string {
 	sep := tui.Dim(" · ")
 
 	left := tui.FG(6, "◆ ") + m.Model.DisplayName()
-	if effort != "" && len(m.Model.Efforts) > 0 {
+	if effort != "" && len(m.Model.Levels()) > 0 {
 		left += sep + effortStyle(effort)
 	}
 	if cw := m.Model.ContextWindow; cw > 0 {
@@ -250,7 +253,7 @@ func (a *App) builtinStatus(width int) string {
 	room := width - lw - 2 - tui.VisibleWidth(name) - tui.VisibleWidth(sep) - tui.VisibleWidth(mem)
 	branch := ""
 	if a.gitBranch != "" {
-		branch = " ⎇ " + a.gitBranch
+		branch = " (" + a.gitBranch + ")"
 	}
 	where := compressPath(shortPath(a.cwd), room-tui.VisibleWidth(branch)) + branch
 	r := name + mem

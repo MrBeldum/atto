@@ -25,6 +25,8 @@ type Options struct {
 	Continue bool   // resume the latest session in this directory
 	Resume   bool   // open the resume picker at startup
 	Model    string // provider/id to use instead of the default
+	Effort   string // effort to use instead of the default
+	Session  string // resume the session with this ID
 }
 
 // modal is a picker shown in place of the editor.
@@ -106,7 +108,10 @@ func Run(opts Options) error {
 	if !ok {
 		model = all[0]
 	}
-	effort := settings.DefaultEffort
+	effort := opts.Effort
+	if effort == "" {
+		effort = settings.DefaultEffort
+	}
 	if effort == "" {
 		effort = "medium"
 	}
@@ -135,6 +140,12 @@ func Run(opts Options) error {
 	}
 
 	switch {
+	case opts.Session != "":
+		if path, err := session.Find(opts.Session); err == nil {
+			a.resume(path)
+		} else {
+			a.errorNotice(err)
+		}
 	case opts.Continue:
 		if s, ok := session.Latest(cwd); ok {
 			a.resume(s.Path)
@@ -169,6 +180,7 @@ func (a *App) build() {
 	a.ui.OnInput = a.onInput
 	a.ui.PaddingX = 1
 	a.ui.GapY = 1
+	a.ui.Pin = a.pinnedPrompt
 	a.addHeader()
 }
 
@@ -447,7 +459,7 @@ func (a *App) onEvent(ev any) {
 
 // --- effort ---
 
-func (a *App) efforts() []string { return a.model().Model.Efforts }
+func (a *App) efforts() []string { return a.model().Model.Levels() }
 
 func (a *App) cycleEffort() {
 	levels := a.efforts()
@@ -536,4 +548,22 @@ func (a *App) refreshCatalog() {
 			a.notice("Model catalog updated: %d models available (/model).", n)
 		}
 	})
+}
+
+// pinnedPrompt returns the latest prompt that has scrolled above the view,
+// shown as a thin bar on the first row so the question stays visible
+// (codex does the same in fullscreen).
+func (a *App) pinnedPrompt(firstVisible, width int) string {
+	var last *userBlock
+	a.ui.Body.Each(func(c tui.Component, start, end int) {
+		if g, ok := c.(gap); ok {
+			if u, ok := g.Component.(*userBlock); ok && end-1 <= firstVisible {
+				last = u
+			}
+		}
+	})
+	if last == nil {
+		return ""
+	}
+	return last.pinLine(width)
 }

@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,9 @@ import (
 	"atto/provider"
 	"atto/session"
 )
+
+// ErrMaxSteps is returned by Run when MaxSteps model calls were made.
+var ErrMaxSteps = errors.New("stopped: reached the maximum number of steps")
 
 // Events emitted during Run and Compact.
 type (
@@ -75,6 +79,9 @@ type Agent struct {
 
 	system   string
 	messages []provider.Message
+	// MaxSteps stops a turn after this many model calls (0: unlimited).
+	MaxSteps int
+
 	// LastUsage is the usage of the most recent model call.
 	LastUsage provider.Usage
 	// sinceUsage counts characters appended after the last reported usage.
@@ -152,11 +159,11 @@ func (a *Agent) SetModel(m config.ModelRef) {
 		APIKey:         m.APIKey,
 		MaxTokensField: m.Provider.MaxTokensField,
 		ExtraBody:      m.RequestBody(),
-		EffortMap:      m.Model.EffortMap,
+		EffortMap:      m.Model.WireEfforts(),
 		Headers:        m.Provider.Headers,
 	}
-	if len(m.Model.Efforts) > 0 && !contains(m.Model.Efforts, a.effort) {
-		a.effort = m.Model.Efforts[len(m.Model.Efforts)/2]
+	if lv := m.Model.Levels(); len(lv) > 0 && !contains(lv, a.effort) {
+		a.effort = lv[len(lv)/2]
 	}
 }
 
@@ -165,6 +172,12 @@ func (a *Agent) SetEffort(e string) {
 	a.cfgMu.Lock()
 	a.effort = e
 	a.cfgMu.Unlock()
+}
+
+// Effort returns the effort in use.
+func (a *Agent) Effort() string {
+	_, e := a.Current()
+	return e
 }
 
 // Current returns the model and effort in use.
@@ -304,7 +317,10 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(any)) error {
 	}
 	a.appendMessage(provider.Message{Role: "user", Content: input}, session.Entry{})
 
-	for {
+	for step := 1; ; step++ {
+		if a.MaxSteps > 0 && step > a.MaxSteps {
+			return ErrMaxSteps
+		}
 		var thinkStart, thinkEnd time.Time
 		h := provider.Handler{
 			OnReasoning: func(s string) {

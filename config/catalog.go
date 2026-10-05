@@ -171,25 +171,51 @@ func catalogModel(provider, id string, m modelsDevModel) (Model, bool) {
 	if !m.Reasoning {
 		return mod, true
 	}
-	// Default: OpenAI-style reasoning_effort, omitted when off.
+	// Default: OpenAI-style reasoning_effort. Reasoning models on OpenCode
+	// think by default, so "off" must be sent explicitly as "none"
+	// (omitting the field still thinks).
 	mod.Efforts = []string{"off", "low", "medium", "high"}
+	mod.EffortMap = map[string]*string{"off": str("none")}
 	mod.ExtraBody = map[string]any{"reasoning_effort": "$effort"}
-
-	// Per-model quirks, following pi's generate-models.ts.
-	switch {
-	case strings.HasPrefix(id, "kimi-k2.6"):
+	if strings.HasPrefix(id, "kimi-k2.6") {
 		// Kimi K2.6 takes Anthropic-style thinking objects and rejects
 		// reasoning_effort; thinking is only on/off.
 		mod.Efforts = []string{"off", "on"}
+		mod.EffortMap = map[string]*string{}
 		mod.ExtraBody = map[string]any{"reasoning_effort": nil, "thinking": map[string]any{"type": "$thinkingType"}}
-	case strings.HasPrefix(id, "deepseek-v4"):
-		// DeepSeek V4 exposes high and max (Flash also low).
-		mod.Efforts = []string{"off", "high", "max"}
-		if strings.Contains(id, "flash") {
-			mod.Efforts = []string{"off", "low", "high", "max"}
+	}
+	for _, q := range catalogEffortMaps {
+		match := strings.HasPrefix(id, q.prefix)
+		if exact, ok := strings.CutSuffix(q.prefix, "!"); ok {
+			match = id == exact
 		}
-	case provider == "opencode-go" && id == "glm-5.2":
-		mod.Efforts = []string{"high", "max"}
+		if (q.provider == "" || q.provider == provider) && match {
+			for k, v := range q.levels {
+				mod.EffortMap[k] = v
+			}
+		}
 	}
 	return mod, true
+}
+
+func str(s string) *string { return &s }
+
+// catalogEffortMaps are built-in effort mappings for catalog models, in
+// the same form users write in models.json (null = level unsupported);
+// models.json entries override them per level. A trailing "!" on the
+// prefix means an exact ID match.
+var catalogEffortMaps = []struct {
+	provider, prefix string
+	levels           map[string]*string
+}{
+	// pi: DeepSeek V4 exposes high and max (Flash also low).
+	{"", "deepseek-v4", map[string]*string{"medium": nil, "max": str("max")}},
+	{"", "deepseek-v4-pro", map[string]*string{"low": nil}},
+	// pi: OpenCode Go GLM-5.2 takes only high and max.
+	{"opencode-go", "glm-5.2!", map[string]*string{"off": nil, "low": nil, "medium": nil, "max": str("max")}},
+	// Verified on OpenCode Go 2026-10-05: these reject or ignore "none"
+	// (thinking-only), so "off" is unavailable. GLM-5.3 Flash can turn it off.
+	{"", "glm-5.3!", map[string]*string{"off": nil}},
+	{"", "kimi-k2.7-code", map[string]*string{"off": nil}},
+	{"", "longcat-", map[string]*string{"off": nil}},
 }

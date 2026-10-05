@@ -59,9 +59,10 @@ func (a *App) renderSuggestions(width int) []string {
 			name += " " + c.args
 		}
 		name += strings.Repeat(" ", max(0, 18-tui.VisibleWidth(name)))
-		line := "  " + name + tui.Dim(c.desc)
+		// Line up with the editor: " › " precedes the typed text.
+		line := "   " + name + tui.Dim(c.desc)
 		if i == 0 {
-			line = tui.FG(6, "› "+name) + tui.Dim(c.desc)
+			line = " " + tui.FG(6, "› "+name) + tui.Dim(c.desc)
 		}
 		out = append(out, tui.Truncate(line, width, "…"))
 	}

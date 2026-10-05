@@ -70,7 +70,7 @@ func RunModels(args []string, out io.Writer) error {
 			key = "-"
 		}
 		fmt.Fprintf(tw, "%s/%s\t%s\t%s\t%s\t%s\n", r.ProviderName, r.Model.ID, r.Model.DisplayName(),
-			fmtTokens(r.Model.ContextWindow), strings.Join(r.Model.Efforts, ","), key)
+			fmtTokens(r.Model.ContextWindow), strings.Join(r.Model.Levels(), ","), key)
 	}
 	return tw.Flush()
 }

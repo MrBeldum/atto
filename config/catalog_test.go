@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -48,7 +49,40 @@ func TestCatalogAndMerge(t *testing.T) {
 	}
 	kimi, _ := m.Find("opencode-go", "kimi-k2.6")
 	body := kimi.RequestBody()
-	if _, has := body["reasoning_effort"]; has || body["thinking"] == nil || len(kimi.Model.Efforts) != 2 {
+	if _, has := body["reasoning_effort"]; has || body["thinking"] == nil || len(kimi.Model.Levels()) != 2 {
 		t.Fatalf("kimi quirk: %+v %v", kimi.Model, body)
+	}
+}
+
+func TestCatalogEffortOff(t *testing.T) {
+	m, _ := catalogModel("opencode-go", "deepseek-v4.1-flash", modelsDevModel{ToolCall: true, Reasoning: true})
+	if *m.EffortMap["off"] != "none" || m.Levels()[0] != "off" {
+		t.Fatalf("deepseek off: %+v", m)
+	}
+	g, _ := catalogModel("opencode-go", "glm-5.3", modelsDevModel{ToolCall: true, Reasoning: true})
+	for _, e := range g.Levels() {
+		if e == "off" {
+			t.Fatalf("glm-5.3 cannot disable thinking: %v", g.Efforts)
+		}
+	}
+}
+
+func TestEffortMapLikePi(t *testing.T) {
+	ds, _ := catalogModel("opencode-go", "deepseek-v4-pro", modelsDevModel{ToolCall: true, Reasoning: true})
+	if got := ds.Levels(); strings.Join(got, ",") != "off,high,max" {
+		t.Fatalf("deepseek-v4-pro levels %v", got)
+	}
+	fl, _ := catalogModel("opencode-go", "glm-5.3-flash", modelsDevModel{ToolCall: true, Reasoning: true})
+	if fl.Levels()[0] != "off" {
+		t.Fatalf("glm-5.3-flash should keep off: %v", fl.Levels())
+	}
+	// A user override changes one level and keeps the rest.
+	user := Model{ID: "deepseek-v4-pro", EffortMap: map[string]*string{"off": nil, "xhigh": str("max")}}
+	m := mergeModel(ds, user)
+	if got := strings.Join(m.Levels(), ","); got != "high,xhigh,max" {
+		t.Fatalf("merged levels %s", got)
+	}
+	if m.WireEfforts()["xhigh"] != "max" {
+		t.Fatalf("wire %v", m.WireEfforts())
 	}
 }
