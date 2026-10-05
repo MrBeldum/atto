@@ -687,9 +687,10 @@ export default function (atto: any) {
 	if in.Status != Failed || !strings.Contains(in.Error, "interrupted") {
 		t.Fatalf("a runaway script is interrupted and disabled: %+v", in)
 	}
-	if !slices.ContainsFunc(h.snapshot().notices, func(n string) bool { return strings.HasPrefix(n, "error flaky: extension disabled") }) {
-		t.Fatalf("%q", h.snapshot().notices)
-	}
+	// The status changes before the notice is sent.
+	eventually(t, "the disabled notice", func() bool {
+		return slices.ContainsFunc(h.snapshot().notices, func(n string) bool { return strings.HasPrefix(n, "error flaky: extension disabled") })
+	})
 	if args, _ = m.ToolCall(ctx, agent.BashArgs{Command: "x"}); args.Command != "x # seen" {
 		t.Fatalf("the others go on: %q", args.Command)
 	}
