@@ -117,6 +117,7 @@ atto -p -goal "make the tests pass" -goal-budget 200k
 | `/model` | switch model mid-session |
 | `/effort` | set reasoning effort |
 | `/compact` | compact the conversation now |
+| `/copy` | copy the last answer; works over SSH in terminals with OSC 52 |
 | `/context` | show what fills the context and how much is cached |
 | `/resume` | resume a saved session |
 | `/name` | name the session |

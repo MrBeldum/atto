@@ -77,3 +77,16 @@ func TestMarkdownWidthAndStreaming(t *testing.T) {
 		}
 	}
 }
+
+func TestTableWithEmptyHeader(t *testing.T) {
+	got := plain(Markdown("| | |\n|---|---|\n| OS | Windows |\n| CPU | 19% |\n", 40))
+	want := []string{
+		"┌─────┬─────────┐",
+		"│ OS  │ Windows │",
+		"│ CPU │ 19%     │",
+		"└─────┴─────────┘",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("got:\n%s", strings.Join(got, "\n"))
+	}
+}

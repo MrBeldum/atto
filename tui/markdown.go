@@ -283,6 +283,12 @@ func tableAligns(sep string) []byte {
 }
 
 func (r *mdRenderer) table(rows [][]string, aligns []byte, width int) {
+	// Models often write key/value tables with an empty header ("| | |");
+	// draw those without a header row instead of an empty box.
+	header := true
+	if len(rows) > 1 && strings.TrimSpace(strings.Join(rows[0], "")) == "" {
+		header, rows = false, rows[1:]
+	}
 	ncol := 0
 	for _, row := range rows {
 		ncol = max(ncol, len(row))
@@ -294,7 +300,7 @@ func (r *mdRenderer) table(rows [][]string, aligns []byte, width int) {
 		for j := 0; j < ncol; j++ {
 			if j < len(row) {
 				cells[i][j] = inline(row[j])
-				if i == 0 {
+				if i == 0 && header {
 					cells[i][j] = Bold(cells[i][j])
 				}
 			}
@@ -306,6 +312,12 @@ func (r *mdRenderer) table(rows [][]string, aligns []byte, width int) {
 	avail := width - 3*ncol - 1
 	if avail < ncol {
 		// Too narrow for a grid: fall back to "header: value" lines.
+		if !header {
+			for _, row := range cells {
+				r.emit(Wrap(strings.Join(row, " · "), width)...)
+			}
+			return
+		}
 		for _, row := range cells[1:] {
 			for j, c := range row {
 				r.emit(Wrap(cells[0][j]+": "+c, width)...)
@@ -371,7 +383,7 @@ func (r *mdRenderer) table(rows [][]string, aligns []byte, width int) {
 			}
 			r.emit(b.String())
 		}
-		if i == 0 && len(cells) > 1 {
+		if i == 0 && header && len(cells) > 1 {
 			r.emit(border("├", "┼", "┤"))
 		}
 	}

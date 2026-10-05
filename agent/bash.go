@@ -19,9 +19,10 @@ const (
 	DefaultBashTimeout = 60 * time.Second
 	MaxBashTimeout     = 30 * time.Minute
 
-	// Limits on what goes back to the model; the full output is saved to a file.
-	maxOutputBytes = 50 * 1024
-	maxOutputLines = 2000
+	// What goes back to the model, as in codex: about 10k tokens (4 bytes
+	// per token), cut from the middle so both the start (the first error)
+	// and the end (the summary) survive. The full output is saved to a file.
+	maxOutputBytes = 40_000
 	// Hard cap on what is buffered in memory per command.
 	maxCaptureBytes = 8 * 1024 * 1024
 )
@@ -60,7 +61,7 @@ func toolDescription(sh shell.Shell) string {
 			"Each call runs in a fresh shell (use absolute paths or `cd dir && ...`). "
 	}
 	return lead + "Stdin is not connected; do not start interactive programs. " +
-		"Output beyond 2000 lines or 50KB is truncated to the tail, and the full output is saved to a file whose path is reported."
+		"Output over about 10k tokens is cut from the middle (the start and end are kept), and the full output is saved to a file whose path is reported."
 }
 
 type BashArgs struct {
@@ -168,7 +169,7 @@ func (r BashResult) ForModel(args BashArgs) string {
 	if r.Err != nil {
 		return "error: " + r.Err.Error()
 	}
-	out := truncateTail(r.Output)
+	out := truncateMiddle(tidy(r.Output))
 	var b strings.Builder
 	b.WriteString(out)
 	if out != "" && !strings.HasSuffix(out, "\n") {
@@ -187,27 +188,39 @@ func (r BashResult) ForModel(args BashArgs) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// truncateTail keeps the last maxOutputLines lines / maxOutputBytes bytes and
-// saves the full text to a temp file when it had to cut.
-func truncateTail(s string) string {
+// tidy normalizes output for the model: CRLF to LF, and no trailing
+// whitespace-only lines (PowerShell pads tables with them).
+func tidy(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
 	lines := strings.Split(s, "\n")
-	if len(s) <= maxOutputBytes && len(lines) <= maxOutputLines {
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// truncateMiddle keeps the first and last maxOutputBytes/2 bytes (on line
+// boundaries) and saves the full text to a temp file when it had to cut.
+func truncateMiddle(s string) string {
+	if len(s) <= maxOutputBytes {
 		return s
 	}
-	keep := lines[max(0, len(lines)-maxOutputLines):]
-	tail := strings.Join(keep, "\n")
-	if len(tail) > maxOutputBytes {
-		tail = tail[len(tail)-maxOutputBytes:]
-		if i := strings.IndexByte(tail, '\n'); i >= 0 {
-			tail = tail[i+1:]
-		}
+	half := maxOutputBytes / 2
+	head := s[:half]
+	if i := strings.LastIndexByte(head, '\n'); i > 0 {
+		head = head[:i]
 	}
-	shown := strings.Count(tail, "\n") + 1
-	note := fmt.Sprintf("[output truncated: showing last %d of %d lines", shown, len(lines))
+	tail := s[len(s)-half:]
+	if i := strings.IndexByte(tail, '\n'); i >= 0 && i < len(tail)-1 {
+		tail = tail[i+1:]
+	}
+	total := strings.Count(s, "\n") + 1
+	cut := total - (strings.Count(head, "\n") + 1) - (strings.Count(tail, "\n") + 1)
+	note := fmt.Sprintf("[output truncated: %d lines, ~%d tokens; showing the start and the end", total, len(s)/4)
 	if f, err := os.CreateTemp("", "atto-bash-*.log"); err == nil {
 		_, _ = f.WriteString(s)
 		f.Close()
 		note += "; full output: " + f.Name()
 	}
-	return note + "]\n" + tail
+	return fmt.Sprintf("%s]\n%s\n[… %d lines omitted …]\n%s", note, head, max(cut, 0), tail)
 }

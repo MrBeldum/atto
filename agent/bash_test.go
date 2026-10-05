@@ -4,6 +4,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -44,16 +45,29 @@ func TestRunBashCancel(t *testing.T) {
 	}
 }
 
-func TestTruncateTail(t *testing.T) {
+func TestTruncateMiddle(t *testing.T) {
 	var b strings.Builder
-	for i := 0; i < 5000; i++ {
-		b.WriteString("line\n")
+	for i := 0; i < 20000; i++ {
+		fmt.Fprintf(&b, "line %d\n", i)
 	}
-	out := truncateTail(b.String())
-	if !strings.HasPrefix(out, "[output truncated: showing last") || !strings.Contains(out, "full output: ") {
+	out := truncateMiddle(b.String())
+	if !strings.HasPrefix(out, "[output truncated: 20001 lines") || !strings.Contains(out, "full output: ") {
 		t.Fatalf("header: %q", out[:120])
 	}
-	if n := strings.Count(out, "\n"); n > maxOutputLines+1 {
-		t.Fatalf("%d lines kept", n)
+	if !strings.Contains(out, "\nline 0\n") || !strings.Contains(out, "line 19999") || !strings.Contains(out, "lines omitted") {
+		t.Fatal("start and end must both survive")
+	}
+	if len(out) > maxOutputBytes+300 {
+		t.Fatalf("kept %d bytes", len(out))
+	}
+	if s := "short\n"; truncateMiddle(s) != s {
+		t.Fatal("short output is untouched")
+	}
+}
+
+func TestTidy(t *testing.T) {
+	got := tidy("\r\nUptime  Free\r\n------  ----\r\n3h      3.9\r\n        \r\n        \r\n\r\n\r")
+	if got != "\nUptime  Free\n------  ----\n3h      3.9" {
+		t.Fatalf("%q", got)
 	}
 }

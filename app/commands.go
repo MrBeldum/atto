@@ -23,6 +23,7 @@ func init() {
 		{"model", "[id]", "Switch model", (*App).cmdModel},
 		{"effort", "[level]", "Set reasoning effort (also shift+tab)", (*App).cmdEffort},
 		{"compact", "", "Compact the conversation into handoff notes", (*App).cmdCompact},
+		{"copy", "", "Copy the last answer (works over SSH via OSC 52)", (*App).cmdCopy},
 		{"context", "[system]", "Show what fills the context and cache use", (*App).cmdContext},
 		{"request", "", "Save the raw last request to a file", (*App).cmdRequest},
 		{"resume", "", "Resume a saved conversation", (*App).cmdResume},

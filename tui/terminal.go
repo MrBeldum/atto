@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"encoding/base64"
 	"io"
 	"os"
+	"strings"
 	"sync"
 
 	"golang.org/x/term"
@@ -100,3 +102,19 @@ func (t *ProcessTerminal) Size() (int, int) {
 	}
 	return w, h
 }
+
+// OSC52 is the escape sequence that asks the terminal to put text on the
+// system clipboard. It travels with the output, so over SSH the text lands
+// on the local machine's clipboard. Inside tmux it is wrapped so tmux
+// passes it through (with set -g allow-passthrough on, or set-clipboard).
+func OSC52(text string) string {
+	seq := "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte(text)) + "\x07"
+	if os.Getenv("TMUX") != "" {
+		seq = "\x1bPtmux;" + strings.ReplaceAll(seq, "\x1b", "\x1b\x1b") + "\x1b\\"
+	}
+	return seq
+}
+
+// WriteRaw sends s to the terminal as is, for sequences that draw nothing
+// (like OSC52). Call it from the UI goroutine so it can't split a frame.
+func (t *TUI) WriteRaw(s string) { t.term.Write(s) }

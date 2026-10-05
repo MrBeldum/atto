@@ -220,21 +220,24 @@ func (b *toolBlock) Click(int) bool {
 	return true
 }
 
-// displayLines turns raw output into printable lines: escapes stripped and
-// carriage-return progress bars collapsed to their final state.
+// displayLines turns raw output into printable lines: escapes stripped,
+// carriage-return progress bars collapsed to their final state, trailing
+// spaces dropped, and blank lines at either end removed (PowerShell pads
+// its tables with them, which would leave the preview empty).
 func displayLines(raw string) []string {
-	raw = tui.StripEscapes(raw)
-	raw = strings.TrimRight(raw, "\n")
-	if raw == "" {
-		return nil
-	}
-	lines := strings.Split(raw, "\n")
+	lines := strings.Split(tui.StripEscapes(raw), "\n")
 	for i, l := range lines {
 		l = strings.TrimRight(l, "\r")
 		if j := strings.LastIndexByte(l, '\r'); j >= 0 {
 			l = l[j+1:]
 		}
-		lines[i] = strings.ReplaceAll(l, "\t", "   ")
+		lines[i] = strings.TrimRight(strings.ReplaceAll(l, "\t", "   "), " ")
+	}
+	for len(lines) > 0 && lines[0] == "" {
+		lines = lines[1:]
+	}
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
 	}
 	return lines
 }

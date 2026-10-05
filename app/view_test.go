@@ -68,3 +68,13 @@ func TestAssistantBulletNotDoubled(t *testing.T) {
 }
 
 func StripLine(s string) string { return tui.StripEscapes(s) }
+
+func TestDisplayLinesTrimsPadding(t *testing.T) {
+	got := displayLines("\r\nUptime  Free\r\n3h      3.9\r\n        \r\n        \r\n\r\n\r")
+	if len(got) != 2 || got[0] != "Uptime  Free" || got[1] != "3h      3.9" {
+		t.Fatalf("%q", got)
+	}
+	if got := displayLines("  \r\n\r\n"); len(got) != 0 {
+		t.Fatalf("blank output has no lines: %q", got)
+	}
+}
