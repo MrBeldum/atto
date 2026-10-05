@@ -51,14 +51,21 @@ func (s *Server) ServeStdio(ctx context.Context, r io.Reader, w io.Writer) error
 
 // broker fans notifications out to SSE subscribers and keeps a ring of
 // recent events so a client that reconnects (e.g. a phone waking up) can
-// resume with Last-Event-ID.
+// resume with Last-Event-ID. The ring is bounded by count and by bytes; a
+// client further behind gets a reset and reads the thread again.
 type broker struct {
-	mu   sync.Mutex
-	seq  int64
-	ring []sseEvent
-	subs map[chan sseEvent]chan struct{} // each subscriber's kick channel
-	keep int
+	mu    sync.Mutex
+	seq   int64
+	ring  []sseEvent
+	bytes int                             // in ring
+	subs  map[chan sseEvent]chan struct{} // each subscriber's kick channel
+	keep  int
 }
+
+// keepBytes bounds the ring's events: completed items carry whole command
+// outputs, and 10,000 of them held megabytes for a resume that a thread
+// read does as well.
+const keepBytes = 2 << 20
 
 type sseEvent struct {
 	id   int64
@@ -76,9 +83,13 @@ func (b *broker) publish(v any) {
 	b.seq++
 	ev := sseEvent{b.seq, data}
 	b.ring = append(b.ring, ev)
-	if len(b.ring) > b.keep {
-		b.ring = b.ring[len(b.ring)-b.keep:]
+	b.bytes += len(data)
+	drop := 0
+	for len(b.ring)-drop > 1 && (len(b.ring)-drop > b.keep || b.bytes > keepBytes) {
+		b.bytes -= len(b.ring[drop].data)
+		drop++
 	}
+	b.ring = b.ring[drop:]
 	for ch, kick := range b.subs {
 		select {
 		case ch <- ev:

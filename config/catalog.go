@@ -203,9 +203,10 @@ func catalogModel(cp catalogProvider, id string, m modelsDevModel) (Model, bool)
 	if m.Provider != nil {
 		switch npm := m.Provider.NPM; {
 		case npm == "" || npm == "@ai-sdk/openai-compatible":
-		case npm == "@ai-sdk/openai" && strings.HasPrefix(id, "gpt-"):
-			// A gateway's GPT models speak Responses while the rest of its
-			// models use chat completions.
+		case npm == "@ai-sdk/openai":
+			// A gateway's models marked as OpenAI's speak Responses while
+			// the rest use chat completions: its GPT models, and others
+			// such as OpenCode Go's Muse Spark.
 			responses = true
 		default:
 			return Model{}, false

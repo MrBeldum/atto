@@ -110,10 +110,12 @@ func TestZenGPTUsesResponses(t *testing.T) {
 	if glm, ok := m.Find("opencode", "glm-5"); !ok || glm.API() != "openai-completions" {
 		t.Fatalf("glm %+v", glm)
 	}
-	for _, id := range []string{"claude-x", "grok-4.7"} {
-		if _, ok := m.Find("opencode", id); ok {
-			t.Errorf("%s should be skipped", id)
-		}
+	if _, ok := m.Find("opencode", "claude-x"); ok {
+		t.Error("claude-x (Anthropic's API) should be skipped")
+	}
+	// Other models marked as OpenAI's (Grok, Muse Spark) speak Responses too.
+	if grok, ok := m.Find("opencode", "grok-4.7"); !ok || grok.API() != "openai-responses" {
+		t.Errorf("grok-4.7: %v %+v", ok, grok)
 	}
 }
 

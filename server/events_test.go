@@ -239,3 +239,19 @@ func TestReadWhileStreaming(t *testing.T) {
 		}
 	}
 }
+
+// The replay ring is bounded by bytes too: big events push old ones out,
+// and a client behind them gets a gap (and reads the thread again).
+func TestBrokerKeepsBytesBounded(t *testing.T) {
+	b := newBroker(10000)
+	big := strings.Repeat("x", keepBytes/4)
+	for i := 0; i < 20; i++ {
+		b.publish(map[string]any{"text": big})
+	}
+	if b.bytes > keepBytes || len(b.ring) == 0 || len(b.ring) > 5 {
+		t.Fatalf("ring holds %d events, %d bytes", len(b.ring), b.bytes)
+	}
+	if _, _, _, gap := b.subscribe(1); !gap {
+		t.Fatal("a client behind the ring must get a gap")
+	}
+}
