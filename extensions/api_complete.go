@@ -143,7 +143,7 @@ func complete(ctx context.Context, model, system, prompt, effort string, maxToke
 func describeNetError(err error) string {
 	msg := err.Error()
 	var op *net.OpError
-	if errors.As(err, &op) || strings.Contains(msg, "connection refused") {
+	if errors.As(err, &op) || strings.Contains(msg, "refused") {
 		return "connection refused (is the server running?): " + msg
 	}
 	return msg

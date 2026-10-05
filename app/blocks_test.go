@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,12 @@ import (
 	"github.com/sebastianrcnt/atto/session"
 	"github.com/sebastianrcnt/atto/tui"
 )
+
+// thinkingTime is the one thing a resumed block may word differently: the
+// live duration is measured, the saved one rounded to the millisecond.
+var thinkingTime = regexp.MustCompile(`Thought for \S+`)
+
+func noDuration(s string) string { return thinkingTime.ReplaceAllString(s, "Thought for X") }
 
 // mainServer answers each request with the next reply: reasoning and text.
 // It keeps the request bodies.
@@ -176,7 +183,7 @@ func TestBlockDisplayLifecycle(t *testing.T) {
 	b.newSession("")
 	b.resume(a.sess.Path)
 	t.Cleanup(func() { b.sess.Close() })
-	if got := answerLines(b); got != shown {
+	if got := noDuration(answerLines(b)); got != noDuration(shown) {
 		t.Fatalf("resumed:\n%s\nlive:\n%s", got, shown)
 	}
 
