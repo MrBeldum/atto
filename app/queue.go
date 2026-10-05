@@ -61,6 +61,13 @@ func (a *App) restoreToEditor(texts []string) {
 // afterRun settles pending input once a turn or compaction finishes.
 func (a *App) afterRun(err error) {
 	a.runKind = ""
+	if p := a.pendingResume; p != "" {
+		a.pendingResume = ""
+		a.agent.DrainSteers()
+		a.pendingSteers, a.sendSteersAfterInterrupt = nil, false
+		a.resume(p)
+		return
+	}
 	canceled := errors.Is(err, context.Canceled)
 	leftover := a.agent.DrainSteers()
 	a.pendingSteers = nil

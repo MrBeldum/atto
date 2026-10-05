@@ -49,6 +49,12 @@ type TUI struct {
 	// largest height rendered so far, so no stale rows remain.
 	ClearOnShrink bool
 
+	// PaddingX is the blank margin, in columns, on both sides of all content.
+	PaddingX int
+	// GapY is the number of blank rows above the body and between the body
+	// and the footer (fullscreen only).
+	GapY int
+
 	term    Terminal
 	mu      sync.Mutex
 	focused Component
@@ -68,7 +74,8 @@ type TUI struct {
 	// Fullscreen state.
 	scroll      int // body lines scrolled up from the bottom
 	prevBodyLen int
-	viewStart   int // body line shown on the first screen row
+	viewTop     int // first screen row showing body
+	viewStart   int // body line shown at viewTop
 	viewRows    int // screen rows showing body
 	prevFrame   []string
 
@@ -178,7 +185,24 @@ func (t *TUI) loop() {
 
 // Render returns the inline-mode content: body followed by footer.
 func (t *TUI) Render(width int) []string {
-	return append(t.Body.Render(width), t.Footer.Render(width)...)
+	inner := t.innerWidth(width)
+	return append(t.pad(t.Body.Render(inner)), t.pad(t.Footer.Render(inner))...)
+}
+
+func (t *TUI) innerWidth(width int) int { return max(1, width-2*t.PaddingX) }
+
+// pad indents lines by PaddingX.
+func (t *TUI) pad(lines []string) []string {
+	if t.PaddingX <= 0 {
+		return lines
+	}
+	margin := strings.Repeat(" ", t.PaddingX)
+	for i, l := range lines {
+		if l != "" {
+			lines[i] = margin + l
+		}
+	}
+	return lines
 }
 
 // ScrollBy scrolls the fullscreen body up (n > 0) or down (n < 0).
@@ -212,8 +236,8 @@ func (t *TUI) handleScroll(data string) bool {
 				t.ScrollBy(3)
 			case btn == 65:
 				t.ScrollBy(-3)
-			case btn == 0 && final == 'M' && y-1 < t.viewRows:
-				t.Body.Click(t.viewStart + y - 1)
+			case btn == 0 && final == 'M' && y-1 >= t.viewTop && y-1 < t.viewTop+t.viewRows:
+				t.Body.Click(t.viewStart + y - 1 - t.viewTop)
 			}
 		}
 		return true // swallow all other mouse events
@@ -506,8 +530,9 @@ func (t *TUI) positionCursor(b *strings.Builder, cur *cursorPos, total int) {
 // rewrites only the screen rows that changed.
 func (t *TUI) doRenderFullscreen() {
 	width, height := t.term.Size()
-	footer := t.Footer.Render(width)
-	body := t.Body.Render(width)
+	inner := t.innerWidth(width)
+	footer := t.pad(t.Footer.Render(inner))
+	body := t.pad(t.Body.Render(inner))
 
 	// Keep the view anchored while scrolled up and new output arrives.
 	if t.scroll > 0 && len(body) > t.prevBodyLen {
@@ -518,15 +543,16 @@ func (t *TUI) doRenderFullscreen() {
 	if len(footer) > height {
 		footer = footer[len(footer)-height:]
 	}
-	avail := height - len(footer)
+	gap := min(t.GapY, max(0, (height-len(footer))/4))
+	avail := max(0, height-len(footer)-2*gap)
 	t.scroll = min(t.scroll, max(0, len(body)-avail))
 	end := len(body) - t.scroll
 	start := max(0, end-avail)
 
-	t.viewStart, t.viewRows = start, end-start
-	frame := make([]string, 0, height)
+	t.viewTop, t.viewStart, t.viewRows = gap, start, end-start
+	frame := make([]string, gap, height)
 	frame = append(frame, body[start:end]...)
-	for len(frame) < avail {
+	for len(frame) < avail+2*gap {
 		frame = append(frame, "")
 	}
 	frame = append(frame, footer...)

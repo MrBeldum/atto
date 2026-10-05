@@ -42,6 +42,7 @@ func SettingsPath() string  { return filepath.Join(Dir(), "settings.json") }
 func ModelsPath() string    { return filepath.Join(Dir(), "models.json") }
 func AuthPath() string      { return filepath.Join(Dir(), "auth.json") }
 func SessionsDir() string   { return filepath.Join(Dir(), "sessions") }
+func ArchivedDir() string   { return filepath.Join(Dir(), "archived_sessions") }
 func ExtensionsDir() string { return filepath.Join(Dir(), "extensions") }
 func PromptsDir() string    { return filepath.Join(Dir(), "prompts") }
 func SkillsDir() string     { return filepath.Join(Dir(), "skills") }
@@ -65,6 +66,20 @@ type Settings struct {
 	DefaultEffort   string `json:"defaultEffort,omitempty"`
 	// Renderer is "fullscreen" (default) or "inline".
 	Renderer string `json:"renderer,omitempty"`
+	// StatusLine replaces the built-in status line with a command's output,
+	// like Claude Code's statusLine setting.
+	StatusLine *StatusLine `json:"statusLine,omitempty"`
+}
+
+// StatusLine configures a custom status line. The command runs with a JSON
+// description of the session on stdin; each line it prints becomes a status
+// line (ANSI colors allowed).
+type StatusLine struct {
+	Type    string `json:"type"` // "command"
+	Command string `json:"command"`
+	// RefreshInterval, in seconds, re-runs the command periodically even if
+	// nothing changed. 0 runs it only on changes.
+	RefreshInterval int `json:"refreshInterval,omitempty"`
 }
 
 // LoadSettings reads settings.json; a missing file yields zero settings.

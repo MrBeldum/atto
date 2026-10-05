@@ -1,9 +1,11 @@
 package app
 
 import (
+	"os"
 	"strings"
 
 	"atto/config"
+	"atto/session"
 	"atto/tui"
 )
 
@@ -22,6 +24,9 @@ func init() {
 		{"effort", "[level]", "Set reasoning effort (also shift+tab)", (*App).cmdEffort},
 		{"compact", "", "Compact the conversation into handoff notes", (*App).cmdCompact},
 		{"resume", "", "Resume a saved conversation", (*App).cmdResume},
+		{"name", "<name>", "Name this conversation", (*App).cmdName},
+		{"rename", "<name>", "Rename this conversation", (*App).cmdName},
+		{"archive", "", "Archive this conversation and start a new one", (*App).cmdArchive},
 		{"clear", "", "Start a new conversation", (*App).cmdClear},
 		{"quit", "", "Exit atto", (*App).cmdQuit},
 		{"exit", "", "Exit atto", (*App).cmdQuit},
@@ -140,6 +145,7 @@ func (a *App) setModel(ref config.ModelRef) {
 		a.errorNotice(err)
 	}
 	a.notice("Model set to %s (%s).", ref.Model.DisplayName(), ref.ProviderName)
+	a.statusTrigger()
 }
 
 func (a *App) cmdEffort(arg string) {
@@ -205,3 +211,38 @@ func (a *App) cmdClear(string) {
 }
 
 func (a *App) cmdQuit(string) { a.doQuit() }
+
+func (a *App) cmdName(arg string) {
+	if arg == "" {
+		if a.sessName == "" {
+			a.notice("This conversation has no name. Usage: /name <name>")
+		} else {
+			a.notice("This conversation is named %q.", a.sessName)
+		}
+		return
+	}
+	a.sessName = arg
+	a.sess.Append(session.Entry{Type: session.TypeName, Name: arg})
+	a.notice("Named this conversation %q.", arg)
+	a.statusTrigger()
+}
+
+func (a *App) cmdArchive(string) {
+	if a.busy {
+		a.notice("Still working — press esc to interrupt first.")
+		return
+	}
+	path := a.sess.Path
+	a.sess.Close()
+	if _, err := os.Stat(path); err != nil {
+		a.notice("Nothing to archive yet.")
+		return
+	}
+	if _, err := session.Archive(path); err != nil {
+		a.errorNotice(err)
+		return
+	}
+	a.reset()
+	a.newSession()
+	a.notice("Archived the conversation. Find it with /resume (shift+tab shows archived).")
+}

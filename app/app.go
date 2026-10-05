@@ -66,6 +66,15 @@ type App struct {
 	detailed bool
 	// Last model/effort written to the session, to record changes.
 	recModel, recEffort string
+	sessName            string
+	// pendingResume is a session to switch to once the running turn stops.
+	pendingResume string
+
+	// Status line state.
+	gitBranch   string
+	statusCmd   bool     // a custom statusLine command is configured
+	statusLines []string // its latest output
+	statusWake  chan struct{}
 
 	cwd      string
 	quit     chan struct{}
@@ -114,6 +123,8 @@ func Run(opts Options) error {
 	}
 	a.build()
 	a.newSession()
+	a.statusCmd = settings.StatusLine != nil && settings.StatusLine.Command != ""
+	a.startStatusLine(settings.StatusLine)
 
 	switch {
 	case opts.Continue:
@@ -148,6 +159,8 @@ func (a *App) build() {
 	a.ui.Footer.Add(tui.Func(a.renderActivity), tui.Func(a.renderPending), tui.Func(a.renderInput), tui.Func(a.renderSuggestions), tui.Func(a.renderStatus))
 	a.ui.SetFocus(a.editor)
 	a.ui.OnInput = a.onInput
+	a.ui.PaddingX = 1
+	a.ui.GapY = 1
 	a.addHeader()
 }
 
@@ -156,7 +169,8 @@ func (a *App) newSession() {
 	a.sess.Close()
 	a.sess = session.New(a.cwd)
 	a.agent.Record = a.sess.Append
-	a.recModel, a.recEffort = "", ""
+	a.recModel, a.recEffort, a.sessName = "", "", ""
+	a.statusTrigger()
 }
 
 func (a *App) model() config.ModelRef {
@@ -330,6 +344,7 @@ func (a *App) start(activity string, fn func(context.Context, func(any)) error) 
 			if werr := a.sess.Err(); werr != nil {
 				a.errorNotice(fmt.Errorf("saving session: %w", werr))
 			}
+			a.statusTrigger()
 			a.afterRun(err)
 		})
 	}()
@@ -381,6 +396,7 @@ func (a *App) onEvent(ev any) {
 	case agent.StepEnd:
 		a.endStream()
 		a.ctxTokens = e.Context
+		a.statusTrigger()
 	case agent.SteerCommitted:
 		a.pendingSteers = a.pendingSteers[min(len(e.Texts), len(a.pendingSteers)):]
 		a.endStream()
@@ -428,6 +444,7 @@ func (a *App) cycleEffort() {
 
 func (a *App) setEffort(level string, announce bool) {
 	a.agent.SetEffort(level)
+	a.statusTrigger()
 	if err := config.UpdateSettings(map[string]any{"defaultEffort": level}); err != nil {
 		a.errorNotice(err)
 	}
@@ -455,37 +472,6 @@ func (a *App) renderInput(width int) []string {
 		return append([]string{""}, a.modal.Render(width)...)
 	}
 	return a.editor.Render(width)
-}
-
-func (a *App) renderStatus(width int) []string {
-	left := tui.Dim(shortPath(a.cwd))
-	if off := a.ui.ScrollOffset(); off > 0 {
-		left += tui.FG(3, fmt.Sprintf("  ↓ %d more lines", off))
-	}
-	if a.detailed {
-		left += tui.FG(3, "  details on (ctrl+t)")
-	}
-
-	m, effort := a.agent.Current()
-	right := tui.Dim(m.Model.DisplayName())
-	if effort != "" && len(m.Model.Efforts) > 0 {
-		right += tui.Dim(" · ") + effortStyle(effort)
-	}
-	if n, cw := a.ctxTokens, m.Model.ContextWindow; n > 0 && cw > 0 {
-		usage := fmt.Sprintf(" · %s/%s (%d%%)", fmtTokens(n), fmtTokens(cw), n*100/cw)
-		if limit := agent.AutoCompactLimit(m.Model); limit > 0 && n*100/limit >= 80 {
-			right += tui.FG(3, usage) // nearing auto-compaction
-		} else {
-			right += tui.Dim(usage)
-		}
-	}
-
-	rw := tui.VisibleWidth(right)
-	if rw+2 >= width {
-		return []string{tui.Truncate(right, width, "…")}
-	}
-	left = tui.Truncate(left, width-rw-2, "…")
-	return []string{left + strings.Repeat(" ", width-rw-tui.VisibleWidth(left)) + right}
 }
 
 func shortPath(p string) string {

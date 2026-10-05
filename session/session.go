@@ -35,6 +35,7 @@ const (
 	TypeCompaction = "compaction"
 	TypeModel      = "model"
 	TypeEffort     = "effort"
+	TypeName       = "name"
 )
 
 // Entry is one line of a session file. Fields are used according to Type.
@@ -63,6 +64,9 @@ type Entry struct {
 	Provider string `json:"provider,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Effort   string `json:"effort,omitempty"`
+
+	// name
+	Name string `json:"name,omitempty"`
 }
 
 // ToolMeta records how a tool call went, for redisplay on resume.
@@ -222,6 +226,8 @@ func Load(path string) (Entry, []Entry, error) {
 type Summary struct {
 	Path     string
 	ID       string
+	Name     string // from the latest "name" entry
+	Archived bool
 	Cwd      string
 	Created  time.Time
 	Updated  time.Time
@@ -230,10 +236,14 @@ type Summary struct {
 }
 
 // List returns sessions, newest first. If cwd is non-empty only sessions
-// started in that directory are returned.
-func List(cwd string) ([]Summary, error) {
+// started in that directory are returned. archived selects archived
+// sessions instead of active ones.
+func List(cwd string, archived bool) ([]Summary, error) {
 	var out []Summary
 	root := config.SessionsDir()
+	if archived {
+		root = config.ArchivedDir()
+	}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".jsonl") {
 			return nil
@@ -242,6 +252,7 @@ func List(cwd string) ([]Summary, error) {
 		if err != nil || (cwd != "" && s.Cwd != cwd) || s.Messages == 0 {
 			return nil
 		}
+		s.Archived = archived
 		out = append(out, s)
 		return nil
 	})
@@ -260,6 +271,9 @@ func summarize(path string) (Summary, error) {
 	s := Summary{Path: path, ID: h.ID, Cwd: h.Cwd, Created: h.Time, Updated: h.Time}
 	for _, e := range entries {
 		s.Updated = e.Time
+		if e.Type == TypeName {
+			s.Name = e.Name
+		}
 		if e.Type != TypeMessage || e.Message == nil {
 			continue
 		}
@@ -278,9 +292,32 @@ func summarize(path string) (Summary, error) {
 
 // Latest returns the most recently updated session for cwd.
 func Latest(cwd string) (Summary, bool) {
-	l, err := List(cwd)
+	l, err := List(cwd, false)
 	if err != nil || len(l) == 0 {
 		return Summary{}, false
 	}
 	return l[0], true
+}
+
+// Archive moves an active session file into the archive, keeping its
+// date layout. It returns the new path.
+func Archive(path string) (string, error) {
+	return move(path, config.SessionsDir(), config.ArchivedDir())
+}
+
+// Unarchive moves an archived session back. It returns the new path.
+func Unarchive(path string) (string, error) {
+	return move(path, config.ArchivedDir(), config.SessionsDir())
+}
+
+func move(path, fromRoot, toRoot string) (string, error) {
+	rel, err := filepath.Rel(fromRoot, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", fmt.Errorf("%s is not under %s", path, fromRoot)
+	}
+	dst := filepath.Join(toRoot, rel)
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return "", err
+	}
+	return dst, os.Rename(path, dst)
 }

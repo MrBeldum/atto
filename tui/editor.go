@@ -199,19 +199,24 @@ func (e *Editor) HandleInput(data string) {
 }
 
 func (e *Editor) Render(width int) []string {
-	rule := strings.Repeat("─", width)
-	if e.Rule != nil {
-		rule = e.Rule(rule)
+	border := func(s string) string {
+		if e.Rule != nil {
+			return e.Rule(s)
+		}
+		return s
 	}
-
+	// A rounded box with one column of padding inside: "│ › text │".
+	width = max(width, 6)
 	promptW := VisibleWidth(e.Prompt)
-	cw := max(1, width-promptW)
+	cw := max(1, width-4-promptW)
 
 	var rows []string
 	var row strings.Builder
 	rowW := 0
+	var widths []int
 	flush := func() {
 		rows = append(rows, row.String())
+		widths = append(widths, rowW)
 		row.Reset()
 		rowW = 0
 	}
@@ -241,13 +246,14 @@ func (e *Editor) Render(width int) []string {
 
 	indent := strings.Repeat(" ", promptW)
 	out := make([]string, 0, len(rows)+2)
-	out = append(out, rule)
+	out = append(out, border("╭"+strings.Repeat("─", width-2)+"╮"))
 	for i, r := range rows {
+		lead := indent
 		if i == 0 {
-			out = append(out, e.Prompt+r)
-		} else {
-			out = append(out, indent+r)
+			lead = e.Prompt
 		}
+		fill := strings.Repeat(" ", max(0, cw-widths[i]))
+		out = append(out, border("│")+" "+lead+r+fill+" "+border("│"))
 	}
-	return append(out, rule)
+	return append(out, border("╰"+strings.Repeat("─", width-2)+"╯"))
 }
