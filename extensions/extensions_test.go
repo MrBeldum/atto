@@ -794,6 +794,29 @@ func TestGuideExamples(t *testing.T) {
 	}
 }
 
+// The extensions in examples/ load.
+func TestRepoExamples(t *testing.T) {
+	dir, cwd := env(t)
+	files, _ := filepath.Glob(filepath.Join("..", "examples", "extensions", "*.ts"))
+	if len(files) == 0 {
+		t.Fatal("no examples")
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		write(t, filepath.Join(dir, filepath.Base(f)), string(b))
+	}
+	m := load(t, cwd, newHost(true))
+	for _, f := range files {
+		name := strings.TrimSuffix(filepath.Base(f), ".ts")
+		if in := info(t, m, name); in.Status != Loaded {
+			t.Errorf("%s: %+v", name, in)
+		}
+	}
+}
+
 // modelServer is a fake model that runs each command, one per step, then
 // answers "done".
 func modelServer(t *testing.T, commands []string) config.ModelRef {

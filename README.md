@@ -234,7 +234,7 @@ export default function (atto) {
 - `/reload` (or `atto reload`) loads changes; the Loaded block shows each extension's status, commands and events, and errors with `file:line`.
 - Events: `session_start`, `session_end`, `turn_start`, `turn_end`, `user_prompt`, `tool_call`, `tool_result`. They run inside the hooks: `PreToolUse` hooks, then `tool_call`, the command, `tool_result`, then `PostToolUse` hooks.
 - Also `atto.exec`, `atto.fs`, `fetch`, timers, `atto.sendMessage`; dialogs and widgets are TUI-only (in `-p` and the server, dialogs get default answers).
-- `atto extensions docs` prints the guide ([docs/extensions.md](docs/extensions.md)), `atto extensions types` the type declarations, `atto extensions` the list. A handler that hangs is skipped after 5 seconds and a runaway script is stopped and its extension disabled; atto goes on.
+- `atto extensions docs` prints the guide ([docs/extensions.md](docs/extensions.md)), `atto extensions types` the type declarations, `atto extensions` the list. [examples/extensions](examples/extensions) has examples to copy, such as one that shows reasoning translated by a small local model. A handler that hangs is skipped after 5 seconds and a runaway script is stopped and its extension disabled; atto goes on.
 
 **MCP.** atto has one tool, the shell, and keeps it that way: MCP servers are reached through `atto mcp` subcommands that the model runs in the shell, not through tools of their own. The tool schema and the system prompt stay the same whatever you configure (when at least one server exists the prompt gets one line naming them, in sorted order, so it changes only when your configuration does), and the prompt cache survives.
 
