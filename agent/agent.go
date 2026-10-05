@@ -81,9 +81,27 @@ var ErrMaxSteps = errors.New("stopped: reached the maximum number of steps")
 type (
 	ReasoningDelta struct{ Text string }
 	TextDelta      struct{ Text string }
-	// ToolStart fires when a bash command begins executing.
+	// ToolDraft fires while the model is still writing a tool call: when it
+	// begins (empty Args) and as its arguments stream in, with what could
+	// be read of them so far. Index is the call's position in the
+	// response. Providers that send a call whole emit none. Every draft
+	// ends with the ToolStart of its Index or a ToolDraftEnd.
+	ToolDraft struct {
+		Index int
+		Args  BashArgs
+	}
+	// ToolDraftEnd fires when a drafted call will not run: it was
+	// malformed, unknown or blocked (Err says why), or the response ended
+	// early (Err is empty).
+	ToolDraftEnd struct {
+		Index int
+		Err   string
+	}
+	// ToolStart fires when a bash command begins executing. Index is the
+	// call's position in the response, which names its ToolDraft.
 	ToolStart struct {
 		ID      string
+		Index   int
 		Args    BashArgs
 		Timeout time.Duration
 	}
@@ -548,7 +566,10 @@ func (a *Agent) RunWithImages(ctx context.Context, input string, imgs []provider
 			return ErrMaxSteps
 		}
 		var thinkStart, thinkEnd time.Time
+		drafts := &draftTracker{emit: emit}
 		h := provider.Handler{
+			OnToolCallStart: drafts.start,
+			OnToolCallDelta: drafts.delta,
 			OnReasoning: func(s string) {
 				if thinkStart.IsZero() {
 					thinkStart = time.Now()
@@ -574,6 +595,7 @@ func (a *Agent) RunWithImages(ctx context.Context, input string, imgs []provider
 		if err != nil {
 			// Keep partial text so the transcript matches what the user saw,
 			// but drop half-formed tool calls.
+			drafts.endAll()
 			if res.Message.Content != "" {
 				res.Message.ToolCalls = nil
 				a.appendMessage(res.Message, session.Entry{ThinkingMs: thinkMs})
@@ -603,19 +625,21 @@ func (a *Agent) RunWithImages(ctx context.Context, input string, imgs []provider
 			return nil
 		}
 		stopTurn := false
-		for _, tc := range res.Message.ToolCalls {
+		for i, tc := range res.Message.ToolCalls {
 			var content string
 			var meta session.Entry
 			if ctx.Err() != nil {
 				content = "[canceled by user]"
 				meta.Tool = &session.ToolMeta{Canceled: true, ExitCode: -1}
+				drafts.end(i, "")
 			} else {
 				var stop bool
-				content, meta.Tool, stop = a.runTool(ctx, tc, emit)
+				content, meta.Tool, stop = a.runTool(ctx, tc, i, drafts, emit)
 				stopTurn = stopTurn || stop
 			}
 			a.appendMessage(provider.Message{Role: "tool", ToolCallID: tc.ID, Content: content}, meta)
 		}
+		drafts.endAll() // drafts beyond the calls the response ended up with
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -631,8 +655,9 @@ func (a *Agent) RunWithImages(ctx context.Context, input string, imgs []provider
 	}
 }
 
-func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, emit func(any)) (string, *session.ToolMeta, bool) {
+func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, index int, drafts *draftTracker, emit func(any)) (string, *session.ToolMeta, bool) {
 	fail := func(msg string) (string, *session.ToolMeta, bool) {
+		drafts.end(index, msg)
 		return "error: " + msg, &session.ToolMeta{ExitCode: -1}, false
 	}
 	// Accept any shell tool name: a session started on another OS, or a
@@ -654,14 +679,17 @@ func (a *Agent) runTool(ctx context.Context, tc provider.ToolCall, emit func(any
 		updated, o := a.Hooks.PreToolUse(ctx, args)
 		emitHook(emit, "PreToolUse", o)
 		if o.Stop {
+			drafts.end(index, "stopped by hook")
 			return "[stopped by hook: " + o.StopReason + "]", &session.ToolMeta{Description: args.Description, ExitCode: -1}, true
 		}
 		if o.Block {
+			drafts.end(index, "blocked by hook")
 			return "Blocked by a PreToolUse hook: " + o.Reason, &session.ToolMeta{Description: args.Description, ExitCode: -1}, false
 		}
 		args = updated
 	}
-	emit(ToolStart{ID: tc.ID, Args: args, Timeout: args.timeout()})
+	emit(ToolStart{ID: tc.ID, Index: index, Args: args, Timeout: args.timeout()})
+	drafts.claim(index)
 	a.cfgMu.Lock()
 	env := a.env
 	a.cfgMu.Unlock()

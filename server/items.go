@@ -8,8 +8,8 @@ import (
 
 // itemMapper sends one turn's items to clients. The thread's transcript
 // builder makes the items from the agent's events; this turns them into
-// item/started, item/delta and item/completed notifications and keeps the
-// completed ones on the thread.
+// item/started, item/delta, item/updated and item/completed notifications
+// and keeps the completed ones on the thread.
 type itemMapper struct {
 	s      *Server
 	t      *thread
@@ -24,6 +24,9 @@ func (m *itemMapper) handler() transcript.Handler {
 		},
 		Delta: func(it *transcript.Item, d string) {
 			m.s.notify(m.t, "item/delta", map[string]any{"turnId": m.turnID, "itemId": it.ID, "delta": d})
+		},
+		Updated: func(it *transcript.Item) {
+			m.s.notify(m.t, "item/updated", map[string]any{"turnId": m.turnID, "item": wireItem(it)})
 		},
 		Completed: func(it *transcript.Item) {
 			w := wireItem(it)
@@ -80,7 +83,7 @@ func wireItem(it *transcript.Item) Item {
 			w.GoalStatus, w.Text = string(g.Status), g.Note
 		}
 	case transcript.Tool:
-		w.Type, w.Description, w.Command, w.Output = ItemCommand, it.Description, it.Command, it.Output
+		w.Type, w.Description, w.Command, w.Output, w.Pending = ItemCommand, it.Description, it.Command, it.Output, it.Pending
 		if r := it.Result; r != nil {
 			code := r.ExitCode
 			w.ExitCode, w.DurationMs, w.TimedOut = &code, it.Duration.Milliseconds(), r.TimedOut

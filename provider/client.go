@@ -58,7 +58,8 @@ func (c *Client) Stream(ctx context.Context, req Request, h Handler) (Result, er
 	}
 	stream := ai.StreamSimple(&model, ToContext(&model, req.Messages, req.Tools), opts)
 
-	toolIndex := map[int]int{} // content index -> tool call index
+	toolIndex := map[int]int{}             // content index -> tool call index
+	toolArgs := map[int]*strings.Builder{} // tool call index -> arguments so far
 	var final *ai.AssistantMessage
 	for ev := range stream.All() {
 		switch ev.Type {
@@ -72,6 +73,20 @@ func (c *Client) Stream(ctx context.Context, req Request, h Handler) (Result, er
 			}
 		case ai.EventToolCallStart:
 			toolIndex[ev.ContentIndex] = len(toolIndex)
+			if h.OnToolCallStart != nil {
+				h.OnToolCallStart(toolIndex[ev.ContentIndex])
+			}
+		case ai.EventToolCallDelta:
+			// The partial message is not read: the producer is still
+			// changing it. The deltas carry what is needed.
+			if h.OnToolCallDelta != nil && ev.Delta != "" {
+				i := toolIndex[ev.ContentIndex]
+				if toolArgs[i] == nil {
+					toolArgs[i] = &strings.Builder{}
+				}
+				toolArgs[i].WriteString(ev.Delta)
+				h.OnToolCallDelta(i, toolArgs[i].String())
+			}
 		case ai.EventToolCallEnd:
 			if h.OnToolCall != nil && ev.ToolCall != nil {
 				h.OnToolCall(toolIndex[ev.ContentIndex], ev.ToolCall.ID, ev.ToolCall.Name)

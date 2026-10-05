@@ -101,6 +101,15 @@ type Handler struct {
 	OnReasoning func(delta string)
 	OnText      func(delta string)
 	OnToolCall  func(index int, id, name string)
+	// OnToolCallStart fires when the model begins a tool call, before its
+	// arguments, and OnToolCallDelta for each piece of them with the
+	// arguments JSON received so far (possibly incomplete). index counts
+	// calls in the order they start, which is their order in the result.
+	// The id and name may not be known yet; OnToolCall reports them once
+	// the call is complete. Providers that send a call whole may skip the
+	// deltas.
+	OnToolCallStart func(index int)
+	OnToolCallDelta func(index int, args string)
 }
 
 type Result struct {

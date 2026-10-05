@@ -221,6 +221,7 @@ type toolBlock struct {
 	clickable
 	args    agent.BashArgs
 	timeout time.Duration
+	pending bool // the model is still writing the call; start is when it ran
 	start   time.Time
 	output  strings.Builder
 	total   int // total output bytes seen
@@ -274,6 +275,8 @@ const backgroundHintAfter = 3 * time.Second
 
 func (b *toolBlock) status() (icon, status string) {
 	switch {
+	case b.pending:
+		return tui.FG(3, "●"), "writing…"
 	case !b.done:
 		ran := time.Since(b.start)
 		s := fmt.Sprintf("%s / %s", tui.FormatDuration(ran.Truncate(100*time.Millisecond)), tui.FormatDuration(b.timeout))
@@ -305,7 +308,11 @@ func (b *toolBlock) Render(width int) []string {
 	}
 	// The command goes on its own line: next to the description it got cut
 	// off on narrow terminals.
-	head := icon + " " + tui.Bold(b.args.Description) + tui.Dim(" · ") + tui.Dim(status)
+	desc := b.args.Description
+	if desc == "" {
+		desc = "Preparing command"
+	}
+	head := icon + " " + tui.Bold(desc) + tui.Dim(" · ") + tui.Dim(status)
 	out := []string{tui.Truncate(head, width, tui.Dim("…"))}
 
 	multiLine := strings.Contains(strings.TrimSpace(b.args.Command), "\n")

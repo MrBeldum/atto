@@ -65,6 +65,10 @@ type Item struct {
 	// Tool. Output is the command's output as shown: streamed, tidied when
 	// the command ends, and only the tail when long (Dropped counts the
 	// bytes let go).
+	// Pending is set while the model is still writing the call (live
+	// only): Description and Command fill in as they stream, and the item
+	// is the same one that runs and finishes once the call is complete.
+	Pending     bool
 	CallID      string
 	Description string
 	Command     string

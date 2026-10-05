@@ -32,6 +32,7 @@
 //	turn/started   {turnId}
 //	item/started   {turnId, item}
 //	item/delta     {turnId, itemId, delta}
+//	item/updated   {turnId, item}  (a command the model is still writing, pending: its description and command so far; again when it starts running)
 //	item/completed {turnId, item}
 //	hook           {event, message, blocked}  (also a hook item during a turn)
 //	event          {title}  (inbox event delivered to the thread)
@@ -112,6 +113,9 @@ type Item struct {
 	// and Background why: requested, timeout or user.
 	Job        int    `json:"job,omitempty"`
 	Background string `json:"background,omitempty"`
+	// Pending: the model is still writing the command (description and
+	// command are what has arrived).
+	Pending bool `json:"pending,omitempty"`
 
 	// compaction
 	Auto         bool `json:"auto,omitempty"`
