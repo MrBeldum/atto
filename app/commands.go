@@ -94,12 +94,13 @@ func commandItems(cmds []command) []tui.SelectItem {
 
 // suggestionKey handles the keys of an open command list, like pi: up/down
 // move, tab completes, enter completes and runs (or only completes when the
-// command needs an argument), esc closes the list.
+// command needs an argument), esc closes the list. Without one, an open "@"
+// file list gets them (mention.go).
 func (a *App) suggestionKey(key string) bool {
 	l := a.suggestions()
 	it, ok := l.Current()
 	if !ok {
-		return false
+		return a.mentionKey(key)
 	}
 	c := it.Data.(command)
 	switch key {
@@ -128,7 +129,10 @@ func (a *App) renderSuggestions(width int) []string {
 	if a.modal != nil {
 		return nil
 	}
-	return a.suggestions().Render(width)
+	if lines := a.suggestions().Render(width); len(lines) > 0 {
+		return lines
+	}
+	return a.renderMentions(width)
 }
 
 // allCommands is the built-in commands plus one /skill:<name> per skill of

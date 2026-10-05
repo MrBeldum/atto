@@ -86,6 +86,24 @@ func (e *Editor) SetText(s string, att ...Attachment) {
 	e.reconcile()
 }
 
+// Cursor returns the cursor position, in runes from the start of the text.
+func (e *Editor) Cursor() int { return e.pos }
+
+// LineBeforeCursor returns the cursor's line up to the cursor.
+func (e *Editor) LineBeforeCursor() string { return string(e.buf[e.lineStart():e.pos]) }
+
+// AfterCursor returns the text after the cursor.
+func (e *Editor) AfterCursor() string { return string(e.buf[e.pos:]) }
+
+// Replace deletes del runes before the cursor and delAfter after it,
+// inserts s there and leaves the cursor cursor runes into s (completions).
+func (e *Editor) Replace(del, delAfter int, s string, cursor int) {
+	e.deleteRange(e.pos-del, e.pos+delAfter) // leaves the cursor at the gap
+	from := e.pos
+	e.insert(s)
+	e.pos = from + min(cursor, utf8.RuneCountInString(s))
+}
+
 // Attachments returns the attachments currently in the buffer.
 func (e *Editor) Attachments() []Attachment {
 	var out []Attachment
